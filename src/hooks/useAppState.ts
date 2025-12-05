@@ -70,9 +70,28 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     let updatedLogs: DailyAdherenceLog[];
     if (existingLogIndex >= 0) {
       updatedLogs = [...state.adherenceLogs];
-      updatedLogs[existingLogIndex] = log;
+      updatedLogs[existingLogIndex] = {
+        ...log,
+        workoutDone: Boolean(log.workoutDone),
+        dietFollowed: Boolean(log.dietFollowed),
+        habits: {
+          stepsTargetMet: Boolean(log.habits.stepsTargetMet),
+          sleepTargetMet: Boolean(log.habits.sleepTargetMet),
+        },
+      };
     } else {
-      updatedLogs = [...state.adherenceLogs, log];
+      updatedLogs = [
+        ...state.adherenceLogs, 
+        {
+          ...log,
+          workoutDone: Boolean(log.workoutDone),
+          dietFollowed: Boolean(log.dietFollowed),
+          habits: {
+            stepsTargetMet: Boolean(log.habits.stepsTargetMet),
+            sleepTargetMet: Boolean(log.habits.sleepTargetMet),
+          },
+        }
+      ];
     }
 
     const newState: AppState = {
@@ -112,6 +131,16 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     await persistState(newState);
   }, [state]);
 
+
+  const recalculateProgress = useCallback(async () => {
+    if (!state?.currentPhase) return;
+    
+    const { calculateProgress } = require('../utils/progressCalculator');
+    const newEstimate = calculateProgress(state.currentPhase, state.adherenceLogs);
+    
+    await updateProgress(newEstimate);
+  }, [state, updateProgress]);
+
   const clearAllData = useCallback(async () => {
     try {
       await storageAdapter.clearAll();
@@ -135,5 +164,6 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     completePhase,
     clearAllData,
     refreshState: loadState,
+    recalculateProgress
   };
 };
