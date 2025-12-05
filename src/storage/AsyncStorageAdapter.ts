@@ -2,54 +2,58 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from '../types/domain';
 import { StorageAdapter } from './StorageAdapter';
 
-/**
- * AsyncStorage Implementation of StorageAdapter
- * 
- * Stores entire AppState as a single JSON blob under one key.
- * Simple, suitable for MVP with local-only data.
- * 
- * Future: Can be replaced with Supabase, SQLite, or REST API
- * without changing any code that depends on StorageAdapter interface.
- */
-
 const STORAGE_KEY = '@physique_ladder:app_state_v1';
 
+const sanitizeState = (state: any): AppState => {
+  return {
+    ...state,
+    currentPhase: state.currentPhase ? {
+      ...state.currentPhase,
+      habitTargets: {
+        minStepsPerDay: state.currentPhase.habitTargets?.minStepsPerDay ? Number(state.currentPhase.habitTargets.minStepsPerDay) : undefined,
+        minSleepHours: state.currentPhase.habitTargets?.minSleepHours ? Number(state.currentPhase.habitTargets.minSleepHours) : undefined,
+      },
+    } : null,
+    adherenceLogs: state.adherenceLogs?.map((log: any) => ({
+      ...log,
+      workoutDone: Boolean(log.workoutDone),
+      dietFollowed: Boolean(log.dietFollowed),
+      habits: {
+        stepsTargetMet: log.habits?.stepsTargetMet !== undefined ? Boolean(log.habits.stepsTargetMet) : undefined,
+        sleepTargetMet: log.habits?.sleepTargetMet !== undefined ? Boolean(log.habits.sleepTargetMet) : undefined,
+      },
+    })) || [],
+  };
+};
+
 export class AsyncStorageAdapter implements StorageAdapter {
-  /**
-   * Load app state from AsyncStorage
-   */
   async getAppState(): Promise<AppState | null> {
     try {
       const jsonString = await AsyncStorage.getItem(STORAGE_KEY);
       
       if (!jsonString) {
-        // First time user - no data yet
         return null;
       }
 
       const state: AppState = JSON.parse(jsonString);
       
-      // Basic validation
       if (!state.version) {
         console.warn('Invalid state structure, returning null');
         return null;
       }
 
-      return state;
+      return sanitizeState(state);
     } catch (error) {
       console.error('Error loading app state from AsyncStorage:', error);
       return null;
     }
   }
 
-  /**
-   * Save app state to AsyncStorage
-   * Updates lastModified timestamp automatically
-   */
   async saveAppState(state: AppState): Promise<void> {
     try {
+      const sanitized = sanitizeState(state);
       const stateWithTimestamp: AppState = {
-        ...state,
+        ...sanitized,
         lastModified: new Date().toISOString(),
       };
 
@@ -61,9 +65,6 @@ export class AsyncStorageAdapter implements StorageAdapter {
     }
   }
 
-  /**
-   * Clear all app data from storage
-   */
   async clearAll(): Promise<void> {
     try {
       await AsyncStorage.removeItem(STORAGE_KEY);
@@ -73,9 +74,6 @@ export class AsyncStorageAdapter implements StorageAdapter {
     }
   }
 
-  /**
-   * Get storage key (useful for debugging)
-   */
   getStorageKey(): string {
     return STORAGE_KEY;
   }

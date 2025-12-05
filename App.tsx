@@ -6,7 +6,7 @@ import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
 import { OnboardingScreen, PhotoCaptureScreen, HomeScreen, TodayScreen, ProgressScreen } from './src/screens';
 import { generateMockPhase } from './src/utils';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 const Tab = createBottomTabNavigator();
 
@@ -65,6 +65,23 @@ function MainTabs({ state, logAdherence, addPhotoCheckin, recalculateProgress }:
 
 export default function App() {
   const storage = createStorageAdapter();
+  const [hasCleared, setHasCleared] = useState(false);
+
+  // FORCE CLEAR STORAGE ONCE - Remove after first successful run
+  useEffect(() => {
+    const clearStorageOnce = async () => {
+      try {
+        await storage.clearAll();
+        console.log('Storage cleared successfully');
+        setHasCleared(true);
+      } catch (err) {
+        console.error('Failed to clear storage:', err);
+        setHasCleared(true);
+      }
+    };
+    clearStorageOnce();
+  }, []);
+
   const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logAdherence, recalculateProgress } = useAppState(storage);
 
   const handleStartPhase = async () => {
@@ -73,7 +90,7 @@ export default function App() {
     await startPhase(phase);
   };
 
-  if (isLoading) {
+  if (!hasCleared || isLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#2196F3" />
