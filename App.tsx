@@ -2,17 +2,25 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
-import { OnboardingScreen, PhotoCaptureScreen, HomeScreen } from './src/screens';
+import { OnboardingScreen, PhotoCaptureScreen, HomeScreen, TodayScreen } from './src/screens';
 import { generateMockPhase } from './src/utils';
 
 export default function App() {
   const storage = createStorageAdapter();
-  const { state, isLoading, updateUser, addPhotoCheckin, startPhase } = useAppState(storage);
+  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logAdherence } = useAppState(storage);
 
   const handleStartPhase = async () => {
     if (!state?.user) return;
     const phase = generateMockPhase(state.user);
     await startPhase(phase);
+  };
+
+  const getTodayLog = () => {
+    if (!state?.currentPhase) return null;
+    const today = new Date().toISOString().split('T')[0];
+    return state.adherenceLogs.find(
+      log => log.date === today && log.phasePlanId === state.currentPhase?.id
+    ) || null;
   };
 
   if (isLoading) {
@@ -46,12 +54,25 @@ export default function App() {
     );
   }
 
+  if (!state.currentPhase) {
+    return (
+      <View style={styles.container}>
+        <HomeScreen 
+          user={state.user}
+          phase={state.currentPhase}
+          onStartPhase={handleStartPhase}
+        />
+        <StatusBar style="auto" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      <HomeScreen 
-        user={state.user}
+      <TodayScreen 
         phase={state.currentPhase}
-        onStartPhase={handleStartPhase}
+        onLogAdherence={logAdherence}
+        todayLog={getTodayLog()}
       />
       <StatusBar style="auto" />
     </View>
