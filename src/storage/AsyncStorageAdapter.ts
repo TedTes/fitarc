@@ -1,28 +1,57 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppState } from '../types/domain';
+import { AppState, DailyAdherenceLog, PhasePlan } from '../types/domain';
 import { StorageAdapter } from './StorageAdapter';
 
 const STORAGE_KEY = '@physique_ladder:app_state_v1';
 
+const sanitizeAdherenceLog = (log: any): DailyAdherenceLog => {
+  return {
+    ...log,
+    workoutDone: log.workoutDone === true || log.workoutDone === 'true',
+    dietFollowed: log.dietFollowed === true || log.dietFollowed === 'true',
+    adherenceScore: Number(log.adherenceScore) || 0,
+    habits: {
+      stepsTargetMet: log.habits?.stepsTargetMet === true || log.habits?.stepsTargetMet === 'true' ? true : 
+                      log.habits?.stepsTargetMet === false || log.habits?.stepsTargetMet === 'false' ? false : undefined,
+      sleepTargetMet: log.habits?.sleepTargetMet === true || log.habits?.sleepTargetMet === 'true' ? true :
+                      log.habits?.sleepTargetMet === false || log.habits?.sleepTargetMet === 'false' ? false : undefined,
+    },
+  };
+};
+
+const sanitizePhasePlan = (phase: any): PhasePlan | null => {
+  if (!phase) return null;
+  
+  return {
+    ...phase,
+    currentLevelId: Number(phase.currentLevelId) || 0,
+    targetLevelId: Number(phase.targetLevelId) || 0,
+    expectedWeeks: Number(phase.expectedWeeks) || 0,
+    habitTargets: {
+      minStepsPerDay: phase.habitTargets?.minStepsPerDay ? Number(phase.habitTargets.minStepsPerDay) : undefined,
+      minSleepHours: phase.habitTargets?.minSleepHours ? Number(phase.habitTargets.minSleepHours) : undefined,
+    },
+  };
+};
+
 const sanitizeState = (state: any): AppState => {
   return {
     ...state,
-    currentPhase: state.currentPhase ? {
-      ...state.currentPhase,
-      habitTargets: {
-        minStepsPerDay: state.currentPhase.habitTargets?.minStepsPerDay ? Number(state.currentPhase.habitTargets.minStepsPerDay) : undefined,
-        minSleepHours: state.currentPhase.habitTargets?.minSleepHours ? Number(state.currentPhase.habitTargets.minSleepHours) : undefined,
-      },
+    user: state.user ? {
+      ...state.user,
+      age: Number(state.user.age) || 0,
+      heightCm: Number(state.user.heightCm) || 0,
     } : null,
-    adherenceLogs: state.adherenceLogs?.map((log: any) => ({
-      ...log,
-      workoutDone: Boolean(log.workoutDone),
-      dietFollowed: Boolean(log.dietFollowed),
-      habits: {
-        stepsTargetMet: log.habits?.stepsTargetMet !== undefined ? Boolean(log.habits.stepsTargetMet) : undefined,
-        sleepTargetMet: log.habits?.sleepTargetMet !== undefined ? Boolean(log.habits.sleepTargetMet) : undefined,
-      },
-    })) || [],
+    currentPhase: sanitizePhasePlan(state.currentPhase),
+    adherenceLogs: (state.adherenceLogs || []).map(sanitizeAdherenceLog),
+    photoCheckins: state.photoCheckins || [],
+    progressEstimate: state.progressEstimate ? {
+      ...state.progressEstimate,
+      progressPercent: Number(state.progressEstimate.progressPercent) || 0,
+      averageAdherence: state.progressEstimate.averageAdherence ? Number(state.progressEstimate.averageAdherence) : undefined,
+      weeksElapsed: state.progressEstimate.weeksElapsed ? Number(state.progressEstimate.weeksElapsed) : undefined,
+    } : null,
+    version: Number(state.version) || 1,
   };
 };
 

@@ -4,85 +4,16 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
-import { OnboardingScreen, PhotoCaptureScreen, HomeScreen, TodayScreen, ProgressScreen } from './src/screens';
-import { generateMockPhase } from './src/utils';
+import { OnboardingScreen, PhotoCaptureScreen, HomeScreen, TodayScreen, ProgressScreen, PhotoCheckinPromptScreen } from './src/screens';
+import { generateMockPhase, shouldPromptPhotoCheckin } from './src/utils';
 import { useEffect, useState } from 'react';
 
 const Tab = createBottomTabNavigator();
 
-function MainTabs({ state, logAdherence, addPhotoCheckin, recalculateProgress }: any) {
-  const getTodayLog = () => {
-    if (!state?.currentPhase) return null;
-    const today = new Date().toISOString().split('T')[0];
-    return state.adherenceLogs.find(
-      (log: any) => log.date === today && log.phasePlanId === state.currentPhase?.id
-    ) || null;
-  };
-
-  useEffect(() => {
-    if (state?.currentPhase && state.adherenceLogs.length > 0) {
-      recalculateProgress();
-    }
-  }, [state?.adherenceLogs.length]);
-
-  return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: '#2196F3',
-        tabBarInactiveTintColor: '#999',
-        tabBarStyle: { paddingBottom: 8, paddingTop: 8, height: 60 },
-      }}
-    >
-      <Tab.Screen 
-        name="Today" 
-        options={{ tabBarLabel: 'Today' }}
-      >
-        {() => (
-          <TodayScreen 
-            phase={state.currentPhase}
-            onLogAdherence={logAdherence}
-            todayLog={getTodayLog()}
-          />
-        )}
-      </Tab.Screen>
-      <Tab.Screen 
-        name="Progress"
-        options={{ tabBarLabel: 'Progress' }}
-      >
-        {() => (
-          <ProgressScreen 
-            phase={state.currentPhase}
-            photoCheckins={state.photoCheckins}
-            progressEstimate={state.progressEstimate}
-            onTakePhoto={() => addPhotoCheckin}
-          />
-        )}
-      </Tab.Screen>
-    </Tab.Navigator>
-  );
-}
-
 export default function App() {
   const storage = createStorageAdapter();
-  const [hasCleared, setHasCleared] = useState(false);
-
-  // FORCE CLEAR STORAGE ONCE - Remove after first successful run
-  useEffect(() => {
-    const clearStorageOnce = async () => {
-      try {
-        await storage.clearAll();
-        console.log('Storage cleared successfully');
-        setHasCleared(true);
-      } catch (err) {
-        console.error('Failed to clear storage:', err);
-        setHasCleared(true);
-      }
-    };
-    clearStorageOnce();
-  }, []);
-
   const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logAdherence, recalculateProgress } = useAppState(storage);
+  const [showPhotoPrompt, setShowPhotoPrompt] = useState(false);
 
   const handleStartPhase = async () => {
     if (!state?.user) return;
@@ -90,7 +21,28 @@ export default function App() {
     await startPhase(phase);
   };
 
-  if (!hasCleared || isLoading) {
+  useEffect(() => {
+    if (state?.currentPhase && state.adherenceLogs.length > 0) {
+      recalculateProgress();
+    }
+  }, [state?.adherenceLogs?.length]);
+
+  useEffect(() => {
+    if (state?.currentPhase) {
+      const shouldPrompt = shouldPromptPhotoCheckin(state.currentPhase, state.photoCheckins);
+      setShowPhotoPrompt(shouldPrompt);
+    }
+  }, [state?.currentPhase, state?.photoCheckins]);
+
+  const getTodayLog = () => {
+    if (!state?.currentPhase) return null;
+    const today = new Date().toISOString().split('T')[0];
+    return state.adherenceLogs.find(
+      log => log.date === today && log.phasePlanId === state.currentPhase?.id
+    ) || null;
+  };
+
+  if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#2196F3" />
@@ -134,14 +86,61 @@ export default function App() {
     );
   }
 
+  if (showPhotoPrompt) {
+    const phasePhotos = state.photoCheckins.filter(p => p.phasePlanId === state.currentPhase?.id);
+    const lastPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : null;
+
+    return (
+      <View style={styles.container}>
+        <PhotoCheckinPromptScreen 
+          phase={state.currentPhase}
+          lastPhoto={lastPhoto}
+          onTakePhoto={() => setShowPhotoPrompt(false)}
+          onSkip={() => setShowPhotoPrompt(false)}
+        />
+        <StatusBar style="auto" />
+      </View>
+    );
+  }
+
+  const todayLog = getTodayLog();
+
   return (
     <NavigationContainer>
-      <MainTabs 
-        state={state}
-        logAdherence={logAdherence}
-        addPhotoCheckin={addPhotoCheckin}
-        recalculateProgress={recalculateProgress}
-      />
+      <Tab.Navigator
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: '#2196F3',
+          tabBarInactiveTintColor: '#999',
+          tabBarStyle: { paddingBottom: 8, paddingTop: 8, height: 60 },
+        }}
+      >
+        <Tab.Screen 
+          name="Today" 
+          options={{ tabBarLabel: 'Today' }}
+        >
+          {() => (
+            <TodayScreen 
+              phase={state.currentPhase!}
+              onLogAdherence={logAdherence}
+              todayLog={todayLog}
+            />
+          )}
+        </Tab.Screen>
+        <Tab.Screen 
+          name="Progress"
+          options={{ tabBarLabel: 'Progress' }}
+        >
+          {() => (
+            <ProgressScreen 
+              phase={state.currentPhase!}
+              photoCheckins={state.photoCheckins}
+              progressEstimate={state.progressEstimate}
+              onTakePhoto={() => addPhotoCheckin}
+            />
+          )}
+        </Tab.Screen>
+      </Tab.Navigator>
       <StatusBar style="auto" />
     </NavigationContainer>
   );

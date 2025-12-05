@@ -56,7 +56,6 @@ export const PhotoCaptureScreen: React.FC<PhotoCaptureScreenProps> = ({ onComple
       else setBackUri(uri);
     }
   };
-
   const handleSubmit = () => {
     if (!frontUri) {
       Alert.alert('Required', 'Please capture at least a front photo');
