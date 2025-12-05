@@ -1,5 +1,5 @@
 /**
- * Core Domain Types for Physique Ladder MVP
+ * Core Domain Types for fitarcMVP
  * 
  * These types represent the business domain and should remain
  * independent of any storage mechanism (AsyncStorage, Supabase, etc.)
