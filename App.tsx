@@ -2,11 +2,18 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
-import { OnboardingScreen, PhotoCaptureScreen } from './src/screens';
+import { OnboardingScreen, PhotoCaptureScreen, HomeScreen } from './src/screens';
+import { generateMockPhase } from './src/utils';
 
 export default function App() {
   const storage = createStorageAdapter();
-  const { state, isLoading, updateUser, addPhotoCheckin } = useAppState(storage);
+  const { state, isLoading, updateUser, addPhotoCheckin, startPhase } = useAppState(storage);
+
+  const handleStartPhase = async () => {
+    if (!state?.user) return;
+    const phase = generateMockPhase(state.user);
+    await startPhase(phase);
+  };
 
   if (isLoading) {
     return (
@@ -41,6 +48,11 @@ export default function App() {
 
   return (
     <View style={styles.container}>
+      <HomeScreen 
+        user={state.user}
+        phase={state.currentPhase}
+        onStartPhase={handleStartPhase}
+      />
       <StatusBar style="auto" />
     </View>
   );
