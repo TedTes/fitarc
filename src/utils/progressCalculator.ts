@@ -72,3 +72,21 @@ export const shouldPromptPhotoCheckin = (
   
   return daysSinceLastPhoto >= 7;
 };
+
+export const isPhaseComplete = (
+  phase: PhasePlan,
+  progressEstimate: ProgressEstimate | null
+): boolean => {
+  if (!progressEstimate) return false;
+
+  const startDate = new Date(phase.startDate);
+  const today = new Date();
+  const daysElapsed = Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+  const weeksElapsed = daysElapsed / 7;
+
+  const minWeeksForCompletion = phase.expectedWeeks * 0.75;
+  const hasMetTimeRequirement = weeksElapsed >= minWeeksForCompletion;
+  const hasMetProgressRequirement = progressEstimate.progressPercent >= 70;
+
+  return hasMetTimeRequirement && hasMetProgressRequirement;
+};

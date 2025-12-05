@@ -4,21 +4,33 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
-import { OnboardingScreen, PhotoCaptureScreen, HomeScreen, TodayScreen, ProgressScreen, PhotoCheckinPromptScreen } from './src/screens';
-import { generateMockPhase, shouldPromptPhotoCheckin } from './src/utils';
+import { 
+  OnboardingScreen, 
+  PhotoCaptureScreen, 
+  HomeScreen, 
+  TodayScreen, 
+  ProgressScreen, 
+  PhotoCheckinPromptScreen,
+  PhaseCompleteScreen 
+} from './src/screens';
+import { generateMockPhase, shouldPromptPhotoCheckin, isPhaseComplete } from './src/utils';
 import { useEffect, useState } from 'react';
 
 const Tab = createBottomTabNavigator();
 
 export default function App() {
   const storage = createStorageAdapter();
-  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logAdherence, recalculateProgress } = useAppState(storage);
+  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logAdherence, recalculateProgress, completePhase } = useAppState(storage);
   const [showPhotoPrompt, setShowPhotoPrompt] = useState(false);
 
   const handleStartPhase = async () => {
     if (!state?.user) return;
     const phase = generateMockPhase(state.user);
     await startPhase(phase);
+  };
+
+  const handleStartNextPhase = async () => {
+    await completePhase();
   };
 
   useEffect(() => {
@@ -73,13 +85,34 @@ export default function App() {
     );
   }
 
-  if (!state.currentPhase) {
+  if (!state.currentPhase || state.currentPhase.status === 'completed') {
     return (
       <View style={styles.container}>
         <HomeScreen 
           user={state.user}
-          phase={state.currentPhase}
+          phase={null}
           onStartPhase={handleStartPhase}
+        />
+        <StatusBar style="auto" />
+      </View>
+    );
+  }
+
+  const phaseComplete = isPhaseComplete(state.currentPhase, state.progressEstimate);
+
+  if (phaseComplete) {
+    const baselinePhoto = state.photoCheckins.find(p => p.phasePlanId === 'baseline');
+    const phasePhotos = state.photoCheckins.filter(p => p.phasePlanId === state.currentPhase?.id);
+    const latestPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : null;
+
+    return (
+      <View style={styles.container}>
+        <PhaseCompleteScreen 
+          phase={state.currentPhase}
+          beforePhoto={baselinePhoto || null}
+          afterPhoto={latestPhoto}
+          progressPercent={state.progressEstimate?.progressPercent || 0}
+          onStartNextPhase={handleStartNextPhase}
         />
         <StatusBar style="auto" />
       </View>

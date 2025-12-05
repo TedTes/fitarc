@@ -1,2 +1,2 @@
 export { generateMockPhase } from './phasePlanGenerator';
-export { calculateProgress, shouldPromptPhotoCheckin } from './progressCalculator';
+export { calculateProgress, shouldPromptPhotoCheckin, isPhaseComplete } from './progressCalculator';
