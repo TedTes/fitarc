@@ -1,54 +1,27 @@
-import { DailyAdherenceLog, PhasePlan, ProgressEstimate } from '../types/domain';
+import { DailyLog, PhasePlan, ProgressEstimate } from '../types/domain';
 
 export const calculateProgress = (
   phase: PhasePlan,
-  adherenceLogs: DailyAdherenceLog[]
+  dailyLogs: DailyLog[]
 ): ProgressEstimate => {
-  const phaseLogs = adherenceLogs.filter(log => log.phasePlanId === phase.id);
-
-  if (phaseLogs.length === 0) {
-    return {
-      phasePlanId: phase.id,
-      lastUpdated: new Date().toISOString(),
-      progressPercent: 0,
-      averageAdherence: 0,
-      weeksElapsed: 0,
-    };
-  }
+  const phaseLogs = dailyLogs.filter(log => log.phasePlanId === phase.id && log.loggedActivity);
 
   const startDate = new Date(phase.startDate);
   const today = new Date();
   const daysElapsed = Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  const weeksElapsed = daysElapsed / 7;
-
-  const recentLogs = phaseLogs.slice(-14);
-  const totalScore = recentLogs.reduce((sum, log) => sum + log.adherenceScore, 0);
-  const averageAdherence = recentLogs.length > 0 ? totalScore / recentLogs.length : 0;
-
-  let progressGainPerWeek = 0;
-  if (averageAdherence >= 80) {
-    progressGainPerWeek = 15;
-  } else if (averageAdherence >= 60) {
-    progressGainPerWeek = 10;
-  } else if (averageAdherence >= 40) {
-    progressGainPerWeek = 5;
-  } else {
-    progressGainPerWeek = 2;
-  }
-
-  let progressPercent = Math.min(100, Math.floor(weeksElapsed * progressGainPerWeek));
-
-  const minWeeksForCompletion = phase.expectedWeeks * 0.75;
-  if (weeksElapsed < minWeeksForCompletion) {
-    progressPercent = Math.min(progressPercent, 70);
-  }
+  
+  const expectedDays = phase.expectedWeeks * 7;
+  const daysLogged = phaseLogs.length;
+  
+  // Progress = (days logged / expected days) * 100, capped at 100%
+  const progressPercent = Math.min(100, Math.floor((daysLogged / expectedDays) * 100));
 
   return {
     phasePlanId: phase.id,
     lastUpdated: new Date().toISOString(),
-    progressPercent: Math.max(0, Math.min(100, progressPercent)),
-    averageAdherence: Math.round(averageAdherence),
-    weeksElapsed: Math.round(weeksElapsed * 10) / 10,
+    progressPercent,
+    daysActive: daysElapsed,
+    daysLogged,
   };
 };
 
@@ -79,13 +52,9 @@ export const isPhaseComplete = (
 ): boolean => {
   if (!progressEstimate) return false;
 
-  const startDate = new Date(phase.startDate);
-  const today = new Date();
-  const daysElapsed = Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  const weeksElapsed = daysElapsed / 7;
-
-  const minWeeksForCompletion = phase.expectedWeeks * 0.75;
-  const hasMetTimeRequirement = weeksElapsed >= minWeeksForCompletion;
+  // Phase complete when progress >= 70% AND minimum 75% of expected time passed
+  const minDays = phase.expectedWeeks * 7 * 0.75;
+  const hasMetTimeRequirement = progressEstimate.daysActive >= minDays;
   const hasMetProgressRequirement = progressEstimate.progressPercent >= 70;
 
   return hasMetTimeRequirement && hasMetProgressRequirement;

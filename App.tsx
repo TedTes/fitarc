@@ -5,39 +5,100 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
 import { 
-  OnboardingScreen, 
-  PhotoCaptureScreen, 
+  ProfileSetupScreen,
+  CurrentPhysiqueSelectionScreen,
+  TargetPhysiqueSelectionScreen,
   HomeScreen, 
   TodayScreen, 
   ProgressScreen, 
   PhotoCheckinPromptScreen,
+  PhotoCaptureScreen,
   PhaseCompleteScreen 
 } from './src/screens';
-import { generateMockPhase, shouldPromptPhotoCheckin, isPhaseComplete } from './src/utils';
+import { generatePhase, shouldPromptPhotoCheckin, isPhaseComplete } from './src/utils';
 import { useEffect, useState } from 'react';
+import { PhotoCheckin, User } from './src/types/domain';
 
 const Tab = createBottomTabNavigator();
 
+type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'complete';
+
 export default function App() {
   const storage = createStorageAdapter();
-  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logAdherence, recalculateProgress, completePhase } = useAppState(storage);
+  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logDay, recalculateProgress, completePhase } = useAppState(storage);
   const [showPhotoPrompt, setShowPhotoPrompt] = useState(false);
+  const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
+  const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
+  const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
+  
+  // Onboarding state
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('profile');
+  const [tempProfileData, setTempProfileData] = useState<any>(null);
+  const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
+  const [tempCurrentPhotoUri, setTempCurrentPhotoUri] = useState<string | null>(null);
 
-  const handleStartPhase = async () => {
-    if (!state?.user) return;
-    const phase = generateMockPhase(state.user);
-    await startPhase(phase);
+  const handleProfileComplete = (data: {
+    sex: 'male' | 'female' | 'other';
+    age: number;
+    heightCm: number;
+    experienceLevel: 'beginner' | 'intermediate' | 'advanced';
+  }) => {
+    setTempProfileData(data);
+    setOnboardingStep('current_physique');
   };
 
-  const handleStartNextPhase = async () => {
-    await completePhase();
+  const handleCurrentPhysiqueSelect = (levelId: number) => {
+    setTempCurrentLevel(levelId);
+    setOnboardingStep('target_physique');
+  };
+
+  const handleCurrentPhotoUpload = (photoUri: string) => {
+    setTempCurrentPhotoUri(photoUri);
+    setTempCurrentLevel(1); // Default to level 1 if photo uploaded
+    setOnboardingStep('target_physique');
+  };
+
+  const handleTargetPhysiqueSelect = async (targetLevelId: number) => {
+    if (!tempCurrentLevel) return;
+
+    const existingUser = state?.user;
+    const user: User = {
+      id: existingUser?.id || `user_${Date.now()}`,
+      sex: tempProfileData.sex,
+      age: tempProfileData.age,
+      heightCm: tempProfileData.heightCm,
+      experienceLevel: tempProfileData.experienceLevel,
+      currentPhysiqueLevel: tempCurrentLevel,
+      currentPhotoUri: tempCurrentPhotoUri || undefined,
+      createdAt: new Date().toISOString(),
+    };
+
+    await updateUser(user);
+
+    // Create baseline photo if user uploaded one
+    if (tempCurrentPhotoUri) {
+      const baselinePhoto = {
+        id: `photo_${Date.now()}`,
+        date: new Date().toISOString(),
+        phasePlanId: 'baseline',
+        frontUri: tempCurrentPhotoUri,
+        createdAt: new Date().toISOString(),
+      };
+      await addPhotoCheckin(baselinePhoto);
+    }
+
+    // Generate and start phase
+    const phase = generatePhase(user, tempCurrentLevel, targetLevelId);
+    await startPhase(phase);
+    
+    setOnboardingStep('complete');
   };
 
   useEffect(() => {
-    if (state?.currentPhase && state.adherenceLogs.length > 0) {
+    if (state?.currentPhase && state.dailyLogs.length > 0) {
       recalculateProgress();
     }
-  }, [state?.adherenceLogs?.length]);
+  }, [state?.dailyLogs?.length]);
 
   useEffect(() => {
     if (state?.currentPhase) {
@@ -49,51 +110,130 @@ export default function App() {
   const getTodayLog = () => {
     if (!state?.currentPhase) return null;
     const today = new Date().toISOString().split('T')[0];
-    return state.adherenceLogs.find(
+    return state.dailyLogs.find(
       log => log.date === today && log.phasePlanId === state.currentPhase?.id
     ) || null;
+  };
+
+  const handleStartPhaseFromHome = () => {
+    if (!state?.user) {
+      setOnboardingStep('profile');
+      return;
+    }
+
+    setTempProfileData({
+      sex: state.user.sex,
+      age: state.user.age,
+      heightCm: state.user.heightCm,
+      experienceLevel: state.user.experienceLevel,
+    });
+    setTempCurrentLevel(state.user.currentPhysiqueLevel);
+    setTempCurrentPhotoUri(state.user.currentPhotoUri || null);
+    setOnboardingStep('current_physique');
+  };
+
+  const openPhotoCapture = (phaseId: string, options?: { optional?: boolean }) => {
+    setPhotoCapturePhaseId(phaseId);
+    setPhotoCaptureOptional(!!options?.optional);
+    setPhotoCaptureVisible(true);
+  };
+
+  const closePhotoCapture = () => {
+    setPhotoCaptureVisible(false);
+    setPhotoCapturePhaseId(null);
+    setPhotoCaptureOptional(false);
+  };
+
+  const handlePhotoCaptured = async (photo: PhotoCheckin) => {
+    await addPhotoCheckin(photo);
+    closePhotoCapture();
   };
 
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#2196F3" />
+        <ActivityIndicator size="large" color="#6C63FF" />
       </View>
     );
   }
 
-  if (!state?.user) {
-    return (
-      <View style={styles.container}>
-        <OnboardingScreen onComplete={updateUser} />
-        <StatusBar style="auto" />
-      </View>
-    );
+  const shouldShowOnboarding =
+    !state?.user || (onboardingStep !== 'complete' && onboardingStep !== null);
+
+  // Onboarding flow
+  if (shouldShowOnboarding) {
+    if (onboardingStep === 'profile') {
+      return (
+        <View style={styles.container}>
+          <ProfileSetupScreen onComplete={handleProfileComplete} />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
+
+    if (onboardingStep === 'current_physique' && tempProfileData) {
+      return (
+        <View style={styles.container}>
+          <CurrentPhysiqueSelectionScreen 
+            sex={tempProfileData.sex}
+            onSelectLevel={handleCurrentPhysiqueSelect}
+            onUploadPhoto={handleCurrentPhotoUpload}
+          />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
+
+    if (onboardingStep === 'current_physique' && tempProfileData) {
+      return (
+        <View style={styles.container}>
+          <CurrentPhysiqueSelectionScreen 
+            sex={tempProfileData.sex}
+            onSelectLevel={handleCurrentPhysiqueSelect}
+            onUploadPhoto={handleCurrentPhotoUpload}
+          />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
+
+    if (onboardingStep === 'target_physique' && tempCurrentLevel && tempProfileData) {
+      return (
+        <View style={styles.container}>
+          <TargetPhysiqueSelectionScreen 
+            sex={tempProfileData.sex}
+            currentLevelId={tempCurrentLevel}
+            onSelectTarget={handleTargetPhysiqueSelect}
+          />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
   }
 
-  const hasBaselinePhoto = state.photoCheckins.some(p => p.phasePlanId === 'baseline');
-
-  if (!hasBaselinePhoto) {
+  if (isPhotoCaptureVisible && photoCapturePhaseId) {
     return (
       <View style={styles.container}>
         <PhotoCaptureScreen 
-          onComplete={addPhotoCheckin} 
-          phasePlanId="baseline"
+          phasePlanId={photoCapturePhaseId}
+          onComplete={handlePhotoCaptured}
+          onSkip={photoCaptureOptional ? closePhotoCapture : undefined}
+          isOptional={photoCaptureOptional}
         />
-        <StatusBar style="auto" />
+        <StatusBar style="light" />
       </View>
     );
   }
 
-  if (!state.currentPhase || state.currentPhase.status === 'completed') {
+  if (!state?.currentPhase || state.currentPhase.status === 'completed') {
     return (
       <View style={styles.container}>
-        <HomeScreen 
-          user={state.user}
+        {state && <HomeScreen 
+          user={state.user!}
           phase={null}
-          onStartPhase={handleStartPhase}
-        />
-        <StatusBar style="auto" />
+          onStartPhase={handleStartPhaseFromHome}
+        />} 
+        <StatusBar style="light" />
       </View>
     );
   }
@@ -112,9 +252,9 @@ export default function App() {
           beforePhoto={baselinePhoto || null}
           afterPhoto={latestPhoto}
           progressPercent={state.progressEstimate?.progressPercent || 0}
-          onStartNextPhase={handleStartNextPhase}
+          onStartNextPhase={completePhase}
         />
-        <StatusBar style="auto" />
+        <StatusBar style="light" />
       </View>
     );
   }
@@ -123,15 +263,21 @@ export default function App() {
     const phasePhotos = state.photoCheckins.filter(p => p.phasePlanId === state.currentPhase?.id);
     const lastPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : null;
 
+    const handlePromptTakePhoto = () => {
+      if (!state?.currentPhase) return;
+      setShowPhotoPrompt(false);
+      openPhotoCapture(state.currentPhase.id);
+    };
+
     return (
       <View style={styles.container}>
         <PhotoCheckinPromptScreen 
           phase={state.currentPhase}
           lastPhoto={lastPhoto}
-          onTakePhoto={() => setShowPhotoPrompt(false)}
+          onTakePhoto={handlePromptTakePhoto}
           onSkip={() => setShowPhotoPrompt(false)}
         />
-        <StatusBar style="auto" />
+        <StatusBar style="light" />
       </View>
     );
   }
@@ -143,9 +289,15 @@ export default function App() {
       <Tab.Navigator
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: '#2196F3',
-          tabBarInactiveTintColor: '#999',
-          tabBarStyle: { paddingBottom: 8, paddingTop: 8, height: 60 },
+          tabBarActiveTintColor: '#6C63FF',
+          tabBarInactiveTintColor: '#A0A3BD',
+          tabBarStyle: { 
+            paddingBottom: 8, 
+            paddingTop: 8, 
+            height: 60,
+            backgroundColor: '#0A0E27',
+            borderTopColor: '#2A2F4F',
+          },
         }}
       >
         <Tab.Screen 
@@ -155,7 +307,7 @@ export default function App() {
           {() => (
             <TodayScreen 
               phase={state.currentPhase!}
-              onLogAdherence={logAdherence}
+              onLogDay={logDay}
               todayLog={todayLog}
             />
           )}
@@ -169,12 +321,12 @@ export default function App() {
               phase={state.currentPhase!}
               photoCheckins={state.photoCheckins}
               progressEstimate={state.progressEstimate}
-              onTakePhoto={() => addPhotoCheckin}
+              onTakePhoto={() => state.currentPhase && openPhotoCapture(state.currentPhase.id, { optional: true })}
             />
           )}
         </Tab.Screen>
       </Tab.Navigator>
-      <StatusBar style="auto" />
+      <StatusBar style="light" />
     </NavigationContainer>
   );
 }
@@ -184,10 +336,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#0A0E27',
   },
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#0A0E27',
   },
 });

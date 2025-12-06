@@ -1,4 +1,7 @@
-export { OnboardingScreen } from './OnboardingScreen';
+export { ProfileSetupScreen } from './ProfileSetupScreen';
+// export { PhysiqueLevelSelectionScreen } from './PhysiqueLevelSelectionScreen';
+export { CurrentPhysiqueSelectionScreen } from './CurrentPhysiqueSelectionScreen';
+export { TargetPhysiqueSelectionScreen } from './TargetPhysiqueSelectionScreen';
 export { PhotoCaptureScreen } from './PhotoCaptureScreen';
 export { HomeScreen } from './HomeScreen';
 export { TodayScreen } from './TodayScreen';

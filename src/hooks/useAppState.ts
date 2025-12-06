@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { AppState, User, PhasePlan, DailyAdherenceLog, PhotoCheckin, ProgressEstimate, createEmptyAppState } from '../types/domain';
+import { AppState, User, PhasePlan, DailyLog, PhotoCheckin, ProgressEstimate, createEmptyAppState } from '../types/domain';
 import { StorageAdapter } from '../storage';
 
 export const useAppState = (storageAdapter: StorageAdapter) => {
@@ -55,48 +55,31 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         phasePlanId: phase.id,
         lastUpdated: new Date().toISOString(),
         progressPercent: 0,
+        daysActive: 0,
+        daysLogged: 0,
       },
     };
     await persistState(newState);
   }, [state]);
 
-  const logAdherence = useCallback(async (log: DailyAdherenceLog) => {
+  const logDay = useCallback(async (log: DailyLog) => {
     if (!state) return;
     
-    const existingLogIndex = state.adherenceLogs.findIndex(
+    const existingLogIndex = state.dailyLogs.findIndex(
       l => l.date === log.date && l.phasePlanId === log.phasePlanId
     );
 
-    let updatedLogs: DailyAdherenceLog[];
+    let updatedLogs: DailyLog[];
     if (existingLogIndex >= 0) {
-      updatedLogs = [...state.adherenceLogs];
-      updatedLogs[existingLogIndex] = {
-        ...log,
-        workoutDone: Boolean(log.workoutDone),
-        dietFollowed: Boolean(log.dietFollowed),
-        habits: {
-          stepsTargetMet: Boolean(log.habits.stepsTargetMet),
-          sleepTargetMet: Boolean(log.habits.sleepTargetMet),
-        },
-      };
+      updatedLogs = [...state.dailyLogs];
+      updatedLogs[existingLogIndex] = log;
     } else {
-      updatedLogs = [
-        ...state.adherenceLogs, 
-        {
-          ...log,
-          workoutDone: Boolean(log.workoutDone),
-          dietFollowed: Boolean(log.dietFollowed),
-          habits: {
-            stepsTargetMet: Boolean(log.habits.stepsTargetMet),
-            sleepTargetMet: Boolean(log.habits.sleepTargetMet),
-          },
-        }
-      ];
+      updatedLogs = [...state.dailyLogs, log];
     }
 
     const newState: AppState = {
       ...state,
-      adherenceLogs: updatedLogs,
+      dailyLogs: updatedLogs,
     };
     await persistState(newState);
   }, [state]);
@@ -131,12 +114,11 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     await persistState(newState);
   }, [state]);
 
-
   const recalculateProgress = useCallback(async () => {
     if (!state?.currentPhase) return;
     
     const { calculateProgress } = require('../utils/progressCalculator');
-    const newEstimate = calculateProgress(state.currentPhase, state.adherenceLogs);
+    const newEstimate = calculateProgress(state.currentPhase, state.dailyLogs);
     
     await updateProgress(newEstimate);
   }, [state, updateProgress]);
@@ -158,12 +140,12 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     error,
     updateUser,
     startPhase,
-    logAdherence,
+    logDay,
     addPhotoCheckin,
     updateProgress,
     completePhase,
     clearAllData,
     refreshState: loadState,
-    recalculateProgress
+    recalculateProgress,
   };
 };

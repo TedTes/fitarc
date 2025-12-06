@@ -1,21 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppState, DailyAdherenceLog, PhasePlan } from '../types/domain';
+import { AppState, DailyLog, PhasePlan } from '../types/domain';
 import { StorageAdapter } from './StorageAdapter';
 
-const STORAGE_KEY = '@physique_ladder:app_state_v1';
+const STORAGE_KEY = '@fitarc:app_state_v1';
 
-const sanitizeAdherenceLog = (log: any): DailyAdherenceLog => {
+const sanitizeDailyLog = (log: any): DailyLog => {
   return {
     ...log,
-    workoutDone: log.workoutDone === true || log.workoutDone === 'true',
-    dietFollowed: log.dietFollowed === true || log.dietFollowed === 'true',
-    adherenceScore: Number(log.adherenceScore) || 0,
-    habits: {
-      stepsTargetMet: log.habits?.stepsTargetMet === true || log.habits?.stepsTargetMet === 'true' ? true : 
-                      log.habits?.stepsTargetMet === false || log.habits?.stepsTargetMet === 'false' ? false : undefined,
-      sleepTargetMet: log.habits?.sleepTargetMet === true || log.habits?.sleepTargetMet === 'true' ? true :
-                      log.habits?.sleepTargetMet === false || log.habits?.sleepTargetMet === 'false' ? false : undefined,
-    },
+    loggedActivity: log.loggedActivity === true || log.loggedActivity === 'true',
   };
 };
 
@@ -27,10 +19,6 @@ const sanitizePhasePlan = (phase: any): PhasePlan | null => {
     currentLevelId: Number(phase.currentLevelId) || 0,
     targetLevelId: Number(phase.targetLevelId) || 0,
     expectedWeeks: Number(phase.expectedWeeks) || 0,
-    habitTargets: {
-      minStepsPerDay: phase.habitTargets?.minStepsPerDay ? Number(phase.habitTargets.minStepsPerDay) : undefined,
-      minSleepHours: phase.habitTargets?.minSleepHours ? Number(phase.habitTargets.minSleepHours) : undefined,
-    },
   };
 };
 
@@ -41,15 +29,16 @@ const sanitizeState = (state: any): AppState => {
       ...state.user,
       age: Number(state.user.age) || 0,
       heightCm: Number(state.user.heightCm) || 0,
+      currentPhysiqueLevel: Number(state.user.currentPhysiqueLevel) || 1,
     } : null,
     currentPhase: sanitizePhasePlan(state.currentPhase),
-    adherenceLogs: (state.adherenceLogs || []).map(sanitizeAdherenceLog),
+    dailyLogs: (state.dailyLogs || []).map(sanitizeDailyLog),
     photoCheckins: state.photoCheckins || [],
     progressEstimate: state.progressEstimate ? {
       ...state.progressEstimate,
       progressPercent: Number(state.progressEstimate.progressPercent) || 0,
-      averageAdherence: state.progressEstimate.averageAdherence ? Number(state.progressEstimate.averageAdherence) : undefined,
-      weeksElapsed: state.progressEstimate.weeksElapsed ? Number(state.progressEstimate.weeksElapsed) : undefined,
+      daysActive: Number(state.progressEstimate.daysActive) || 0,
+      daysLogged: Number(state.progressEstimate.daysLogged) || 0,
     } : null,
     version: Number(state.version) || 1,
   };

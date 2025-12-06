@@ -1,350 +1,242 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import { PhasePlan, DailyAdherenceLog, WorkoutSession } from '../types/domain';
+import { LinearGradient } from 'expo-linear-gradient';
+import { PhasePlan, DailyLog } from '../types/domain';
 
 type TodayScreenProps = {
   phase: PhasePlan;
-  onLogAdherence: (log: DailyAdherenceLog) => void;
-  todayLog: DailyAdherenceLog | null;
+  onLogDay: (log: DailyLog) => void;
+  todayLog: DailyLog | null;
 };
 
-export const TodayScreen: React.FC<TodayScreenProps> = ({ phase, onLogAdherence, todayLog }) => {
-  const [workoutDone, setWorkoutDone] = useState(todayLog?.workoutDone || false);
-  const [dietFollowed, setDietFollowed] = useState(todayLog?.dietFollowed || false);
-  const [stepsTargetMet, setStepsTargetMet] = useState(todayLog?.habits.stepsTargetMet || false);
-  const [sleepTargetMet, setSleepTargetMet] = useState(todayLog?.habits.sleepTargetMet || false);
+export const TodayScreen: React.FC<TodayScreenProps> = ({ phase, onLogDay, todayLog }) => {
+  const [isMarkedComplete, setIsMarkedComplete] = useState(false);
 
   useEffect(() => {
-    if (todayLog) {
-      setWorkoutDone(todayLog.workoutDone);
-      setDietFollowed(todayLog.dietFollowed);
-      setStepsTargetMet(todayLog.habits.stepsTargetMet || false);
-      setSleepTargetMet(todayLog.habits.sleepTargetMet || false);
-    }
+    setIsMarkedComplete(todayLog?.loggedActivity === true);
   }, [todayLog]);
 
-  const getTodayWorkout = (): WorkoutSession | null => {
-    const dayOfWeek = new Date().getDay();
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const todayName = dayNames[dayOfWeek];
-
-    return phase.workoutSessions.find(session => 
-      session.dayHint?.toLowerCase().includes(todayName.toLowerCase())
-    ) || null;
-  };
-
-  const calculateAdherenceScore = (): number => {
-    let score = 0;
-    if (workoutDone) score += 40;
-    if (dietFollowed) score += 40;
-    if (stepsTargetMet) score += 10;
-    if (sleepTargetMet) score += 10;
-    return score;
-  };
-
-  const handleSave = () => {
+  const handleToggleComplete = () => {
     const today = new Date().toISOString().split('T')[0];
-    const log: DailyAdherenceLog = {
+    const newStatus = !isMarkedComplete;
+    
+    const log: DailyLog = {
       id: todayLog?.id || `log_${Date.now()}`,
       date: today,
       phasePlanId: phase.id,
-      workoutDone,
-      dietFollowed,
-      habits: {
-        stepsTargetMet,
-        sleepTargetMet,
-      },
-      adherenceScore: calculateAdherenceScore(),
+      loggedActivity: newStatus,
       createdAt: new Date().toISOString(),
     };
-    onLogAdherence(log);
+    
+    onLogDay(log);
+    setIsMarkedComplete(newStatus);
   };
 
-  const todayWorkout = getTodayWorkout();
-  const adherenceScore = calculateAdherenceScore();
+  const startDate = new Date(phase.startDate);
+  const today = new Date();
+  const daysActive = Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+  const expectedDays = phase.expectedWeeks * 7;
+  const daysRemaining = expectedDays - daysActive;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Today</Text>
-      <Text style={styles.date}>{new Date().toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        month: 'long', 
-        day: 'numeric' 
-      })}</Text>
+    <View style={styles.container}>
+      <LinearGradient
+        colors={['#0A0E27', '#151932', '#1E2340']}
+        style={styles.gradient}
+      >
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <Text style={styles.title}>Today</Text>
+          <Text style={styles.date}>{new Date().toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            month: 'long', 
+            day: 'numeric' 
+          })}</Text>
 
-      {todayWorkout && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Workout</Text>
-            <TouchableOpacity
-              style={[styles.checkbox, workoutDone && styles.checkboxChecked]}
-              onPress={() => setWorkoutDone(!workoutDone)}
-            >
-              {workoutDone && <Text style={styles.checkmark}>✓</Text>}
-            </TouchableOpacity>
-          </View>
-          
-          <Text style={styles.workoutName}>{todayWorkout.name}</Text>
-          
-          <View style={styles.exerciseList}>
-            {todayWorkout.exercises.map((exercise, index) => (
-              <View key={index} style={styles.exerciseRow}>
-                <Text style={styles.exerciseName}>{exercise.name}</Text>
-                <Text style={styles.exerciseDetails}>
-                  {exercise.sets} × {exercise.repsRange}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          {todayWorkout.exercises.some(e => e.notes) && (
-            <View style={styles.notesSection}>
-              {todayWorkout.exercises.filter(e => e.notes).map((exercise, index) => (
-                <Text key={index} style={styles.note}>
-                  • {exercise.name}: {exercise.notes}
-                </Text>
-              ))}
+          <View style={styles.phaseCard}>
+            <Text style={styles.phaseTitle}>Current Phase</Text>
+            <View style={styles.phaseRow}>
+              <Text style={styles.phaseLabel}>Target:</Text>
+              <Text style={styles.phaseValue}>Level {phase.currentLevelId} → {phase.targetLevelId}</Text>
             </View>
-          )}
-        </View>
-      )}
-
-      {!todayWorkout && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Rest Day</Text>
-          <Text style={styles.restMessage}>No workout scheduled today. Focus on recovery!</Text>
-        </View>
-      )}
-
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Diet</Text>
-          <TouchableOpacity
-            style={[styles.checkbox, dietFollowed && styles.checkboxChecked]}
-            onPress={() => setDietFollowed(!dietFollowed)}
-          >
-            {dietFollowed && <Text style={styles.checkmark}>✓</Text>}
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.dietMode}>{phase.dietMode.modeType.replace('_', ' ')}</Text>
-        <Text style={styles.dietDescription}>{phase.dietMode.description}</Text>
-
-        <View style={styles.rulesList}>
-          <Text style={styles.rulesTitle}>Daily Rules:</Text>
-          {phase.dietMode.rules.map((rule, index) => (
-            <Text key={index} style={styles.ruleItem}>• {rule}</Text>
-          ))}
-        </View>
-      </View>
-
-      {(phase.habitTargets.minStepsPerDay || phase.habitTargets.minSleepHours) && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Habits</Text>
-          
-          {phase.habitTargets.minStepsPerDay && (
-            <TouchableOpacity
-              style={styles.habitRow}
-              onPress={() => setStepsTargetMet(!stepsTargetMet)}
-            >
-              <View style={[styles.checkbox, stepsTargetMet && styles.checkboxChecked]}>
-                {stepsTargetMet && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <Text style={styles.habitText}>
-                {phase.habitTargets.minStepsPerDay}+ steps today
+            <View style={styles.phaseRow}>
+              <Text style={styles.phaseLabel}>Days Active:</Text>
+              <Text style={styles.phaseValue}>{daysActive}</Text>
+            </View>
+            <View style={styles.phaseRow}>
+              <Text style={styles.phaseLabel}>Days Remaining:</Text>
+              <Text style={[styles.phaseValue, styles.highlight]}>
+                {daysRemaining > 0 ? daysRemaining : 0}
               </Text>
-            </TouchableOpacity>
-          )}
+            </View>
+          </View>
 
-          {phase.habitTargets.minSleepHours && (
-            <TouchableOpacity
-              style={styles.habitRow}
-              onPress={() => setSleepTargetMet(!sleepTargetMet)}
+          <View style={styles.actionCard}>
+            <View style={styles.iconContainer}>
+              <Text style={styles.icon}>{isMarkedComplete ? '✅' : '📋'}</Text>
+            </View>
+            <Text style={styles.actionTitle}>
+              {isMarkedComplete ? "Today's Progress Logged!" : 'Log Today\'s Progress'}
+            </Text>
+            <Text style={styles.actionDescription}>
+              {isMarkedComplete 
+                ? 'Great work! Keep the momentum going.'
+                : 'Mark today complete to track your progress toward your goal.'}
+            </Text>
+
+            <TouchableOpacity 
+              style={styles.completeButton} 
+              onPress={handleToggleComplete}
             >
-              <View style={[styles.checkbox, sleepTargetMet && styles.checkboxChecked]}>
-                {sleepTargetMet && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <Text style={styles.habitText}>
-                {phase.habitTargets.minSleepHours}h+ sleep
-              </Text>
+              <LinearGradient
+                colors={isMarkedComplete ? ['#2A2F4F', '#1E2340'] : ['#00F5A0', '#00D9A3']}
+                style={styles.completeButtonGradient}
+              >
+                <Text style={[
+                  styles.completeButtonText,
+                  isMarkedComplete && styles.completeButtonTextInactive
+                ]}>
+                  {isMarkedComplete ? 'Unmark Day' : 'Mark Day Complete'}
+                </Text>
+              </LinearGradient>
             </TouchableOpacity>
-          )}
-        </View>
-      )}
+          </View>
 
-      <View style={styles.scoreCard}>
-        <Text style={styles.scoreLabel}>Today's Adherence Score</Text>
-        <Text style={styles.scoreValue}>{adherenceScore}/100</Text>
-      </View>
-
-      <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-        <Text style={styles.saveButtonText}>Save Progress</Text>
-      </TouchableOpacity>
-    </ScrollView>
+          <View style={styles.tipCard}>
+            <Text style={styles.tipIcon}>💡</Text>
+            <Text style={styles.tipText}>
+              Consistency is key! Mark each day to track your progress accurately.
+            </Text>
+          </View>
+        </ScrollView>
+      </LinearGradient>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: '#0A0E27',
+  },
+  gradient: {
+    flex: 1,
+  },
+  scrollContent: {
     flexGrow: 1,
-    backgroundColor: '#f5f5f5',
     padding: 20,
     paddingTop: 60,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#333',
+    color: '#FFFFFF',
     marginBottom: 4,
   },
   date: {
     fontSize: 16,
-    color: '#666',
+    color: '#A0A3BD',
     marginBottom: 24,
   },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+  phaseCard: {
+    backgroundColor: '#151932',
+    borderRadius: 16,
     padding: 20,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  phaseTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
     marginBottom: 16,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+  phaseRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
   },
-  checkbox: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#ddd',
+  phaseLabel: {
+    fontSize: 14,
+    color: '#A0A3BD',
+  },
+  phaseValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  highlight: {
+    color: '#00F5A0',
+  },
+  actionCard: {
+    backgroundColor: '#151932',
+    borderRadius: 16,
+    padding: 24,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    alignItems: 'center',
+  },
+  iconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#1E2340',
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 16,
   },
-  checkboxChecked: {
-    backgroundColor: '#4CAF50',
-    borderColor: '#4CAF50',
+  icon: {
+    fontSize: 40,
   },
-  checkmark: {
-    color: '#fff',
-    fontSize: 18,
+  actionTitle: {
+    fontSize: 20,
     fontWeight: 'bold',
-  },
-  workoutName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#2196F3',
-    marginBottom: 16,
-  },
-  exerciseList: {
-    gap: 12,
-  },
-  exerciseRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  exerciseName: {
-    fontSize: 16,
-    color: '#333',
-    flex: 1,
-  },
-  exerciseDetails: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
-  notesSection: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
-  },
-  note: {
-    fontSize: 13,
-    color: '#666',
-    fontStyle: 'italic',
-    marginBottom: 4,
-  },
-  restMessage: {
-    fontSize: 16,
-    color: '#666',
-    marginTop: 8,
-  },
-  dietMode: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2196F3',
-    textTransform: 'capitalize',
+    color: '#FFFFFF',
     marginBottom: 8,
+    textAlign: 'center',
   },
-  dietDescription: {
+  actionDescription: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
+    color: '#A0A3BD',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
   },
-  rulesList: {
-    backgroundColor: '#f9f9f9',
-    padding: 12,
-    borderRadius: 8,
-  },
-  rulesTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  ruleItem: {
-    fontSize: 14,
-    color: '#333',
-    marginBottom: 4,
-  },
-  habitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 12,
-  },
-  habitText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  scoreCard: {
-    backgroundColor: '#2196F3',
+  completeButton: {
+    width: '100%',
     borderRadius: 12,
-    padding: 20,
-    alignItems: 'center',
-    marginBottom: 16,
+    overflow: 'hidden',
   },
-  scoreLabel: {
-    fontSize: 14,
-    color: '#fff',
-    marginBottom: 8,
-  },
-  scoreValue: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  saveButton: {
-    backgroundColor: '#4CAF50',
+  completeButtonGradient: {
     paddingVertical: 16,
-    borderRadius: 12,
     alignItems: 'center',
   },
-  saveButtonText: {
-    color: '#fff',
+  completeButtonText: {
+    color: '#0A0E27',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: 'bold',
+  },
+  completeButtonTextInactive: {
+    color: '#A0A3BD',
+  },
+  tipCard: {
+    backgroundColor: '#1E2340',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  tipIcon: {
+    fontSize: 24,
+  },
+  tipText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#A0A3BD',
+    lineHeight: 20,
   },
 });
