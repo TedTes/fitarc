@@ -8,14 +8,14 @@ import {
   ProfileSetupScreen,
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
-  HomeScreen, 
-  TodayScreen, 
+  DashboardScreen,
+  PlansScreen,
   ProgressScreen, 
-  PhotoCheckinPromptScreen,
   PhotoCaptureScreen,
-  PhaseCompleteScreen 
+  PhaseCompleteScreen,
+  ProfileScreen
 } from './src/screens';
-import { generatePhase, shouldPromptPhotoCheckin, isPhaseComplete } from './src/utils';
+import { generatePhase,  isPhaseComplete } from './src/utils';
 import { useEffect, useState } from 'react';
 import { PhotoCheckin, User } from './src/types/domain';
 
@@ -25,23 +25,24 @@ type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'comp
 
 export default function App() {
   const storage = createStorageAdapter();
-  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, logDay, recalculateProgress, completePhase } = useAppState(storage);
-  const [showPhotoPrompt, setShowPhotoPrompt] = useState(false);
+  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, markDayConsistent, recalculateProgress, completePhase, seedPerformanceData, toggleWorkoutExercise, toggleMealCompletion, reorderWorkoutExercise, regenerateWorkoutPlan, regenerateMealPlan } = useAppState(storage);
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
   const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
   const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
+  const [isProfileVisible, setProfileVisible] = useState(false);
   
   // Onboarding state
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('profile');
   const [tempProfileData, setTempProfileData] = useState<any>(null);
   const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
-  const [tempCurrentPhotoUri, setTempCurrentPhotoUri] = useState<string | null>(null);
 
   const handleProfileComplete = (data: {
     sex: 'male' | 'female' | 'other';
     age: number;
     heightCm: number;
     experienceLevel: 'beginner' | 'intermediate' | 'advanced';
+    trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
+    eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
   }) => {
     setTempProfileData(data);
     setOnboardingStep('current_physique');
@@ -49,12 +50,6 @@ export default function App() {
 
   const handleCurrentPhysiqueSelect = (levelId: number) => {
     setTempCurrentLevel(levelId);
-    setOnboardingStep('target_physique');
-  };
-
-  const handleCurrentPhotoUpload = (photoUri: string) => {
-    setTempCurrentPhotoUri(photoUri);
-    setTempCurrentLevel(1); // Default to level 1 if photo uploaded
     setOnboardingStep('target_physique');
   };
 
@@ -69,53 +64,30 @@ export default function App() {
       heightCm: tempProfileData.heightCm,
       experienceLevel: tempProfileData.experienceLevel,
       currentPhysiqueLevel: tempCurrentLevel,
-      currentPhotoUri: tempCurrentPhotoUri || undefined,
+      trainingSplit: tempProfileData.trainingSplit || 'full_body',
+      eatingMode: tempProfileData.eatingMode || 'maintenance',
       createdAt: new Date().toISOString(),
     };
 
     await updateUser(user);
 
-    // Create baseline photo if user uploaded one
-    if (tempCurrentPhotoUri) {
-      const baselinePhoto = {
-        id: `photo_${Date.now()}`,
-        date: new Date().toISOString(),
-        phasePlanId: 'baseline',
-        frontUri: tempCurrentPhotoUri,
-        createdAt: new Date().toISOString(),
-      };
-      await addPhotoCheckin(baselinePhoto);
-    }
-
     // Generate and start phase
     const phase = generatePhase(user, tempCurrentLevel, targetLevelId);
     await startPhase(phase);
+    await seedPerformanceData(phase, user);
     
+    // Open photo capture for baseline photo
     setOnboardingStep('complete');
+    openPhotoCapture('baseline');
   };
 
   useEffect(() => {
-    if (state?.currentPhase && state.dailyLogs.length > 0) {
+    if (state?.currentPhase && state.dailyConsistency.length > 0) {
       recalculateProgress();
     }
-  }, [state?.dailyLogs?.length]);
+  }, [state?.dailyConsistency?.length]);
 
-  useEffect(() => {
-    if (state?.currentPhase) {
-      const shouldPrompt = shouldPromptPhotoCheckin(state.currentPhase, state.photoCheckins);
-      setShowPhotoPrompt(shouldPrompt);
-    }
-  }, [state?.currentPhase, state?.photoCheckins]);
-
-  const getTodayLog = () => {
-    if (!state?.currentPhase) return null;
-    const today = new Date().toISOString().split('T')[0];
-    return state.dailyLogs.find(
-      log => log.date === today && log.phasePlanId === state.currentPhase?.id
-    ) || null;
-  };
-
-  const handleStartPhaseFromHome = () => {
+  const handleStartPhaseFromDashboard = () => {
     if (!state?.user) {
       setOnboardingStep('profile');
       return;
@@ -126,9 +98,10 @@ export default function App() {
       age: state.user.age,
       heightCm: state.user.heightCm,
       experienceLevel: state.user.experienceLevel,
+      trainingSplit: state.user.trainingSplit,
+      eatingMode: state.user.eatingMode,
     });
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
-    setTempCurrentPhotoUri(state.user.currentPhotoUri || null);
     setOnboardingStep('current_physique');
   };
 
@@ -162,14 +135,14 @@ export default function App() {
 
   // Onboarding flow
   if (shouldShowOnboarding) {
-    if (onboardingStep === 'profile') {
-      return (
-        <View style={styles.container}>
-          <ProfileSetupScreen onComplete={handleProfileComplete} />
-          <StatusBar style="light" />
-        </View>
-      );
-    }
+    // if (onboardingStep === 'profile') {
+    //   return (
+    //     <View style={styles.container}>
+    //       <ProfileSetupScreen onComplete={handleProfileComplete} />
+    //       <StatusBar style="light" />
+    //     </View>
+    //   );
+    // }
 
     if (onboardingStep === 'current_physique' && tempProfileData) {
       return (
@@ -177,20 +150,6 @@ export default function App() {
           <CurrentPhysiqueSelectionScreen 
             sex={tempProfileData.sex}
             onSelectLevel={handleCurrentPhysiqueSelect}
-            onUploadPhoto={handleCurrentPhotoUpload}
-          />
-          <StatusBar style="light" />
-        </View>
-      );
-    }
-
-    if (onboardingStep === 'current_physique' && tempProfileData) {
-      return (
-        <View style={styles.container}>
-          <CurrentPhysiqueSelectionScreen 
-            sex={tempProfileData.sex}
-            onSelectLevel={handleCurrentPhysiqueSelect}
-            onUploadPhoto={handleCurrentPhotoUpload}
           />
           <StatusBar style="light" />
         </View>
@@ -211,6 +170,44 @@ export default function App() {
     }
   }
 
+  if (isProfileVisible && state?.user) {
+    return (
+      <View style={styles.container}>
+        <ProfileScreen 
+          user={state.user}
+          onSave={updateUser}
+          onClose={() => setProfileVisible(false)}
+          onChangeCurrentLevel={() => {
+            setProfileVisible(false);
+            setTempProfileData({
+              sex: state.user!.sex,
+              age: state.user!.age,
+              heightCm: state.user!.heightCm,
+              experienceLevel: state.user!.experienceLevel,
+              trainingSplit: state.user!.trainingSplit,
+              eatingMode: state.user!.eatingMode,
+            });
+            setOnboardingStep('current_physique');
+          }}
+          onChangeTargetLevel={() => {
+            setProfileVisible(false);
+            setTempProfileData({
+              sex: state.user!.sex,
+              age: state.user!.age,
+              heightCm: state.user!.heightCm,
+              experienceLevel: state.user!.experienceLevel,
+              trainingSplit: state.user!.trainingSplit,
+              eatingMode: state.user!.eatingMode,
+            });
+            setTempCurrentLevel(state.user!.currentPhysiqueLevel);
+            setOnboardingStep('target_physique');
+          }}
+        />
+        <StatusBar style="light" />
+      </View>
+    );
+  }
+
   if (isPhotoCaptureVisible && photoCapturePhaseId) {
     return (
       <View style={styles.container}>
@@ -225,64 +222,26 @@ export default function App() {
     );
   }
 
-  if (!state?.currentPhase || state.currentPhase.status === 'completed') {
-    return (
-      <View style={styles.container}>
-        {state && <HomeScreen 
-          user={state.user!}
-          phase={null}
-          onStartPhase={handleStartPhaseFromHome}
-        />} 
-        <StatusBar style="light" />
-      </View>
-    );
-  }
+  const phaseComplete = state?.currentPhase ? isPhaseComplete(state.currentPhase, state.progressEstimate) : false;
 
-  const phaseComplete = isPhaseComplete(state.currentPhase, state.progressEstimate);
+  // if (phaseComplete && state?.currentPhase) {
+  //   const baselinePhoto = state.photoCheckins.find(p => p.phasePlanId === 'baseline');
+  //   const phasePhotos = state.photoCheckins.filter(p => p.phasePlanId === state.currentPhase?.id);
+  //   const latestPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : null;
 
-  if (phaseComplete) {
-    const baselinePhoto = state.photoCheckins.find(p => p.phasePlanId === 'baseline');
-    const phasePhotos = state.photoCheckins.filter(p => p.phasePlanId === state.currentPhase?.id);
-    const latestPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : null;
-
-    return (
-      <View style={styles.container}>
-        <PhaseCompleteScreen 
-          phase={state.currentPhase}
-          beforePhoto={baselinePhoto || null}
-          afterPhoto={latestPhoto}
-          progressPercent={state.progressEstimate?.progressPercent || 0}
-          onStartNextPhase={completePhase}
-        />
-        <StatusBar style="light" />
-      </View>
-    );
-  }
-
-  if (showPhotoPrompt) {
-    const phasePhotos = state.photoCheckins.filter(p => p.phasePlanId === state.currentPhase?.id);
-    const lastPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : null;
-
-    const handlePromptTakePhoto = () => {
-      if (!state?.currentPhase) return;
-      setShowPhotoPrompt(false);
-      openPhotoCapture(state.currentPhase.id);
-    };
-
-    return (
-      <View style={styles.container}>
-        <PhotoCheckinPromptScreen 
-          phase={state.currentPhase}
-          lastPhoto={lastPhoto}
-          onTakePhoto={handlePromptTakePhoto}
-          onSkip={() => setShowPhotoPrompt(false)}
-        />
-        <StatusBar style="light" />
-      </View>
-    );
-  }
-
-  const todayLog = getTodayLog();
+  //   return (
+  //     <View style={styles.container}>
+  //       <PhaseCompleteScreen 
+  //         phase={state.currentPhase}
+  //         beforePhoto={baselinePhoto || null}
+  //         afterPhoto={latestPhoto}
+  //         progressPercent={state.progressEstimate?.progressPercent || 0}
+  //         onStartNextPhase={completePhase}
+  //       />
+  //       <StatusBar style="light" />
+  //     </View>
+  //   );
+  // }
 
   return (
     <NavigationContainer>
@@ -301,14 +260,43 @@ export default function App() {
         }}
       >
         <Tab.Screen 
-          name="Today" 
-          options={{ tabBarLabel: 'Today' }}
+          name="Home" 
+          options={{ tabBarLabel: 'Home' }}
         >
           {() => (
-            <TodayScreen 
-              phase={state.currentPhase!}
-              onLogDay={logDay}
-              todayLog={todayLog}
+           state &&  <DashboardScreen 
+              user={state.user!}
+              phase={state.currentPhase}
+              onMarkConsistent={markDayConsistent}
+              workoutLogs={state.workoutLogs}
+              workoutSessions={state.workoutSessions}
+              mealPlans={state.mealPlans}
+              strengthSnapshots={state.strengthSnapshots}
+              progressEstimate={state.progressEstimate}
+              onProfilePress={() => setProfileVisible(true)}
+              onStartPhase={handleStartPhaseFromDashboard}
+              onToggleWorkoutExercise={toggleWorkoutExercise}
+              onToggleMeal={toggleMealCompletion}
+              onRegenerateWorkoutPlan={regenerateWorkoutPlan}
+              onRegenerateMealPlan={regenerateMealPlan}
+            />
+          )}
+        </Tab.Screen>
+        <Tab.Screen 
+          name="Plans"
+          options={{ tabBarLabel: 'Plans' }}
+        >
+          {() => (
+            state && <PlansScreen
+              user={state.user!}
+              phase={state.currentPhase}
+              workoutSessions={state.workoutSessions}
+              mealPlans={state.mealPlans}
+              onToggleWorkoutExercise={toggleWorkoutExercise}
+              onReorderWorkoutExercise={reorderWorkoutExercise}
+              onRegenerateWorkoutPlan={regenerateWorkoutPlan}
+              onToggleMeal={toggleMealCompletion}
+              onRegenerateMealPlan={regenerateMealPlan}
             />
           )}
         </Tab.Screen>
@@ -317,10 +305,14 @@ export default function App() {
           options={{ tabBarLabel: 'Progress' }}
         >
           {() => (
-            <ProgressScreen 
+           state &&  <ProgressScreen 
               phase={state.currentPhase!}
               photoCheckins={state.photoCheckins}
               progressEstimate={state.progressEstimate}
+              dailyConsistency={state.dailyConsistency}
+              workoutLogs={state.workoutLogs}
+              mealPlans={state.mealPlans}
+              strengthSnapshots={state.strengthSnapshots}
               onTakePhoto={() => state.currentPhase && openPhotoCapture(state.currentPhase.id, { optional: true })}
             />
           )}

@@ -1,10 +1,9 @@
 export { ProfileSetupScreen } from './ProfileSetupScreen';
-// export { PhysiqueLevelSelectionScreen } from './PhysiqueLevelSelectionScreen';
 export { CurrentPhysiqueSelectionScreen } from './CurrentPhysiqueSelectionScreen';
 export { TargetPhysiqueSelectionScreen } from './TargetPhysiqueSelectionScreen';
 export { PhotoCaptureScreen } from './PhotoCaptureScreen';
-export { HomeScreen } from './HomeScreen';
-export { TodayScreen } from './TodayScreen';
+export { DashboardScreen } from './DashboardScreen';
+export { PlansScreen } from './PlansScreen';
 export { ProgressScreen } from './ProgressScreen';
-export { PhotoCheckinPromptScreen } from './PhotoCheckinPromptScreen';
 export { PhaseCompleteScreen } from './PhaseCompleteScreen';
+export { ProfileScreen } from './ProfileScreen';

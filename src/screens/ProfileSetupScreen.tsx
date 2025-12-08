@@ -8,6 +8,8 @@ type ProfileSetupScreenProps = {
     age: number;
     heightCm: number;
     experienceLevel: 'beginner' | 'intermediate' | 'advanced';
+    trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
+    eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
   }) => void;
 };
 
@@ -16,6 +18,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
   const [age, setAge] = useState('');
   const [heightCm, setHeightCm] = useState('');
   const [experienceLevel, setExperienceLevel] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner');
+  const [trainingSplit, setTrainingSplit] = useState<'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom'>('full_body');
+  const [eatingMode, setEatingMode] = useState<'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance'>('maintenance');
 
   const handleContinue = () => {
     const ageNum = parseInt(age, 10);
@@ -36,6 +40,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
       age: ageNum,
       heightCm: heightNum,
       experienceLevel,
+      trainingSplit,
+      eatingMode,
     });
   };
 
@@ -58,10 +64,12 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
           colors={['#6C63FF', '#5449CC']}
           style={styles.optionButtonGradient}
         >
-          <Text style={styles.optionTextSelected}>{label}</Text>
+          <Text style={styles.optionButtonTextSelected}>{label}</Text>
         </LinearGradient>
       )}
-      {!selected && <Text style={styles.optionText}>{label}</Text>}
+      {!selected && (
+        <Text style={styles.optionButtonText}>{label}</Text>
+      )}
     </TouchableOpacity>
   );
 
@@ -73,13 +81,13 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>Complete Your Profile</Text>
-            <Text style={styles.subtitle}>Help us personalize your experience</Text>
+            <Text style={styles.title}>Welcome to FitArc</Text>
+            <Text style={styles.subtitle}>Let's set up your profile</Text>
           </View>
 
           <View style={styles.section}>
             <Text style={styles.label}>Sex</Text>
-            <View style={styles.optionRow}>
+            <View style={styles.buttonGroup}>
               <OptionButton label="Male" selected={sex === 'male'} onPress={() => setSex('male')} />
               <OptionButton label="Female" selected={sex === 'female'} onPress={() => setSex('female')} />
               <OptionButton label="Other" selected={sex === 'other'} onPress={() => setSex('other')} />
@@ -106,7 +114,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
               value={heightCm}
               onChangeText={setHeightCm}
               keyboardType="number-pad"
-              placeholder="Enter your height"
+              placeholder="Enter your height in cm"
               placeholderTextColor="#A0A3BD"
               maxLength={3}
             />
@@ -114,30 +122,39 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
 
           <View style={styles.section}>
             <Text style={styles.label}>Training Experience</Text>
-            <View style={styles.optionColumn}>
-              <OptionButton 
-                label="Beginner" 
-                selected={experienceLevel === 'beginner'} 
-                onPress={() => setExperienceLevel('beginner')} 
-              />
-              <OptionButton 
-                label="Intermediate" 
-                selected={experienceLevel === 'intermediate'} 
-                onPress={() => setExperienceLevel('intermediate')} 
-              />
-              <OptionButton 
-                label="Advanced" 
-                selected={experienceLevel === 'advanced'} 
-                onPress={() => setExperienceLevel('advanced')} 
-              />
+            <View style={styles.buttonGroup}>
+              <OptionButton label="Beginner" selected={experienceLevel === 'beginner'} onPress={() => setExperienceLevel('beginner')} />
+              <OptionButton label="Intermediate" selected={experienceLevel === 'intermediate'} onPress={() => setExperienceLevel('intermediate')} />
+              <OptionButton label="Advanced" selected={experienceLevel === 'advanced'} onPress={() => setExperienceLevel('advanced')} />
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.label}>Training Split</Text>
+            <Text style={styles.helper}>How do you like to train?</Text>
+            <View style={styles.splitGrid}>
+              <OptionButton label="Full Body" selected={trainingSplit === 'full_body'} onPress={() => setTrainingSplit('full_body')} />
+              <OptionButton label="Upper/Lower" selected={trainingSplit === 'upper_lower'} onPress={() => setTrainingSplit('upper_lower')} />
+              <OptionButton label="Push/Pull/Legs" selected={trainingSplit === 'push_pull_legs'} onPress={() => setTrainingSplit('push_pull_legs')} />
+              <OptionButton label="Bro Split" selected={trainingSplit === 'bro_split'} onPress={() => setTrainingSplit('bro_split')} />
+              <OptionButton label="Custom" selected={trainingSplit === 'custom'} onPress={() => setTrainingSplit('custom')} />
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.label}>Eating Mode</Text>
+            <Text style={styles.helper}>What's your nutrition goal?</Text>
+            <View style={styles.splitGrid}>
+              <OptionButton label="Mild Deficit" selected={eatingMode === 'mild_deficit'} onPress={() => setEatingMode('mild_deficit')} />
+              <OptionButton label="Recomp" selected={eatingMode === 'recomp'} onPress={() => setEatingMode('recomp')} />
+              <OptionButton label="Lean Bulk" selected={eatingMode === 'lean_bulk'} onPress={() => setEatingMode('lean_bulk')} />
+              <OptionButton label="Maintenance" selected={eatingMode === 'maintenance'} onPress={() => setEatingMode('maintenance')} />
             </View>
           </View>
 
           <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
             <LinearGradient
               colors={['#6C63FF', '#5449CC']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
               style={styles.continueButtonGradient}
             >
               <Text style={styles.continueButtonText}>Continue</Text>
@@ -159,8 +176,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    padding: 24,
+    padding: 20,
     paddingTop: 60,
+    paddingBottom: 40,
   },
   header: {
     marginBottom: 32,
@@ -176,12 +194,17 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   section: {
-    marginBottom: 28,
+    marginBottom: 24,
   },
   label: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+    marginBottom: 12,
+  },
+  helper: {
+    fontSize: 13,
+    color: '#A0A3BD',
     marginBottom: 12,
   },
   input: {
@@ -193,50 +216,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FFFFFF',
   },
-  optionRow: {
+  buttonGroup: {
     flexDirection: 'row',
     gap: 8,
   },
-  optionColumn: {
-    gap: 12,
+  splitGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   optionButton: {
     flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    minWidth: 100,
     borderRadius: 12,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#2A2F4F',
     backgroundColor: '#151932',
-    alignItems: 'center',
-    overflow: 'hidden',
   },
   optionButtonSelected: {
     borderColor: '#6C63FF',
   },
   optionButtonGradient: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     alignItems: 'center',
   },
-  optionText: {
+  optionButtonText: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     fontSize: 14,
     fontWeight: '600',
     color: '#A0A3BD',
+    textAlign: 'center',
   },
-  optionTextSelected: {
+  optionButtonTextSelected: {
     fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
+    textAlign: 'center',
   },
   continueButton: {
-    marginTop: 16,
     borderRadius: 12,
     overflow: 'hidden',
+    marginTop: 24,
   },
   continueButtonGradient: {
     paddingVertical: 16,

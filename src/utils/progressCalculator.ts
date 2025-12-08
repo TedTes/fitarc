@@ -1,10 +1,12 @@
-import { DailyLog, PhasePlan, ProgressEstimate } from '../types/domain';
+import { DailyConsistencyLog, PhasePlan, ProgressEstimate } from '../types/domain';
 
 export const calculateProgress = (
   phase: PhasePlan,
-  dailyLogs: DailyLog[]
+  dailyConsistency: DailyConsistencyLog[]
 ): ProgressEstimate => {
-  const phaseLogs = dailyLogs.filter(log => log.phasePlanId === phase.id && log.loggedActivity);
+  const phaseLogs = dailyConsistency.filter(
+    log => log.phasePlanId === phase.id && log.isConsistent
+  );
 
   const startDate = new Date(phase.startDate);
   const today = new Date();
@@ -13,8 +15,14 @@ export const calculateProgress = (
   const expectedDays = phase.expectedWeeks * 7;
   const daysLogged = phaseLogs.length;
   
-  // Progress = (days logged / expected days) * 100, capped at 100%
-  const progressPercent = Math.min(100, Math.floor((daysLogged / expectedDays) * 100));
+  // Time factor: how far through the expected duration (0-1, capped at 1)
+  const timeFactor = Math.min(1, daysElapsed / expectedDays);
+  
+  // Adherence factor: ratio of consistent days to days elapsed (0-1)
+  const adherenceFactor = daysElapsed > 0 ? Math.min(1, daysLogged / daysElapsed) : 0;
+  
+  // Progress: weighted combination (60% time, 40% adherence)
+  const progressPercent = Math.min(100, Math.floor((timeFactor * 0.6 + adherenceFactor * 0.4) * 100));
 
   return {
     phasePlanId: phase.id,

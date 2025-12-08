@@ -19,7 +19,6 @@ export const generatePhase = (
     startDate: startDate.toISOString(),
     expectedEndDate: expectedEndDate.toISOString(),
     expectedWeeks,
-    phaseType: 'transformation',
     status: 'active',
     createdAt: new Date().toISOString(),
   };

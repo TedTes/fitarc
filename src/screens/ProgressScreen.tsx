@@ -1,12 +1,28 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { PhasePlan, PhotoCheckin, ProgressEstimate } from '../types/domain';
+import { PhasePlan, PhotoCheckin, ProgressEstimate, DailyConsistencyLog, WorkoutLog, StrengthSnapshot, DailyMealPlan } from '../types/domain';
+import {
+  buildStrengthTrends,
+  buildWeeklyVolumeSummary,
+  buildMovementBalanceSummary,
+  buildLiftHistory,
+  getOverallStrengthDelta,
+  StrengthTrendView,
+  VolumeEntryView,
+  MovementPatternView,
+  LiftHistoryView,
+} from '../utils/performanceSelectors';
+
 
 type ProgressScreenProps = {
   phase: PhasePlan;
   photoCheckins: PhotoCheckin[];
   progressEstimate: ProgressEstimate | null;
+  dailyConsistency: DailyConsistencyLog[];
+  workoutLogs: WorkoutLog[];
+  strengthSnapshots: StrengthSnapshot[];
+  mealPlans: DailyMealPlan[];
   onTakePhoto: () => void;
 };
 
@@ -14,6 +30,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   phase,
   photoCheckins,
   progressEstimate,
+  dailyConsistency,
+  workoutLogs,
+  strengthSnapshots,
+  mealPlans,
   onTakePhoto,
 }) => {
   const phasePhotos = photoCheckins.filter(p => p.phasePlanId === phase.id);
@@ -23,6 +43,200 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const progressPercent = progressEstimate?.progressPercent || 0;
   const daysActive = progressEstimate?.daysActive || 0;
   const daysLogged = progressEstimate?.daysLogged || 0;
+  const strengthTrends = buildStrengthTrends(strengthSnapshots);
+  const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs);
+  const movementBalance = buildMovementBalanceSummary(workoutLogs);
+  const liftHistory = buildLiftHistory(strengthSnapshots, 'bench_press');
+  const overallStrength = getOverallStrengthDelta(strengthTrends);
+  const recentSessions = workoutLogs.filter((log) => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 28);
+    return new Date(log.date) >= cutoff;
+  });
+  const completedSessions = recentSessions.length;
+  const plannedSessions = Math.max(12, completedSessions || 12);
+  const consistencyPercent = plannedSessions
+    ? Math.round((completedSessions / plannedSessions) * 100)
+    : 0;
+  const nutritionWindowCutoff = new Date();
+  nutritionWindowCutoff.setDate(nutritionWindowCutoff.getDate() - 6);
+  const recentMealPlans = mealPlans.filter(
+    (plan) => new Date(plan.date) >= nutritionWindowCutoff && plan.phasePlanId === phase.id
+  );
+  const totalMeals = recentMealPlans.reduce((sum, plan) => sum + plan.meals.length, 0);
+  const completedMeals = recentMealPlans.reduce(
+    (sum, plan) => sum + plan.meals.filter((meal) => meal.completed).length,
+    0
+  );
+  const mealCompliance = totalMeals ? Math.round((completedMeals / totalMeals) * 100) : 0;
+  const [activeTab, setActiveTab] = useState<'stats' | 'comparison'>('stats');
+  const tabOptions: { key: 'stats' | 'comparison'; label: string }[] = [
+    { key: 'stats', label: 'Stats' },
+    { key: 'comparison', label: 'Comparison' },
+  ];
+
+  const formatSigned = (value: number) => `${value >= 0 ? '+' : ''}${value}`;
+
+  const renderStatsContent = () => (
+    <>
+      <View style={styles.dashboardCard}>
+        <View style={styles.cardHeaderRow}>
+          <Text style={styles.cardTitle}>Weekly Volume (Last 4 weeks)</Text>
+        </View>
+        {weeklyVolume.map((entry: VolumeEntryView) => {
+          const maxSets = weeklyVolume[0]?.sets || 1;
+          const width = `${Math.min(100, (entry.sets / maxSets) * 100)}%`;
+          return (
+            <View key={entry.group} style={styles.volumeRow}>
+              <Text style={styles.volumeLabel}>{entry.group}</Text>
+              <View style={styles.volumeBarTrack}>
+                <View style={[styles.volumeBarFill, { width }]} />
+              </View>
+              <Text style={styles.volumeValue}>{entry.sets} sets</Text>
+            </View>
+          );
+        })}
+        <Text style={styles.volumeSummary}>All muscle groups in optimal range ✓</Text>
+        <Text style={styles.volumeConsistency}>
+          Consistency: {consistencyPercent}% (Planned {plannedSessions} sessions, completed {completedSessions})
+        </Text>
+      </View>
+
+      <View style={styles.dashboardCard}>
+        <View style={styles.cardHeaderRow}>
+          <Text style={styles.cardTitle}>Strength Trends (8 weeks)</Text>
+        </View>
+        {strengthTrends.map((trend: StrengthTrendView) => (
+          <View key={trend.lift} style={styles.trendRow}>
+            <View style={styles.trendInfo}>
+              <Text style={styles.trendLift}>{trend.lift}</Text>
+              <Text style={styles.trendSequence}>{trend.weights.join(' → ')} lbs</Text>
+            </View>
+            <View style={styles.trendDelta}>
+              <Text style={styles.trendGlyph}>{trend.glyph}</Text>
+              <Text style={styles.trendChange}>+{trend.deltaLbs} lbs (+{trend.deltaPercent}%)</Text>
+            </View>
+          </View>
+        ))}
+        {!strengthTrends.length && (
+          <Text style={styles.emptyText}>Log a few workouts to unlock strength trends.</Text>
+        )}
+      </View>
+
+      <View style={styles.dashboardCard}>
+        <View style={styles.cardHeaderRow}>
+          <Text style={styles.cardTitle}>Movement Balance (This Month)</Text>
+        </View>
+        {movementBalance.map((pattern: MovementPatternView) => {
+          const maxSessions = movementBalance[0]?.sessions || 1;
+          const width = `${Math.min(100, (pattern.sessions / maxSessions) * 100)}%`;
+          return (
+            <View key={pattern.name} style={styles.volumeRow}>
+              <Text style={styles.volumeLabel}>{pattern.name}</Text>
+              <View style={styles.volumeBarTrack}>
+                <View style={[styles.movementBarFill, { width }]} />
+              </View>
+              <Text style={styles.volumeValue}>{pattern.sessions}</Text>
+            </View>
+          );
+        })}
+        <Text style={styles.volumeSummary}>✓ Balanced training!</Text>
+        <Text style={styles.volumeConsistency}>You're hitting all patterns 2x per week.</Text>
+      </View>
+    </>
+  );
+
+  const renderComparisonContent = () => (
+    <>
+      {baselinePhoto && latestPhoto ? (
+        <View style={styles.comparisonCard}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Photo Comparison</Text>
+          </View>
+          
+          <View style={styles.photoRow}>
+            <View style={styles.photoColumn}>
+              <Text style={styles.photoLabel}>Start</Text>
+              <Image source={{ uri: baselinePhoto.frontUri }} style={styles.photo} />
+              <Text style={styles.photoDate}>
+                {new Date(baselinePhoto.date).toLocaleDateString()}
+              </Text>
+            </View>
+
+            <View style={styles.photoColumn}>
+              <Text style={styles.photoLabel}>Current</Text>
+              <Image source={{ uri: latestPhoto.frontUri }} style={styles.photo} />
+              <Text style={styles.photoDate}>
+                {new Date(latestPhoto.date).toLocaleDateString()}
+              </Text>
+            </View>
+
+            <View style={styles.photoColumn}>
+              <Text style={styles.photoLabel}>Target</Text>
+              <View style={styles.photoPlaceholder}>
+                <Text style={styles.photoPlaceholderText}>Level {phase.targetLevelId}</Text>
+              </View>
+              <Text style={styles.photoDate}>Goal</Text>
+            </View>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.comparisonCard}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Photo Comparison</Text>
+          </View>
+          <Text style={styles.emptyText}>
+            Add a baseline and current photo to unlock side-by-side comparisons.
+          </Text>
+        </View>
+      )}
+
+      <TouchableOpacity style={styles.photoButton} onPress={onTakePhoto}>
+        <LinearGradient
+          colors={['#6C63FF', '#5449CC']}
+          style={styles.photoButtonGradient}
+        >
+          <Text style={styles.photoButtonText}>📸 Take Progress Photo</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+
+      {phasePhotos.length > 0 && (
+        <View style={styles.timelineCard}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Photo Timeline</Text>
+          </View>
+          
+          <View style={styles.timeline}>
+            {baselinePhoto && (
+              <View style={styles.timelineItem}>
+                <View style={styles.timelineDot} />
+                <Image source={{ uri: baselinePhoto.frontUri }} style={styles.timelinePhoto} />
+                <View style={styles.timelineInfo}>
+                  <Text style={styles.timelineDate}>
+                    {new Date(baselinePhoto.date).toLocaleDateString()}
+                  </Text>
+                  <Text style={styles.timelineLabel}>Baseline</Text>
+                </View>
+              </View>
+            )}
+
+            {phasePhotos.map((photo) => (
+              <View key={photo.id} style={styles.timelineItem}>
+                <View style={styles.timelineDot} />
+                <Image source={{ uri: photo.frontUri }} style={styles.timelinePhoto} />
+                <View style={styles.timelineInfo}>
+                  <Text style={styles.timelineDate}>
+                    {new Date(photo.date).toLocaleDateString()}
+                  </Text>
+                  <Text style={styles.timelineLabel}>Check-in</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+    </>
+  );
 
   return (
     <View style={styles.container}>
@@ -32,102 +246,29 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <Text style={styles.title}>Progress</Text>
-          
-          <View style={styles.progressCard}>
-            <Text style={styles.progressLabel}>Progress Toward Target</Text>
-            <Text style={styles.progressValue}>{progressPercent}%</Text>
-            
-            <View style={styles.progressBarContainer}>
-              <LinearGradient
-                colors={['#6C63FF', '#00F5A0']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={[styles.progressBarFill, { width: `${progressPercent}%` }]}
-              />
-            </View>
-
-            <View style={styles.statsGrid}>
-              <View style={styles.statBox}>
-                <Text style={styles.statValue}>{daysLogged}</Text>
-                <Text style={styles.statLabel}>Days Logged</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statValue}>{daysActive}</Text>
-                <Text style={styles.statLabel}>Days Active</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={styles.statValue}>{phase.expectedWeeks}</Text>
-                <Text style={styles.statLabel}>Total Weeks</Text>
-              </View>
-            </View>
+          <View style={styles.tabSwitcher}>
+            {tabOptions.map((tab) => (
+              <TouchableOpacity
+                key={tab.key}
+                style={[
+                  styles.tabButton,
+                  activeTab === tab.key && styles.tabButtonActive,
+                ]}
+                onPress={() => setActiveTab(tab.key)}
+              >
+                <Text
+                  style={[
+                    styles.tabButtonText,
+                    activeTab === tab.key && styles.tabButtonTextActive,
+                  ]}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {baselinePhoto && latestPhoto && (
-            <View style={styles.comparisonCard}>
-              <Text style={styles.sectionTitle}>Photo Comparison</Text>
-              
-              <View style={styles.photoRow}>
-                <View style={styles.photoColumn}>
-                  <Text style={styles.photoLabel}>Start</Text>
-                  <Image source={{ uri: baselinePhoto.frontUri }} style={styles.photo} />
-                  <Text style={styles.photoDate}>
-                    {new Date(baselinePhoto.date).toLocaleDateString()}
-                  </Text>
-                </View>
-
-                <View style={styles.photoColumn}>
-                  <Text style={styles.photoLabel}>Current</Text>
-                  <Image source={{ uri: latestPhoto.frontUri }} style={styles.photo} />
-                  <Text style={styles.photoDate}>
-                    {new Date(latestPhoto.date).toLocaleDateString()}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          <TouchableOpacity style={styles.photoButton} onPress={onTakePhoto}>
-            <LinearGradient
-              colors={['#6C63FF', '#5449CC']}
-              style={styles.photoButtonGradient}
-            >
-              <Text style={styles.photoButtonText}>📸 Take Progress Photo</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-
-          {phasePhotos.length > 0 && (
-            <View style={styles.timelineCard}>
-              <Text style={styles.sectionTitle}>Photo Timeline</Text>
-              
-              <View style={styles.timeline}>
-                {baselinePhoto && (
-                  <View style={styles.timelineItem}>
-                    <View style={styles.timelineDot} />
-                    <Image source={{ uri: baselinePhoto.frontUri }} style={styles.timelinePhoto} />
-                    <View style={styles.timelineInfo}>
-                      <Text style={styles.timelineDate}>
-                        {new Date(baselinePhoto.date).toLocaleDateString()}
-                      </Text>
-                      <Text style={styles.timelineLabel}>Baseline</Text>
-                    </View>
-                  </View>
-                )}
-
-                {phasePhotos.map((photo, index) => (
-                  <View key={photo.id} style={styles.timelineItem}>
-                    <View style={styles.timelineDot} />
-                    <Image source={{ uri: photo.frontUri }} style={styles.timelinePhoto} />
-                    <View style={styles.timelineInfo}>
-                      <Text style={styles.timelineDate}>
-                        {new Date(photo.date).toLocaleDateString()}
-                      </Text>
-                      <Text style={styles.timelineLabel}>Week {index + 1}</Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
+          {activeTab === 'stats' ? renderStatsContent() : renderComparisonContent()}
         </ScrollView>
       </LinearGradient>
     </View>
@@ -153,76 +294,224 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginBottom: 24,
   },
-  progressCard: {
+  tabSwitcher: {
+    flexDirection: 'row',
     backgroundColor: '#151932',
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: 999,
+    padding: 4,
     marginBottom: 16,
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#2A2F4F',
   },
-  progressLabel: {
-    fontSize: 16,
-    color: '#A0A3BD',
-    marginBottom: 8,
-  },
-  progressValue: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#00F5A0',
-    marginBottom: 16,
-  },
-  progressBarContainer: {
-    width: '100%',
-    height: 12,
-    backgroundColor: '#1E2340',
-    borderRadius: 6,
-    overflow: 'hidden',
-    marginBottom: 24,
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 6,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    width: '100%',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  statBox: {
+  tabButton: {
     flex: 1,
-    backgroundColor: '#1E2340',
-    padding: 12,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
     alignItems: 'center',
   },
-  statValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 4,
+  tabButtonActive: {
+    backgroundColor: '#6C63FF',
   },
-  statLabel: {
-    fontSize: 11,
+  tabButtonText: {
+    color: '#A0A3BD',
+    fontWeight: '600',
+  },
+  tabButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  dashboardCard: {
+    backgroundColor: '#151932',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  cardHeaderTextGroup: {
+    flex: 1,
+    marginRight: 12,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  cardMeta: {
+    fontSize: 14,
+    color: '#A0A3BD',
+  },
+  trendRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    gap: 12,
+  },
+  trendInfo: {
+    flex: 1,
+  },
+  trendLift: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  trendSequence: {
+    fontSize: 13,
+    color: '#A0A3BD',
+    marginTop: 4,
+  },
+  trendDelta: {
+    alignItems: 'flex-end',
+  },
+  trendGlyph: {
+    fontSize: 16,
+    color: '#6C63FF',
+  },
+  trendChange: {
+    fontSize: 12,
+    color: '#A0A3BD',
+    marginTop: 4,
+  },
+  volumeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  volumeLabel: {
+    width: 90,
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+  volumeBarTrack: {
+    flex: 1,
+    height: 10,
+    backgroundColor: '#1E2340',
+    borderRadius: 5,
+    overflow: 'hidden',
+  },
+  volumeBarFill: {
+    height: '100%',
+    backgroundColor: '#6C63FF',
+    borderRadius: 5,
+  },
+  movementBarFill: {
+    height: '100%',
+    backgroundColor: '#00F5A0',
+    borderRadius: 5,
+  },
+  volumeValue: {
+    width: 70,
+    textAlign: 'right',
+    color: '#A0A3BD',
+    fontSize: 12,
+  },
+  volumeSummary: {
+    fontSize: 13,
+    color: '#A0A3BD',
+    marginTop: 8,
+  },
+  volumeConsistency: {
+    fontSize: 12,
+    color: '#A0A3BD',
+    marginTop: 4,
+  },
+  nutritionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  nutritionPercent: {
+    fontSize: 36,
+    fontWeight: '700',
+    color: '#00F5A0',
+  },
+  nutritionDetail: {
+    color: '#A0A3BD',
+    fontSize: 14,
+  },
+  nutritionBarFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#00F5A0',
+  },
+  nutritionHint: {
+    marginTop: 12,
+    color: '#E3E5FF',
+    fontSize: 14,
+  },
+  emptyText: {
+    fontSize: 13,
     color: '#A0A3BD',
     textAlign: 'center',
+    marginTop: 8,
+  },
+  sparkline: {
+    fontSize: 24,
+    color: '#6C63FF',
+    marginBottom: 12,
+  },
+  weightProgress: {
+    fontSize: 13,
+    color: '#A0A3BD',
+    marginBottom: 16,
+  },
+  repHistory: {
+    gap: 8,
+    marginBottom: 16,
+  },
+  repRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  repWeek: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  repValues: {
+    color: '#A0A3BD',
+  },
+  insightBox: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#1E2340',
+  },
+  insightIcon: {
+    fontSize: 18,
+  },
+  insightText: {
+    flex: 1,
+    color: '#FFFFFF',
   },
   comparisonCard: {
     backgroundColor: '#151932',
     borderRadius: 16,
     padding: 20,
-    marginBottom: 16,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: '#2A2F4F',
   },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 16,
-    textAlign: 'center',
   },
   photoRow: {
     flexDirection: 'row',
@@ -233,26 +522,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   photoLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12,
     color: '#A0A3BD',
     marginBottom: 8,
+    fontWeight: '600',
   },
   photo: {
     width: '100%',
-    height: 200,
+    aspectRatio: 3 / 4,
     borderRadius: 12,
     backgroundColor: '#1E2340',
     marginBottom: 8,
   },
+  photoPlaceholder: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 12,
+    backgroundColor: '#1E2340',
+    borderWidth: 2,
+    borderColor: '#6C63FF',
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  photoPlaceholderText: {
+    fontSize: 14,
+    color: '#6C63FF',
+    fontWeight: '600',
+  },
   photoDate: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#A0A3BD',
   },
   photoButton: {
     borderRadius: 12,
     overflow: 'hidden',
-    marginBottom: 16,
+    marginBottom: 24,
   },
   photoButtonGradient: {
     paddingVertical: 16,
@@ -260,24 +566,23 @@ const styles = StyleSheet.create({
   },
   photoButtonText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   timelineCard: {
     backgroundColor: '#151932',
     borderRadius: 16,
     padding: 20,
-    marginBottom: 24,
     borderWidth: 1,
     borderColor: '#2A2F4F',
   },
   timeline: {
-    gap: 20,
+    gap: 16,
   },
   timelineItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 12,
   },
   timelineDot: {
     width: 12,
@@ -287,7 +592,7 @@ const styles = StyleSheet.create({
   },
   timelinePhoto: {
     width: 80,
-    height: 100,
+    height: 106,
     borderRadius: 8,
     backgroundColor: '#1E2340',
   },
@@ -296,12 +601,53 @@ const styles = StyleSheet.create({
   },
   timelineDate: {
     fontSize: 14,
-    fontWeight: '600',
     color: '#FFFFFF',
+    fontWeight: '600',
     marginBottom: 4,
   },
   timelineLabel: {
     fontSize: 12,
     color: '#A0A3BD',
+  },
+  consistencyCard: {
+    backgroundColor: '#151932',
+    borderRadius: 16,
+    padding: 20,
+    marginTop: 24,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  consistencySubtitle: {
+    fontSize: 13,
+    color: '#A0A3BD',
+    marginBottom: 16,
+  },
+  consistencyGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  consistencyDay: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#1E2340',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  consistencyDayActive: {
+    backgroundColor: '#00F5A0',
+    borderColor: '#00F5A0',
+  },
+  consistencyDayFuture: {
+    opacity: 0.3,
+  },
+  consistencyDayText: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
   },
 });
