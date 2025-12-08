@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -35,10 +35,7 @@ type PlansScreenProps = {
   phase: PhasePlan | null;
   workoutSessions: WorkoutSessionEntry[];
   mealPlans: DailyMealPlan[];
-  onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
-  onReorderWorkoutExercise?: (date: string, from: number, to: number) => void;
   onRegenerateWorkoutPlan?: (date: string) => void;
-  onToggleMeal?: (date: string, mealTitle: string) => void;
   onRegenerateMealPlan?: (date: string) => void;
 };
 
@@ -47,16 +44,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   phase,
   workoutSessions,
   mealPlans,
-  onToggleWorkoutExercise,
-  onReorderWorkoutExercise,
   onRegenerateWorkoutPlan,
-  onToggleMeal,
   onRegenerateMealPlan,
 }) => {
-  const [expandedSection, setExpandedSection] = useState<'workout' | 'meal' | null>('workout');
-  const toggleSection = (section: 'workout' | 'meal') => {
-    setExpandedSection((prev) => (prev === section ? null : section));
-  };
 
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -76,27 +66,39 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     );
   }
 
-  const storedSession = workoutSessions.find(
-    (session) => session.phasePlanId === phase.id && session.date === todayStr
-  );
-  const todaySession =
-    storedSession && storedSession.exercises.length
-      ? storedSession
-      : createSessionForDate(user, phase.id, todayStr);
-
-  const storedPlan = mealPlans.find(
-    (plan) => plan.phasePlanId === phase.id && plan.date === todayStr
-  );
-  const todayMealPlan =
-    storedPlan && storedPlan.meals.length
-      ? storedPlan
-      : createMealPlanForDate(user, phase.id, todayStr);
-
-  const handleMove = (from: number, direction: number) => {
-    const to = from + direction;
-    if (to < 0 || to >= todaySession.exercises.length) return;
-    onReorderWorkoutExercise?.(todayStr, from, to);
+  const getSessionForDate = (dateStr: string) => {
+    const stored = workoutSessions.find(
+      (session) => session.phasePlanId === phase.id && session.date === dateStr
+    );
+    if (stored && stored.exercises.length) return stored;
+    return createSessionForDate(user, phase.id, dateStr);
   };
+
+  const getMealsForDate = (dateStr: string) => {
+    const stored = mealPlans.find(
+      (plan) => plan.phasePlanId === phase.id && plan.date === dateStr
+    );
+    if (stored && stored.meals.length) return stored;
+    return createMealPlanForDate(user, phase.id, dateStr);
+  };
+
+  const weekPlans = useMemo(() => {
+    const anchor = new Date(todayStr);
+    return Array.from({ length: 7 }).map((_, idx) => {
+      const date = new Date(anchor);
+      date.setDate(anchor.getDate() + idx);
+      const dateStr = date.toISOString().split('T')[0];
+      const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
+      const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return {
+        date,
+        dateStr,
+        label: `${weekday} · ${displayDate}`,
+        workout: getSessionForDate(dateStr),
+        meals: getMealsForDate(dateStr),
+      };
+    });
+  }, [todayStr, workoutSessions, mealPlans, phase?.id, user]);
 
   return (
     <View style={styles.container}>
@@ -107,153 +109,100 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
             Fine-tune today's prescriptions. Reorder moves or refresh the entire plan.
           </Text>
 
-          <View style={styles.summaryRow}>
-            <LinearGradient colors={['#232956', '#1B1F41']} style={[styles.summaryCard, styles.summaryCardAccent]}
-            >
-              <Text style={styles.summaryLabel}>Workouts</Text>
-              <Text style={styles.summaryValue}>{todaySession.exercises.length}</Text>
-              <Text style={styles.summaryHint}>movements queued</Text>
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeaderSimple}>
+              <View>
+                <Text style={styles.sectionLabel}>Weekly Workouts</Text>
+                <Text style={styles.sectionTitle}>Your seven-day training loop</Text>
+              </View>
               <TouchableOpacity
-                style={styles.summaryButton}
+                style={styles.linkButton}
                 onPress={() => onRegenerateWorkoutPlan?.(todayStr)}
               >
-                <Text style={styles.summaryButtonText}>↻ Refresh set</Text>
+                <Text style={styles.linkButtonText}>Regenerate week</Text>
               </TouchableOpacity>
-            </LinearGradient>
-            <LinearGradient colors={['#1F3B2F', '#172923']} style={styles.summaryCard}>
-              <Text style={styles.summaryLabel}>Meals</Text>
-              <Text style={styles.summaryValue}>{todayMealPlan.meals.length}</Text>
-              <Text style={styles.summaryHint}>plates planned</Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.weekScroller}
+            >
+              {weekPlans.map((plan) => (
+                <LinearGradient
+                  key={`workout-${plan.dateStr}`}
+                  colors={['#1D2245', '#151B34']}
+                  style={styles.weekCard}
+                >
+                  <View style={styles.weekCardHeader}>
+                    <Text style={styles.weekCardLabel}>{plan.label}</Text>
+                    <Text style={styles.weekCardCount}>{plan.workout.exercises.length} moves</Text>
+                  </View>
+                  {plan.workout.exercises.slice(0, 3).map((exercise) => (
+                    <View key={exercise.name} style={styles.weekItemRow}>
+                      <View style={styles.weekBullet} />
+                      <View style={styles.weekItemCopy}>
+                        <Text style={styles.weekItemTitle}>{exercise.name}</Text>
+                        <Text style={styles.weekItemMeta}>{exercise.sets} x {exercise.reps}</Text>
+                      </View>
+                    </View>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.weekButton}
+                    onPress={() => onRegenerateWorkoutPlan?.(plan.dateStr)}
+                  >
+                    <Text style={styles.weekButtonText}>Shuffle day</Text>
+                  </TouchableOpacity>
+                </LinearGradient>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeaderSimple}>
+              <View>
+                <Text style={styles.sectionLabel}>Weekly Meals</Text>
+                <Text style={styles.sectionTitle}>Dialed in for {user.eatingMode.replace('_', ' ')}</Text>
+              </View>
               <TouchableOpacity
-                style={styles.summaryButton}
+                style={styles.linkButton}
                 onPress={() => onRegenerateMealPlan?.(todayStr)}
               >
-                <Text style={styles.summaryButtonText}>↻ Refresh menu</Text>
+                <Text style={styles.linkButtonText}>Refresh menus</Text>
               </TouchableOpacity>
-            </LinearGradient>
-          </View>
-
-          <View style={styles.sectionCard}>
-            <TouchableOpacity
-              style={styles.sectionHeader}
-              activeOpacity={0.8}
-              onPress={() => toggleSection('workout')}
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.weekScroller}
             >
-              <View>
-                <Text style={styles.sectionLabel}>Workout Plan</Text>
-                <Text style={styles.sectionTitle}>
-                  {todaySession.exercises.length} movements · {today.toLocaleDateString()}
-                </Text>
-              </View>
-              <View style={styles.headerActions}>
-                <TouchableOpacity
-                  style={styles.linkButton}
-                  onPress={() => onRegenerateWorkoutPlan?.(todayStr)}
-                >
-                  <Text style={styles.linkButtonText}>Regenerate</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.sectionChevron}>
-                {expandedSection === 'workout' ? '−' : '+'}
-              </Text>
-            </TouchableOpacity>
-
-            {expandedSection === 'workout' && (
-              <View style={styles.planGrid}>
-            {todaySession.exercises.map((exercise, index) => {
-              const bodyPartLabel = formatBodyParts(exercise.bodyParts as MuscleGroup[] | undefined);
-              return (
+              {weekPlans.map((plan) => (
                 <LinearGradient
-                  key={exercise.name}
-                  colors={['#1D2245', '#151B34']}
-                  style={styles.planRow}
+                  key={`meal-${plan.dateStr}`}
+                  colors={['#1B2F2F', '#121D1D']}
+                  style={styles.weekCard}
                 >
-                  <View style={styles.planRowHeader}>
-                    <View style={styles.planBadge}>
-                      <Text style={styles.planBadgeText}>#{index + 1}</Text>
-                    </View>
-                    <View style={styles.planRowContent}>
-                      <Text style={styles.planRowTitle}>{exercise.name}</Text>
-                      <Text style={styles.planRowDetail}>
-                        {exercise.sets} sets · {exercise.reps}
-                      </Text>
-                      <Text style={styles.planRowMeta}>{bodyPartLabel}</Text>
-                    </View>
+                  <View style={styles.weekCardHeader}>
+                    <Text style={styles.weekCardLabel}>{plan.label}</Text>
+                    <Text style={styles.weekCardCount}>{plan.meals.meals.length} meals</Text>
                   </View>
-                  <View style={styles.planRowFooter}>
-                    <Text style={styles.planRowHint}>Complete from Home</Text>
-                    <View style={styles.rowActions}>
-                      <TouchableOpacity
-                        style={styles.moveButton}
-                        onPress={() => handleMove(index, -1)}
-                      >
-                        <Text style={styles.moveButtonText}>↑</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.moveButton}
-                        onPress={() => handleMove(index, 1)}
-                      >
-                        <Text style={styles.moveButtonText}>↓</Text>
-                      </TouchableOpacity>
+                  {plan.meals.meals.slice(0, 3).map((meal) => (
+                    <View key={meal.title} style={styles.weekItemRow}>
+                      <View style={styles.weekBullet} />
+                      <View style={styles.weekItemCopy}>
+                        <Text style={styles.weekItemTitle}>{meal.title}</Text>
+                        <Text style={styles.weekItemMeta}>{meal.items.length} items</Text>
+                      </View>
                     </View>
-                  </View>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.weekButton}
+                    onPress={() => onRegenerateMealPlan?.(plan.dateStr)}
+                  >
+                    <Text style={styles.weekButtonText}>Swap menu</Text>
+                  </TouchableOpacity>
                 </LinearGradient>
-              );
-            })}
-              </View>
-            )}
-          </View>
-
-          <View style={styles.sectionCard}>
-            <TouchableOpacity
-              style={styles.sectionHeader}
-              activeOpacity={0.8}
-              onPress={() => toggleSection('meal')}
-            >
-              <View>
-                <Text style={styles.sectionLabel}>Meal Plan</Text>
-                <Text style={styles.sectionTitle}>
-                  {todayMealPlan.meals.length} meals · {user.eatingMode.replace('_', ' ')}
-                </Text>
-              </View>
-              <View style={styles.headerActions}>
-                <TouchableOpacity
-                  style={styles.linkButton}
-                  onPress={() => onRegenerateMealPlan?.(todayStr)}
-                >
-                  <Text style={styles.linkButtonText}>Refresh</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.sectionChevron}>
-                {expandedSection === 'meal' ? '−' : '+'}
-              </Text>
-            </TouchableOpacity>
-
-            {expandedSection === 'meal' && (
-              <View style={styles.planGrid}>
-            {todayMealPlan.meals.map((meal) => (
-              <LinearGradient
-                key={meal.title}
-                colors={['#1B2F2F', '#121D1D']}
-                style={styles.planRow}
-              >
-                <View style={styles.planRowHeader}>
-                  <View style={styles.planBadge}>
-                    <Text style={styles.planBadgeText}>{getMealEmoji(meal.title)}</Text>
-                  </View>
-                  <View style={styles.planRowContent}>
-                    <Text style={styles.planRowTitle}>{meal.title}</Text>
-                    <Text style={styles.planRowDetail}>{meal.items.join(' · ')}</Text>
-                    <Text style={styles.planRowMeta}>{meal.items.length} components</Text>
-                  </View>
-                </View>
-                <View style={styles.planRowFooter}>
-                  <Text style={styles.planRowHint}>Log from Home</Text>
-                </View>
-              </LinearGradient>
-            ))}
-              </View>
-            )}
+              ))}
+            </ScrollView>
           </View>
         </ScrollView>
       </LinearGradient>
@@ -286,64 +235,19 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     lineHeight: 20,
   },
-  summaryRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  summaryCard: {
-    flex: 1,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-    gap: 4,
-  },
-  summaryCardAccent: {
-    borderColor: 'rgba(108,99,255,0.3)',
-  },
-  summaryLabel: {
-    color: '#A0A3BD',
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  summaryValue: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  summaryHint: {
-    color: '#C6C7E0',
-    fontSize: 12,
-  },
-  summaryButton: {
-    marginTop: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    alignSelf: 'flex-start',
-  },
-  summaryButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 12,
-  },
   sectionCard: {
     backgroundColor: '#151932',
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
     borderColor: '#2A2F4F',
-    gap: 12,
+    gap: 16,
   },
-  sectionHeader: {
+  sectionHeaderSimple: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 8,
+    alignItems: 'center',
+    gap: 12,
   },
   sectionLabel: {
     color: '#A0A3BD',
@@ -355,95 +259,67 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  weekScroller: {
+    gap: 12,
+    paddingVertical: 8,
   },
-  sectionChevron: {
-    fontSize: 20,
-    color: '#A0A3BD',
-  },
-  planGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  weekCard: {
+    width: 260,
+    borderRadius: 18,
+    padding: 16,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
     gap: 12,
   },
-  planRow: {
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'column',
-    gap: 12,
-    flexBasis: '48%',
-    flexGrow: 1,
-  },
-  planRowHeader: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'flex-start',
-  },
-  planRowContent: {
-    flex: 1,
-    gap: 4,
-  },
-  planRowTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  planRowDetail: {
-    color: '#A0A3BD',
-    fontSize: 13,
-  },
-  planRowMeta: {
-    color: '#6C7CFF',
-    fontSize: 11,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  planRowHint: {
-    color: '#6C7CFF',
-    fontSize: 11,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    marginTop: 2,
-  },
-  planRowFooter: {
+  weekCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  planBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#151B3C',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#272F5B',
-  },
-  planBadgeText: {
+  weekCardLabel: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '600',
   },
-  rowActions: {
+  weekCardCount: {
+    color: '#A0A3BD',
+    fontSize: 12,
+  },
+  weekItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 8,
   },
-  moveButton: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    justifyContent: 'center',
-    alignItems: 'center',
+  weekBullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#6C63FF',
   },
-  moveButtonText: {
+  weekItemCopy: {
+    flex: 1,
+  },
+  weekItemTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  weekItemMeta: {
     color: '#A0A3BD',
-    fontSize: 11,
+    fontSize: 12,
+  },
+  weekButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  weekButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 12,
   },
   linkButton: {
     paddingHorizontal: 8,

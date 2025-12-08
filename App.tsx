@@ -292,10 +292,7 @@ export default function App() {
               phase={state.currentPhase}
               workoutSessions={state.workoutSessions}
               mealPlans={state.mealPlans}
-              onToggleWorkoutExercise={toggleWorkoutExercise}
-              onReorderWorkoutExercise={reorderWorkoutExercise}
               onRegenerateWorkoutPlan={regenerateWorkoutPlan}
-              onToggleMeal={toggleMealCompletion}
               onRegenerateMealPlan={regenerateMealPlan}
             />
           )}
