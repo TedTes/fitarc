@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
 import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
 import { 
@@ -20,6 +21,12 @@ import { useEffect, useState } from 'react';
 import { PhotoCheckin, User } from './src/types/domain';
 
 const Tab = createBottomTabNavigator();
+
+const TAB_ICONS: Record<string, { default: string; active: string }> = {
+  Home: { default: 'home-outline', active: 'home' },
+  Plans: { default: 'calendar-outline', active: 'calendar' },
+  Progress: { default: 'stats-chart-outline', active: 'stats-chart' },
+};
 
 type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'complete';
 
@@ -246,17 +253,31 @@ export default function App() {
   return (
     <NavigationContainer>
       <Tab.Navigator
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: '#6C63FF',
-          tabBarInactiveTintColor: '#A0A3BD',
-          tabBarStyle: { 
-            paddingBottom: 8, 
-            paddingTop: 8, 
-            height: 60,
-            backgroundColor: '#0A0E27',
-            borderTopColor: '#2A2F4F',
-          },
+        screenOptions={({ route }) => {
+          const icon = TAB_ICONS[route.name] || TAB_ICONS.Home;
+          return {
+            headerShown: false,
+            tabBarActiveTintColor: '#6C63FF',
+            tabBarInactiveTintColor: '#A0A3BD',
+            tabBarStyle: {
+              paddingBottom: 6,
+              paddingTop: 10,
+              height: 72,
+              backgroundColor: '#0A0E27',
+              borderTopColor: '#2A2F4F',
+            },
+            tabBarLabelStyle: {
+              fontSize: 12,
+              marginBottom: 4,
+            },
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons
+                name={focused ? icon.active : icon.default}
+                size={28}
+                color={color}
+              />
+            ),
+          };
         }}
       >
         <Tab.Screen 
