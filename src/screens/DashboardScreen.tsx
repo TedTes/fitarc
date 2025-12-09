@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   View, 
   Text, 
@@ -10,6 +10,7 @@ import {
   Animated,
   PanResponder,
   Dimensions,
+  Pressable,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -19,6 +20,7 @@ import {
   ProgressEstimate,
   StrengthSnapshot,
   WorkoutSessionEntry,
+  WorkoutSessionExercise,
   DailyConsistencyLog,
   MuscleGroup,
   DailyMealPlan,
@@ -429,6 +431,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onRegenerateMealPlan,
 }) => {
   const [celebrationVisible, setCelebrationVisible] = useState(false);
+  const [exercisePreview, setExercisePreview] = useState<{
+    exercises: WorkoutSessionExercise[];
+    index: number;
+  } | null>(null);
   const [hasQueuedNextSession, setHasQueuedNextSession] = useState(false);
   const [activeDate, setActiveDate] = useState(() => {
     const now = new Date();
@@ -561,6 +567,47 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     pendingMeals.forEach((meal) => onToggleMeal?.(currentDateStr, meal.title));
   };
 
+  const openExercisePreview = (
+    exercise: WorkoutSessionExercise,
+    collection: WorkoutSessionExercise[]
+  ) => {
+    const index = Math.max(
+      0,
+      collection.findIndex((item) => item.name === exercise.name)
+    );
+    setExercisePreview({
+      exercises: collection,
+      index,
+    });
+  };
+
+  const closeExercisePreview = () => setExercisePreview(null);
+  const currentPreviewExercise =
+    exercisePreview && exercisePreview.exercises[exercisePreview.index];
+  const showPreviewDelta = (delta: number) => {
+    if (!exercisePreview) return;
+    const total = exercisePreview.exercises.length;
+    if (total === 0) return;
+    const nextIndex = (exercisePreview.index + delta + total) % total;
+    setExercisePreview({
+      ...exercisePreview,
+      index: nextIndex,
+    });
+  };
+  const previewPanResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        Math.abs(gesture.dx) > 20 && Math.abs(gesture.dy) < 20,
+      onPanResponderRelease: (_, gesture) => {
+        if (gesture.dx > 40) {
+          showPreviewDelta(-1);
+        } else if (gesture.dx < -40) {
+          showPreviewDelta(1);
+        }
+      },
+    })
+  ).current;
+
   return (
     <View style={styles.container}>
       <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
@@ -575,6 +622,66 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             totalMeals: totalMealCount,
           }}
         />
+        <Modal
+          transparent
+          visible={!!exercisePreview}
+          animationType="fade"
+          onRequestClose={closeExercisePreview}
+        >
+          <View style={styles.previewBackdrop}>
+            <Pressable style={styles.previewOverlay} onPress={closeExercisePreview} />
+            <View style={styles.previewFullScreen}>
+              <View style={styles.previewTopBar}>
+                <Text style={styles.previewCounter}>
+                  {(exercisePreview?.index || 0) + 1} /{' '}
+                  {exercisePreview?.exercises.length || 0}
+                </Text>
+                <TouchableOpacity onPress={closeExercisePreview}>
+                  <Text style={styles.previewCloseText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              {currentPreviewExercise && (
+                <View style={styles.previewContent} {...previewPanResponder.panHandlers}>
+                  <Text style={styles.previewTitle}>{currentPreviewExercise.name}</Text>
+                  <Text style={styles.previewSubtitle}>
+                    {formatBodyPartList(currentPreviewExercise.bodyParts)}
+                  </Text>
+                  <View style={styles.previewMediaBox}>
+                    <Text style={styles.previewMediaLabel}>Motion preview</Text>
+                    <Text style={styles.previewMediaMeta}>
+                      Embed GIF/video for {currentPreviewExercise.name}
+                    </Text>
+                  </View>
+                  <View style={styles.previewMetricsRow}>
+                    <View style={styles.previewMetric}>
+                      <Text style={styles.previewMetricLabel}>Sets</Text>
+                      <Text style={styles.previewMetricValue}>{currentPreviewExercise.sets}</Text>
+                    </View>
+                    <View style={styles.previewMetric}>
+                      <Text style={styles.previewMetricLabel}>Reps</Text>
+                      <Text style={styles.previewMetricValue}>{currentPreviewExercise.reps}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.previewTip}>Swipe left/right or use arrows</Text>
+                </View>
+              )}
+              <View style={styles.previewControls}>
+                <TouchableOpacity
+                  style={styles.previewArrow}
+                  onPress={() => showPreviewDelta(-1)}
+                >
+                  <Text style={styles.previewArrowText}>←</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.previewArrow}
+                  onPress={() => showPreviewDelta(1)}
+                >
+                  <Text style={styles.previewArrowText}>→</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         <ScrollView
           contentContainerStyle={styles.dashboardContent}
@@ -725,14 +832,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         index === visibleWorkoutCards.length - 1 && styles.lastCardWrapper,
                       ]}
                     >
-                      <LinearGradient
-                        colors={
-                          isCompleted
-                            ? ['#0BA360', '#3CBA92']
-                            : ['#1C1F3F', '#101329']  // ✨ FIXED: Dark gradient for all incomplete cards
-                        }
-                        style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
-                      >
+                      <TouchableWithoutFeedback onPress={() => openExercisePreview(exercise, enhancedExercises)}>
+                        <LinearGradient
+                          colors={
+                            isCompleted
+                              ? ['#0BA360', '#3CBA92']
+                              : ['#1C1F3F', '#101329']  // ✨ FIXED: Dark gradient for all incomplete cards
+                          }
+                          style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
+                        >
                         <View style={styles.exerciseCardHeader}>
                           <Text style={styles.exerciseBadge}>#{actualIndex + 1}</Text>
                           {isCompleted && (
@@ -793,7 +901,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                             <Text style={styles.manualCompleteButtonText}>Mark Complete</Text>
                           </TouchableOpacity>
                         )}
-                      </LinearGradient>
+                        </LinearGradient>
+                      </TouchableWithoutFeedback>
                     </SwipeableCard>
                   );
                 })}
@@ -1321,6 +1430,141 @@ const styles = StyleSheet.create({
     color: '#00F5A0',
     fontWeight: 'bold',
     fontSize: 13,
+  },
+  manualCompleteButtonDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  manualCompleteButtonComplete: {
+    backgroundColor: 'rgba(0, 245, 160, 0.08)',
+  },
+  manualCompleteButtonTextMuted: {
+    color: '#A0A3BD',
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 8, 20, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(5, 8, 20, 0.6)',
+  },
+  previewBackdropTouchable: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+  previewFullScreen: {
+    width: '100%',
+    height: '95%',
+    backgroundColor: '#050814',
+    borderRadius: 28,
+    overflow: 'hidden',
+  },
+  previewTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 32,
+  },
+  previewCounter: {
+    color: '#A0A3BD',
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  previewCloseText: {
+    fontSize: 18,
+    color: '#FFFFFF',
+  },
+  previewContent: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 32,
+    paddingTop: 12,
+    gap: 16,
+  },
+  previewTitle: {
+    fontSize: 20,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  previewSubtitle: {
+    fontSize: 14,
+    color: '#A0A3BD',
+  },
+  previewMediaBox: {
+    flex: 1,
+    marginTop: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewMediaLabel: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  previewMediaMeta: {
+    color: '#A0A3BD',
+    fontSize: 12,
+  },
+  previewMetricsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  previewMetric: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  previewMetricLabel: {
+    color: '#A0A3BD',
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  previewMetricValue: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  previewTip: {
+    color: '#A0A3BD',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  previewControls: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+  },
+  previewArrow: {
+    flex: 1,
+    marginHorizontal: 4,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  previewArrowText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
   },
   
   // Swipe Indicator

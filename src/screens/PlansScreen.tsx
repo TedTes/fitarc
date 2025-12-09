@@ -319,6 +319,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                             +{plan.workout.exercises.length - 3} more
                           </Text>
                         )}
+                        <View style={styles.mediaPlaceholder}>
+                          <Text style={styles.mediaPlaceholderLabel}>Motion preview</Text>
+                          <Text style={styles.mediaPlaceholderMeta}>Drop GIF/video when ready</Text>
+                        </View>
                       </View>
 
                       {/* Action button */}
@@ -604,6 +608,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 16,
     marginTop: 4,
+  },
+  mediaPlaceholder: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  mediaPlaceholderLabel: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  mediaPlaceholderMeta: {
+    color: '#8F93B6',
+    fontSize: 11,
   },
   weekButton: {
     alignSelf: 'flex-start',
