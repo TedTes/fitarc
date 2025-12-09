@@ -32,7 +32,7 @@ type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'comp
 
 export default function App() {
   const storage = createStorageAdapter();
-  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, markDayConsistent, recalculateProgress, completePhase, seedPerformanceData, toggleWorkoutExercise, toggleMealCompletion, reorderWorkoutExercise, regenerateWorkoutPlan, regenerateMealPlan } = useAppState(storage);
+  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, markDayConsistent, recalculateProgress, completePhase, seedPerformanceData, toggleWorkoutExercise, toggleMealCompletion, reorderWorkoutExercise, regenerateWorkoutPlan, regenerateMealPlan, loadWeeklyTemplate } = useAppState(storage);
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
   const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
   const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
@@ -315,6 +315,7 @@ export default function App() {
               mealPlans={state.mealPlans}
               onRegenerateWorkoutPlan={regenerateWorkoutPlan}
               onRegenerateMealPlan={regenerateMealPlan}
+              onLoadTemplate={loadWeeklyTemplate}
             />
           )}
         </Tab.Screen>

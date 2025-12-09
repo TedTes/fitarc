@@ -13,6 +13,7 @@ import {
   HabitLog,
   HabitType,
   DailyMealPlan,
+  MuscleGroup,
 } from '../types/domain';
 import { StorageAdapter } from '../storage';
 import { getTodayFocusAreas } from '../utils/trainingSplitHelper';
@@ -23,6 +24,9 @@ import {
   sessionToWorkoutLog,
 } from '../utils/workoutPlanner';
 import { createMealPlanForDate } from '../utils/dietPlanner';
+import weeklyPlanTemplate from '../data/weeklyPlanTemplate.json';
+
+type WeeklyTemplateEntry = typeof weeklyPlanTemplate[number];
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
@@ -423,6 +427,53 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     [state]
   );
 
+  const loadWeeklyTemplate = useCallback(
+    async (anchorDate?: string) => {
+      if (!state || !state.currentPhase || !state.user) return;
+      const base = anchorDate ? new Date(anchorDate) : new Date();
+      const baseDate = new Date(base.toISOString().split('T')[0]);
+      let sessions = state.workoutSessions;
+      let plans = state.mealPlans;
+
+      weeklyPlanTemplate.forEach((template, index) => {
+        const date = new Date(baseDate);
+        date.setDate(baseDate.getDate() + index);
+        const dateStr = date.toISOString().split('T')[0];
+        const session: WorkoutSessionEntry = {
+          id: `session_${state.currentPhase!.id}_${dateStr}`,
+          date: dateStr,
+          phasePlanId: state.currentPhase!.id,
+          exercises: template.workout.map((exercise) => ({
+            name: exercise.name,
+            sets: exercise.sets,
+            reps: exercise.reps,
+            bodyParts: exercise.bodyParts as MuscleGroup[],
+            completed: false,
+          })),
+        };
+        const mealPlan: DailyMealPlan = {
+          id: `meal_${state.currentPhase!.id}_${dateStr}`,
+          date: dateStr,
+          phasePlanId: state.currentPhase!.id,
+          meals: template.meals.map((meal) => ({
+            title: meal.title,
+            items: meal.items,
+            completed: false,
+          })),
+        };
+        sessions = upsertWorkoutSession(sessions, session);
+        plans = upsertMealPlan(plans, mealPlan);
+      });
+
+      await persistState({
+        ...state,
+        workoutSessions: sessions,
+        mealPlans: plans,
+      });
+    },
+    [state]
+  );
+
   const schedulePhotoReminder = useCallback(
     async (date: string) => {
       if (!state) return;
@@ -513,5 +564,6 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     schedulePhotoReminder,
     toggleMealCompletion,
     regenerateMealPlan,
+    loadWeeklyTemplate,
   };
 };

@@ -1,22 +1,16 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import {
-  User,
-  PhasePlan,
-  WorkoutSessionEntry,
-  DailyMealPlan,
-  MuscleGroup,
-} from '../types/domain';
+import { User, PhasePlan, WorkoutSessionEntry, DailyMealPlan } from '../types/domain';
 import { createSessionForDate } from '../utils/workoutPlanner';
 import { createMealPlanForDate } from '../utils/dietPlanner';
-import { getBodyPartLabel } from '../utils';
 
 const MEAL_EMOJIS: Record<string, string> = {
   breakfast: '🌅',
@@ -27,9 +21,6 @@ const MEAL_EMOJIS: Record<string, string> = {
 
 const getMealEmoji = (title: string) => MEAL_EMOJIS[title.toLowerCase()] || '🍽️';
 
-const formatBodyParts = (parts?: MuscleGroup[]) =>
-  parts && parts.length ? parts.map((part) => getBodyPartLabel(part)).join(' • ') : 'Full body focus';
-
 type PlansScreenProps = {
   user: User;
   phase: PhasePlan | null;
@@ -37,6 +28,7 @@ type PlansScreenProps = {
   mealPlans: DailyMealPlan[];
   onRegenerateWorkoutPlan?: (date: string) => void;
   onRegenerateMealPlan?: (date: string) => void;
+  onLoadTemplate?: () => void;
 };
 
 export const PlansScreen: React.FC<PlansScreenProps> = ({
@@ -46,7 +38,16 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   mealPlans,
   onRegenerateWorkoutPlan,
   onRegenerateMealPlan,
+  onLoadTemplate,
 }) => {
+  const [detailPlan, setDetailPlan] = useState<
+    | {
+        type: 'workout' | 'meal';
+        label: string;
+        entries: { title: string; meta: string }[];
+      }
+    | null
+  >(null);
 
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -100,9 +101,55 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     });
   }, [todayStr, workoutSessions, mealPlans, phase?.id, user]);
 
+  const openDetail = (
+    type: 'workout' | 'meal',
+    label: string,
+    entries: { title: string; meta: string }[]
+  ) => {
+    setDetailPlan({ type, label, entries });
+  };
+
+  const closeDetail = () => setDetailPlan(null);
+
+  const hasLoadedTemplateRef = useRef(false);
+
+  useEffect(() => {
+    if (!phase || !onLoadTemplate || hasLoadedTemplateRef.current) return;
+    onLoadTemplate();
+    hasLoadedTemplateRef.current = true;
+  }, [phase, onLoadTemplate]);
+
   return (
     <View style={styles.container}>
       <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
+        <Modal
+          transparent
+          visible={!!detailPlan}
+          animationType="fade"
+          onRequestClose={closeDetail}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>{detailPlan?.label}</Text>
+              <Text style={styles.modalSubtitle}>
+                {detailPlan?.type === 'workout'
+                  ? 'Full session overview'
+                  : 'Meal breakdown for the day'}
+              </Text>
+              <View style={styles.modalList}>
+                {detailPlan?.entries.map((entry) => (
+                  <View key={entry.title} style={styles.modalRow}>
+                    <Text style={styles.modalRowTitle}>{entry.title}</Text>
+                    <Text style={styles.modalRowMeta}>{entry.meta}</Text>
+                  </View>
+                ))}
+              </View>
+              <TouchableOpacity style={styles.modalButton} onPress={closeDetail}>
+                <Text style={styles.modalButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <Text style={styles.pageTitle}>Plans</Text>
           <Text style={styles.pageSubtitle}>
@@ -127,17 +174,32 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.weekScroller}
             >
-              {weekPlans.map((plan) => (
-                <LinearGradient
+              {weekPlans.map((plan) => {
+                const workoutDone = plan.workout.exercises.every((exercise) => exercise.completed);
+                return (
+                <TouchableOpacity
                   key={`workout-${plan.dateStr}`}
-                  colors={['#1D2245', '#151B34']}
-                  style={styles.weekCard}
+                  activeOpacity={0.9}
+                  onPress={() =>
+                    openDetail(
+                      'workout',
+                      `${plan.label} · Workout`,
+                      plan.workout.exercises.map((exercise) => ({
+                        title: exercise.name,
+                        meta: `${exercise.sets} x ${exercise.reps}`,
+                      }))
+                    )
+                  }
                 >
-                  <View style={styles.weekCardHeader}>
-                    <Text style={styles.weekCardLabel}>{plan.label}</Text>
-                    <Text style={styles.weekCardCount}>{plan.workout.exercises.length} moves</Text>
-                  </View>
-                  {plan.workout.exercises.slice(0, 3).map((exercise) => (
+                  <LinearGradient colors={['#1D2245', '#151B34']} style={styles.weekCard}>
+                    <View style={styles.weekCardHeader}>
+                      <Text style={styles.weekCardLabel}>{plan.label}</Text>
+                      <View style={styles.weekCardHeaderRight}>
+                        <Text style={styles.weekCardCount}>{plan.workout.exercises.length} moves</Text>
+                        {workoutDone && <Text style={styles.weekStatusPill}>Done</Text>}
+                      </View>
+                    </View>
+                    {plan.workout.exercises.slice(0, 3).map((exercise) => (
                     <View key={exercise.name} style={styles.weekItemRow}>
                       <View style={styles.weekBullet} />
                       <View style={styles.weekItemCopy}>
@@ -146,14 +208,16 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                       </View>
                     </View>
                   ))}
-                  <TouchableOpacity
-                    style={styles.weekButton}
-                    onPress={() => onRegenerateWorkoutPlan?.(plan.dateStr)}
-                  >
-                    <Text style={styles.weekButtonText}>Shuffle day</Text>
-                  </TouchableOpacity>
-                </LinearGradient>
-              ))}
+                    <TouchableOpacity
+                      style={styles.weekButton}
+                      onPress={() => onRegenerateWorkoutPlan?.(plan.dateStr)}
+                    >
+                      <Text style={styles.weekButtonText}>Shuffle day</Text>
+                    </TouchableOpacity>
+                  </LinearGradient>
+                </TouchableOpacity>
+              );
+              })}
             </ScrollView>
           </View>
 
@@ -175,17 +239,32 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.weekScroller}
             >
-              {weekPlans.map((plan) => (
-                <LinearGradient
+              {weekPlans.map((plan) => {
+                const mealsDone = plan.meals.meals.every((meal) => meal.completed);
+                return (
+                <TouchableOpacity
                   key={`meal-${plan.dateStr}`}
-                  colors={['#1B2F2F', '#121D1D']}
-                  style={styles.weekCard}
+                  activeOpacity={0.9}
+                  onPress={() =>
+                    openDetail(
+                      'meal',
+                      `${plan.label} · Meals`,
+                      plan.meals.meals.map((meal) => ({
+                        title: meal.title,
+                        meta: `${meal.items.length} items`,
+                      }))
+                    )
+                  }
                 >
-                  <View style={styles.weekCardHeader}>
-                    <Text style={styles.weekCardLabel}>{plan.label}</Text>
-                    <Text style={styles.weekCardCount}>{plan.meals.meals.length} meals</Text>
-                  </View>
-                  {plan.meals.meals.slice(0, 3).map((meal) => (
+                  <LinearGradient colors={['#1B2F2F', '#121D1D']} style={styles.weekCard}>
+                    <View style={styles.weekCardHeader}>
+                      <Text style={styles.weekCardLabel}>{plan.label}</Text>
+                      <View style={styles.weekCardHeaderRight}>
+                        <Text style={styles.weekCardCount}>{plan.meals.meals.length} meals</Text>
+                        {mealsDone && <Text style={[styles.weekStatusPill, styles.weekStatusPillSuccess]}>Logged</Text>}
+                      </View>
+                    </View>
+                    {plan.meals.meals.slice(0, 3).map((meal) => (
                     <View key={meal.title} style={styles.weekItemRow}>
                       <View style={styles.weekBullet} />
                       <View style={styles.weekItemCopy}>
@@ -194,14 +273,16 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                       </View>
                     </View>
                   ))}
-                  <TouchableOpacity
-                    style={styles.weekButton}
-                    onPress={() => onRegenerateMealPlan?.(plan.dateStr)}
-                  >
-                    <Text style={styles.weekButtonText}>Swap menu</Text>
-                  </TouchableOpacity>
-                </LinearGradient>
-              ))}
+                    <TouchableOpacity
+                      style={styles.weekButton}
+                      onPress={() => onRegenerateMealPlan?.(plan.dateStr)}
+                    >
+                      <Text style={styles.weekButtonText}>Swap menu</Text>
+                    </TouchableOpacity>
+                  </LinearGradient>
+                </TouchableOpacity>
+              );
+              })}
             </ScrollView>
           </View>
         </ScrollView>
@@ -277,6 +358,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  weekCardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   weekCardLabel: {
     color: '#FFFFFF',
     fontWeight: '600',
@@ -320,6 +406,76 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 12,
+  },
+  weekStatusPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#6C63FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    color: '#6C63FF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  weekStatusPillSuccess: {
+    borderColor: '#00F5A0',
+    color: '#00F5A0',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 8, 20, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    borderRadius: 18,
+    backgroundColor: '#151932',
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    padding: 20,
+    gap: 12,
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  modalSubtitle: {
+    color: '#A0A3BD',
+    fontSize: 13,
+  },
+  modalList: {
+    maxHeight: 320,
+    marginTop: 8,
+    gap: 10,
+  },
+  modalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  modalRowTitle: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  modalRowMeta: {
+    color: '#A0A3BD',
+    fontSize: 12,
+  },
+  modalButton: {
+    marginTop: 8,
+    alignSelf: 'flex-end',
+    borderRadius: 999,
+    backgroundColor: '#6C63FF',
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+  },
+  modalButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   linkButton: {
     paddingHorizontal: 8,

@@ -6,12 +6,10 @@ import {
   buildStrengthTrends,
   buildWeeklyVolumeSummary,
   buildMovementBalanceSummary,
-  buildLiftHistory,
   getOverallStrengthDelta,
   StrengthTrendView,
   VolumeEntryView,
   MovementPatternView,
-  LiftHistoryView,
 } from '../utils/performanceSelectors';
 
 
@@ -46,8 +44,16 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const strengthTrends = buildStrengthTrends(strengthSnapshots);
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs);
   const movementBalance = buildMovementBalanceSummary(workoutLogs);
-  const liftHistory = buildLiftHistory(strengthSnapshots, 'bench_press');
   const overallStrength = getOverallStrengthDelta(strengthTrends);
+  const bestLiftRows = strengthTrends
+    .map((trend) => ({
+      lift: trend.lift,
+      current: trend.weights[trend.weights.length - 1] || 0,
+      delta: trend.deltaLbs,
+    }))
+    .filter((row) => row.current > 0)
+    .sort((a, b) => b.current - a.current)
+    .slice(0, 3);
   const recentSessions = workoutLogs.filter((log) => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 28);
@@ -143,6 +149,23 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         <Text style={styles.volumeSummary}>✓ Balanced training!</Text>
         <Text style={styles.volumeConsistency}>You're hitting all patterns 2x per week.</Text>
       </View>
+
+      {bestLiftRows.length > 0 && (
+        <View style={styles.dashboardCard}>
+          <View style={styles.cardHeaderRow}>
+            <Text style={styles.cardTitle}>Top Lifts This Phase</Text>
+          </View>
+          {bestLiftRows.map((row) => (
+            <View key={row.lift} style={styles.bestLiftRow}>
+              <Text style={styles.bestLiftName}>{row.lift}</Text>
+              <View style={styles.bestLiftStats}>
+                <Text style={styles.bestLiftValue}>{row.current} lbs</Text>
+                <Text style={styles.bestLiftDelta}>{formatSigned(row.delta)} lbs</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
     </>
   );
 
@@ -416,6 +439,31 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#A0A3BD',
     marginTop: 8,
+  },
+  bestLiftRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#1E2340',
+  },
+  bestLiftName: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  bestLiftStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  bestLiftValue: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  bestLiftDelta: {
+    color: '#6C63FF',
+    fontSize: 12,
   },
   volumeConsistency: {
     fontSize: 12,
