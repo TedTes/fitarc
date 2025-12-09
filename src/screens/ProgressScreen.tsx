@@ -12,7 +12,6 @@ import {
   MovementPatternView,
 } from '../utils/performanceSelectors';
 
-
 type ProgressScreenProps = {
   phase: PhasePlan;
   photoCheckins: PhotoCheckin[];
@@ -45,6 +44,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs);
   const movementBalance = buildMovementBalanceSummary(workoutLogs);
   const overallStrength = getOverallStrengthDelta(strengthTrends);
+  
   const bestLiftRows = strengthTrends
     .map((trend) => ({
       lift: trend.lift,
@@ -54,6 +54,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     .filter((row) => row.current > 0)
     .sort((a, b) => b.current - a.current)
     .slice(0, 3);
+  
   const recentSessions = workoutLogs.filter((log) => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 28);
@@ -64,6 +65,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const consistencyPercent = plannedSessions
     ? Math.round((completedSessions / plannedSessions) * 100)
     : 0;
+  
   const nutritionWindowCutoff = new Date();
   nutritionWindowCutoff.setDate(nutritionWindowCutoff.getDate() - 6);
   const recentMealPlans = mealPlans.filter(
@@ -75,93 +77,193 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     0
   );
   const mealCompliance = totalMeals ? Math.round((completedMeals / totalMeals) * 100) : 0;
+  
   const [activeTab, setActiveTab] = useState<'stats' | 'comparison'>('stats');
   const tabOptions: { key: 'stats' | 'comparison'; label: string }[] = [
     { key: 'stats', label: 'Stats' },
-    { key: 'comparison', label: 'Comparison' },
+    { key: 'comparison', label: 'Photos' },
   ];
 
   const formatSigned = (value: number) => `${value >= 0 ? '+' : ''}${value}`;
 
+  // ✨ NEW: Render mini sparkline for strength trends
+  const renderSparkline = (weights: number[]) => {
+    if (weights.length < 2) return '━━━';
+    const hasGrowth = weights[weights.length - 1] > weights[0];
+    return hasGrowth ? '📈' : '━';
+  };
+
   const renderStatsContent = () => (
     <>
-      <View style={styles.dashboardCard}>
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardTitle}>Weekly Volume (Last 4 weeks)</Text>
+      {/* ✨ IMPROVED: Overview Stats Card */}
+      <View style={styles.overviewCard}>
+        <Text style={styles.overviewTitle}>Phase Overview</Text>
+        <View style={styles.overviewGrid}>
+          <View style={styles.overviewItem}>
+            <Text style={styles.overviewValue}>{progressPercent}%</Text>
+            <Text style={styles.overviewLabel}>Complete</Text>
+          </View>
+          <View style={styles.overviewDivider} />
+          <View style={styles.overviewItem}>
+            <Text style={styles.overviewValue}>{daysActive}</Text>
+            <Text style={styles.overviewLabel}>Days Active</Text>
+          </View>
+          <View style={styles.overviewDivider} />
+          <View style={styles.overviewItem}>
+            <Text style={styles.overviewValue}>{consistencyPercent}%</Text>
+            <Text style={styles.overviewLabel}>Consistency</Text>
+          </View>
         </View>
-        {weeklyVolume.map((entry: VolumeEntryView) => {
-          const maxSets = weeklyVolume[0]?.sets || 1;
-          const width = `${Math.min(100, (entry.sets / maxSets) * 100)}%`;
-          return (
-            <View key={entry.group} style={styles.volumeRow}>
-              <Text style={styles.volumeLabel}>{entry.group}</Text>
-              <View style={styles.volumeBarTrack}>
-                <View style={[styles.volumeBarFill, { width }]} />
-              </View>
-              <Text style={styles.volumeValue}>{entry.sets} sets</Text>
-            </View>
-          );
-        })}
-        <Text style={styles.volumeSummary}>All muscle groups in optimal range ✓</Text>
-        <Text style={styles.volumeConsistency}>
-          Consistency: {consistencyPercent}% (Planned {plannedSessions} sessions, completed {completedSessions})
-        </Text>
       </View>
 
-      <View style={styles.dashboardCard}>
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardTitle}>Strength Trends (8 weeks)</Text>
+      {/* ✨ IMPROVED: Compact Strength Trends */}
+      <View style={styles.compactCard}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Strength Trends</Text>
+          <Text style={styles.cardSubtitle}>Last 8 weeks</Text>
         </View>
-        {strengthTrends.map((trend: StrengthTrendView) => (
-          <View key={trend.lift} style={styles.trendRow}>
-            <View style={styles.trendInfo}>
-              <Text style={styles.trendLift}>{trend.lift}</Text>
-              <Text style={styles.trendSequence}>{trend.weights.join(' → ')} lbs</Text>
+        
+        {strengthTrends.length > 0 ? (
+          strengthTrends.slice(0, 3).map((trend: StrengthTrendView) => (
+            <View key={trend.lift} style={styles.trendRow}>
+              <View style={styles.trendLeft}>
+                <Text style={styles.trendIcon}>{renderSparkline(trend.weights)}</Text>
+                <View>
+                  <Text style={styles.trendLift}>{trend.lift}</Text>
+                  <Text style={styles.trendProgress}>
+                    {trend.weights[0]} → {trend.weights[trend.weights.length - 1]} lbs
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.trendRight}>
+                <Text style={styles.trendDelta}>+{trend.deltaLbs}</Text>
+                <Text style={styles.trendPercent}>+{trend.deltaPercent}%</Text>
+              </View>
             </View>
-            <View style={styles.trendDelta}>
-              <Text style={styles.trendGlyph}>{trend.glyph}</Text>
-              <Text style={styles.trendChange}>+{trend.deltaLbs} lbs (+{trend.deltaPercent}%)</Text>
-            </View>
-          </View>
-        ))}
-        {!strengthTrends.length && (
-          <Text style={styles.emptyText}>Log a few workouts to unlock strength trends.</Text>
+          ))
+        ) : (
+          <Text style={styles.emptyText}>Start logging workouts to track strength gains</Text>
         )}
       </View>
 
-      <View style={styles.dashboardCard}>
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.cardTitle}>Movement Balance (This Month)</Text>
+      {/* ✨ IMPROVED: Compact Volume Card */}
+      <View style={styles.compactCard}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Training Volume</Text>
+          <Text style={styles.cardSubtitle}>Last 4 weeks</Text>
         </View>
-        {movementBalance.map((pattern: MovementPatternView) => {
-          const maxSessions = movementBalance[0]?.sessions || 1;
-          const width = `${Math.min(100, (pattern.sessions / maxSessions) * 100)}%`;
-          return (
-            <View key={pattern.name} style={styles.volumeRow}>
-              <Text style={styles.volumeLabel}>{pattern.name}</Text>
-              <View style={styles.volumeBarTrack}>
-                <View style={[styles.movementBarFill, { width }]} />
+        
+        {weeklyVolume.length > 0 ? (
+          weeklyVolume.map((entry: VolumeEntryView) => {
+            const maxSets = weeklyVolume[0]?.sets || 1;
+            const progress = (entry.sets / maxSets) * 100;
+            return (
+              <View key={entry.group} style={styles.volumeRow}>
+                <Text style={styles.volumeLabel}>{entry.group}</Text>
+                <View style={styles.volumeBarContainer}>
+                  <View style={styles.volumeBarTrack}>
+                    <View 
+                      style={[
+                        styles.volumeBarFill, 
+                        { width: `${Math.min(100, progress)}%` }
+                      ]} 
+                    />
+                  </View>
+                  <Text style={styles.volumeValue}>{entry.sets}</Text>
+                </View>
               </View>
-              <Text style={styles.volumeValue}>{pattern.sessions}</Text>
-            </View>
-          );
-        })}
-        <Text style={styles.volumeSummary}>✓ Balanced training!</Text>
-        <Text style={styles.volumeConsistency}>You're hitting all patterns 2x per week.</Text>
+            );
+          })
+        ) : (
+          <Text style={styles.emptyText}>Volume data will appear after logging workouts</Text>
+        )}
       </View>
 
-      {bestLiftRows.length > 0 && (
-        <View style={styles.dashboardCard}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardTitle}>Top Lifts This Phase</Text>
+      {/* ✨ IMPROVED: Movement Balance - More Visual */}
+      <View style={styles.compactCard}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Movement Balance</Text>
+          <Text style={styles.cardSubtitle}>This month</Text>
+        </View>
+        
+        {movementBalance.length > 0 ? (
+          <View style={styles.movementGrid}>
+            {movementBalance.map((pattern: MovementPatternView) => {
+              const maxSessions = Math.max(...movementBalance.map(p => p.sessions));
+              const intensity = pattern.sessions / maxSessions;
+              return (
+                <View key={pattern.name} style={styles.movementPill}>
+                  <View 
+                    style={[
+                      styles.movementIndicator,
+                      { opacity: Math.max(0.3, intensity) }
+                    ]}
+                  />
+                  <Text style={styles.movementName}>{pattern.name}</Text>
+                  <Text style={styles.movementCount}>{pattern.sessions}x</Text>
+                </View>
+              );
+            })}
           </View>
-          {bestLiftRows.map((row) => (
-            <View key={row.lift} style={styles.bestLiftRow}>
-              <Text style={styles.bestLiftName}>{row.lift}</Text>
-              <View style={styles.bestLiftStats}>
-                <Text style={styles.bestLiftValue}>{row.current} lbs</Text>
-                <Text style={styles.bestLiftDelta}>{formatSigned(row.delta)} lbs</Text>
+        ) : (
+          <Text style={styles.emptyText}>Movement patterns tracked after workouts</Text>
+        )}
+      </View>
+
+      {/* ✨ IMPROVED: Nutrition Compliance - Visual Circle */}
+      <View style={styles.compactCard}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Nutrition</Text>
+          <Text style={styles.cardSubtitle}>Last 7 days</Text>
+        </View>
+        
+        <View style={styles.nutritionContent}>
+          <View style={styles.nutritionCircle}>
+            <Text style={styles.nutritionPercent}>{mealCompliance}%</Text>
+            <Text style={styles.nutritionLabel}>Compliance</Text>
+          </View>
+          <View style={styles.nutritionStats}>
+            <View style={styles.nutritionStat}>
+              <Text style={styles.nutritionStatValue}>{completedMeals}</Text>
+              <Text style={styles.nutritionStatLabel}>Logged</Text>
+            </View>
+            <View style={styles.nutritionStat}>
+              <Text style={styles.nutritionStatValue}>{totalMeals}</Text>
+              <Text style={styles.nutritionStatLabel}>Total</Text>
+            </View>
+          </View>
+        </View>
+        
+        {mealCompliance >= 80 && (
+          <View style={styles.insightBanner}>
+            <Text style={styles.insightEmoji}>🎯</Text>
+            <Text style={styles.insightText}>Excellent nutrition adherence!</Text>
+          </View>
+        )}
+      </View>
+
+      {/* ✨ NEW: Top Lifts Compact View */}
+      {bestLiftRows.length > 0 && (
+        <View style={styles.compactCard}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Personal Records</Text>
+            <Text style={styles.cardSubtitle}>This phase</Text>
+          </View>
+          
+          {bestLiftRows.map((row, index) => (
+            <View key={row.lift} style={styles.prRow}>
+              <View style={styles.prRank}>
+                <Text style={styles.prRankText}>#{index + 1}</Text>
               </View>
+              <View style={styles.prInfo}>
+                <Text style={styles.prLift}>{row.lift}</Text>
+                <Text style={styles.prWeight}>{row.current} lbs</Text>
+              </View>
+              {row.delta > 0 && (
+                <View style={styles.prBadge}>
+                  <Text style={styles.prBadgeText}>+{row.delta} lbs</Text>
+                </View>
+              )}
             </View>
           ))}
         </View>
@@ -171,91 +273,101 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const renderComparisonContent = () => (
     <>
+      {/* ✨ IMPROVED: Photo Comparison - Side by side */}
       {baselinePhoto && latestPhoto ? (
-        <View style={styles.comparisonCard}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Photo Comparison</Text>
+        <View style={styles.compactCard}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Transformation</Text>
+            <Text style={styles.cardSubtitle}>
+              {Math.floor(daysActive / 7)} weeks progress
+            </Text>
           </View>
           
-          <View style={styles.photoRow}>
-            <View style={styles.photoColumn}>
-              <Text style={styles.photoLabel}>Start</Text>
-              <Image source={{ uri: baselinePhoto.frontUri }} style={styles.photo} />
-              <Text style={styles.photoDate}>
-                {new Date(baselinePhoto.date).toLocaleDateString()}
-              </Text>
-            </View>
-
-            <View style={styles.photoColumn}>
-              <Text style={styles.photoLabel}>Current</Text>
-              <Image source={{ uri: latestPhoto.frontUri }} style={styles.photo} />
-              <Text style={styles.photoDate}>
-                {new Date(latestPhoto.date).toLocaleDateString()}
-              </Text>
-            </View>
-
-            <View style={styles.photoColumn}>
-              <Text style={styles.photoLabel}>Target</Text>
-              <View style={styles.photoPlaceholder}>
-                <Text style={styles.photoPlaceholderText}>Level {phase.targetLevelId}</Text>
+          <View style={styles.photoComparison}>
+            <View style={styles.photoBox}>
+              <Image source={{ uri: baselinePhoto.frontUri }} style={styles.photoLarge} />
+              <View style={styles.photoOverlay}>
+                <Text style={styles.photoOverlayText}>Start</Text>
               </View>
-              <Text style={styles.photoDate}>Goal</Text>
+            </View>
+            
+            <View style={styles.photoArrow}>
+              <Text style={styles.photoArrowText}>→</Text>
+            </View>
+            
+            <View style={styles.photoBox}>
+              <Image source={{ uri: latestPhoto.frontUri }} style={styles.photoLarge} />
+              <View style={styles.photoOverlay}>
+                <Text style={styles.photoOverlayText}>Now</Text>
+              </View>
             </View>
           </View>
         </View>
       ) : (
-        <View style={styles.comparisonCard}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Photo Comparison</Text>
-          </View>
-          <Text style={styles.emptyText}>
-            Add a baseline and current photo to unlock side-by-side comparisons.
+        <View style={styles.emptyPhotoCard}>
+          <Text style={styles.emptyPhotoEmoji}>📸</Text>
+          <Text style={styles.emptyPhotoTitle}>No Progress Photos Yet</Text>
+          <Text style={styles.emptyPhotoText}>
+            Take your first photo to start tracking visual progress
           </Text>
         </View>
       )}
 
-      <TouchableOpacity style={styles.photoButton} onPress={onTakePhoto}>
+      {/* ✨ Photo Action Button */}
+      <TouchableOpacity style={styles.photoActionButton} onPress={onTakePhoto}>
         <LinearGradient
           colors={['#6C63FF', '#5449CC']}
-          style={styles.photoButtonGradient}
+          style={styles.photoActionGradient}
         >
-          <Text style={styles.photoButtonText}>📸 Take Progress Photo</Text>
+          <Text style={styles.photoActionText}>
+            {phasePhotos.length > 0 ? '📸 Take New Progress Photo' : '📸 Take First Photo'}
+          </Text>
         </LinearGradient>
       </TouchableOpacity>
 
+      {/* ✨ IMPROVED: Photo Timeline - Horizontal Scroll */}
       {phasePhotos.length > 0 && (
-        <View style={styles.timelineCard}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Photo Timeline</Text>
+        <View style={styles.compactCard}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Photo Timeline</Text>
+            <Text style={styles.cardSubtitle}>{phasePhotos.length + 1} check-ins</Text>
           </View>
           
-          <View style={styles.timeline}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.timelineScroll}
+          >
             {baselinePhoto && (
-              <View style={styles.timelineItem}>
-                <View style={styles.timelineDot} />
-                <Image source={{ uri: baselinePhoto.frontUri }} style={styles.timelinePhoto} />
-                <View style={styles.timelineInfo}>
-                  <Text style={styles.timelineDate}>
-                    {new Date(baselinePhoto.date).toLocaleDateString()}
-                  </Text>
-                  <Text style={styles.timelineLabel}>Baseline</Text>
+              <View style={styles.timelineCard}>
+                <Image source={{ uri: baselinePhoto.frontUri }} style={styles.timelineImage} />
+                <Text style={styles.timelineDate}>
+                  {new Date(baselinePhoto.date).toLocaleDateString(undefined, { 
+                    month: 'short', 
+                    day: 'numeric' 
+                  })}
+                </Text>
+                <View style={styles.timelineBadge}>
+                  <Text style={styles.timelineBadgeText}>Start</Text>
                 </View>
               </View>
             )}
 
-            {phasePhotos.map((photo) => (
-              <View key={photo.id} style={styles.timelineItem}>
-                <View style={styles.timelineDot} />
-                <Image source={{ uri: photo.frontUri }} style={styles.timelinePhoto} />
-                <View style={styles.timelineInfo}>
-                  <Text style={styles.timelineDate}>
-                    {new Date(photo.date).toLocaleDateString()}
-                  </Text>
-                  <Text style={styles.timelineLabel}>Check-in</Text>
+            {phasePhotos.map((photo, index) => (
+              <View key={photo.id} style={styles.timelineCard}>
+                <Image source={{ uri: photo.frontUri }} style={styles.timelineImage} />
+                <Text style={styles.timelineDate}>
+                  {new Date(photo.date).toLocaleDateString(undefined, { 
+                    month: 'short', 
+                    day: 'numeric' 
+                  })}
+                </Text>
+                <View style={styles.timelineBadge}>
+                  <Text style={styles.timelineBadgeText}>Week {index + 1}</Text>
                 </View>
               </View>
             ))}
-          </View>
+          </ScrollView>
         </View>
       )}
     </>
@@ -268,7 +380,15 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         style={styles.gradient}
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.title}>Progress</Text>
+          {/* ✨ IMPROVED: Compact Header */}
+          <View style={styles.header}>
+            <Text style={styles.title}>Progress</Text>
+            <Text style={styles.subtitle}>
+              Level {phase.currentLevelId} → {phase.targetLevelId}
+            </Text>
+          </View>
+
+          {/* ✨ IMPROVED: Compact Tab Switcher */}
           <View style={styles.tabSwitcher}>
             {tabOptions.map((tab) => (
               <TouchableOpacity
@@ -310,26 +430,38 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 20,
     paddingTop: 60,
+    gap: 16,
+  },
+  
+  // ✨ IMPROVED: Compact Header
+  header: {
+    marginBottom: 8,
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#FFFFFF',
-    marginBottom: 24,
+    marginBottom: 4,
   },
+  subtitle: {
+    fontSize: 14,
+    color: '#A0A3BD',
+  },
+  
+  // ✨ IMPROVED: Compact Tab Switcher
   tabSwitcher: {
     flexDirection: 'row',
     backgroundColor: '#151932',
-    borderRadius: 999,
-    padding: 4,
-    marginBottom: 16,
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#2A2F4F',
   },
   tabButton: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 999,
+    paddingVertical: 8,
+    borderRadius: 10,
     alignItems: 'center',
   },
   tabButtonActive: {
@@ -338,364 +470,423 @@ const styles = StyleSheet.create({
   tabButtonText: {
     color: '#A0A3BD',
     fontWeight: '600',
+    fontSize: 14,
   },
   tabButtonTextActive: {
     color: '#FFFFFF',
   },
-  dashboardCard: {
+  
+  // ✨ NEW: Overview Card
+  overviewCard: {
     backgroundColor: '#151932',
     borderRadius: 16,
     padding: 20,
-    marginBottom: 20,
     borderWidth: 1,
     borderColor: '#2A2F4F',
   },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  cardHeaderTextGroup: {
-    flex: 1,
-    marginRight: 12,
-  },
-  cardTitle: {
-    fontSize: 18,
+  overviewTitle: {
+    fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+    marginBottom: 16,
   },
-  cardMeta: {
-    fontSize: 14,
+  overviewGrid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  overviewItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  overviewValue: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#00F5A0',
+    marginBottom: 4,
+  },
+  overviewLabel: {
+    fontSize: 12,
     color: '#A0A3BD',
   },
+  overviewDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: '#2A2F4F',
+  },
+  
+  // ✨ IMPROVED: Compact Card Style
+  compactCard: {
+    backgroundColor: '#151932',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  cardHeader: {
+    marginBottom: 16,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    color: '#A0A3BD',
+  },
+  
+  // ✨ IMPROVED: Compact Trend Row
   trendRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    gap: 12,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E2340',
   },
-  trendInfo: {
-    flex: 1,
-  },
-  trendLift: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  trendSequence: {
-    fontSize: 13,
-    color: '#A0A3BD',
-    marginTop: 4,
-  },
-  trendDelta: {
-    alignItems: 'flex-end',
-  },
-  trendGlyph: {
-    fontSize: 16,
-    color: '#6C63FF',
-  },
-  trendChange: {
-    fontSize: 12,
-    color: '#A0A3BD',
-    marginTop: 4,
-  },
-  volumeRow: {
+  trendLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 10,
+    flex: 1,
+  },
+  trendIcon: {
+    fontSize: 20,
+  },
+  trendLift: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  trendProgress: {
+    fontSize: 12,
+    color: '#A0A3BD',
+    marginTop: 2,
+  },
+  trendRight: {
+    alignItems: 'flex-end',
+  },
+  trendDelta: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#00F5A0',
+  },
+  trendPercent: {
+    fontSize: 11,
+    color: '#A0A3BD',
+    marginTop: 2,
+  },
+  
+  // ✨ IMPROVED: Compact Volume Rows
+  volumeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
   },
   volumeLabel: {
-    width: 90,
+    width: 80,
     fontSize: 13,
     color: '#FFFFFF',
+    fontWeight: '500',
+  },
+  volumeBarContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   volumeBarTrack: {
     flex: 1,
-    height: 10,
+    height: 8,
     backgroundColor: '#1E2340',
-    borderRadius: 5,
+    borderRadius: 4,
     overflow: 'hidden',
   },
   volumeBarFill: {
     height: '100%',
     backgroundColor: '#6C63FF',
-    borderRadius: 5,
-  },
-  movementBarFill: {
-    height: '100%',
-    backgroundColor: '#00F5A0',
-    borderRadius: 5,
+    borderRadius: 4,
   },
   volumeValue: {
-    width: 70,
+    width: 35,
     textAlign: 'right',
     color: '#A0A3BD',
-    fontSize: 12,
-  },
-  volumeSummary: {
     fontSize: 13,
-    color: '#A0A3BD',
-    marginTop: 8,
-  },
-  bestLiftRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 6,
-    borderTopWidth: 1,
-    borderTopColor: '#1E2340',
-  },
-  bestLiftName: {
-    color: '#FFFFFF',
     fontWeight: '600',
   },
-  bestLiftStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  bestLiftValue: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  bestLiftDelta: {
-    color: '#6C63FF',
-    fontSize: 12,
-  },
-  volumeConsistency: {
-    fontSize: 12,
-    color: '#A0A3BD',
-    marginTop: 4,
-  },
-  nutritionRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    marginTop: 12,
-    marginBottom: 12,
-  },
-  nutritionPercent: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: '#00F5A0',
-  },
-  nutritionDetail: {
-    color: '#A0A3BD',
-    fontSize: 14,
-  },
-  nutritionBarFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: '#00F5A0',
-  },
-  nutritionHint: {
-    marginTop: 12,
-    color: '#E3E5FF',
-    fontSize: 14,
-  },
-  emptyText: {
-    fontSize: 13,
-    color: '#A0A3BD',
-    textAlign: 'center',
-    marginTop: 8,
-  },
-  sparkline: {
-    fontSize: 24,
-    color: '#6C63FF',
-    marginBottom: 12,
-  },
-  weightProgress: {
-    fontSize: 13,
-    color: '#A0A3BD',
-    marginBottom: 16,
-  },
-  repHistory: {
-    gap: 8,
-    marginBottom: 16,
-  },
-  repRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  repWeek: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  repValues: {
-    color: '#A0A3BD',
-  },
-  insightBox: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#1E2340',
-  },
-  insightIcon: {
-    fontSize: 18,
-  },
-  insightText: {
-    flex: 1,
-    color: '#FFFFFF',
-  },
-  comparisonCard: {
-    backgroundColor: '#151932',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  photoRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  photoColumn: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  photoLabel: {
-    fontSize: 12,
-    color: '#A0A3BD',
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  photo: {
-    width: '100%',
-    aspectRatio: 3 / 4,
-    borderRadius: 12,
-    backgroundColor: '#1E2340',
-    marginBottom: 8,
-  },
-  photoPlaceholder: {
-    width: '100%',
-    aspectRatio: 3 / 4,
-    borderRadius: 12,
-    backgroundColor: '#1E2340',
-    borderWidth: 2,
-    borderColor: '#6C63FF',
-    borderStyle: 'dashed',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  photoPlaceholderText: {
-    fontSize: 14,
-    color: '#6C63FF',
-    fontWeight: '600',
-  },
-  photoDate: {
-    fontSize: 11,
-    color: '#A0A3BD',
-  },
-  photoButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 24,
-  },
-  photoButtonGradient: {
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  photoButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  timelineCard: {
-    backgroundColor: '#151932',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  timeline: {
-    gap: 16,
-  },
-  timelineItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  timelineDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#6C63FF',
-  },
-  timelinePhoto: {
-    width: 80,
-    height: 106,
-    borderRadius: 8,
-    backgroundColor: '#1E2340',
-  },
-  timelineInfo: {
-    flex: 1,
-  },
-  timelineDate: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  timelineLabel: {
-    fontSize: 12,
-    color: '#A0A3BD',
-  },
-  consistencyCard: {
-    backgroundColor: '#151932',
-    borderRadius: 16,
-    padding: 20,
-    marginTop: 24,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  consistencySubtitle: {
-    fontSize: 13,
-    color: '#A0A3BD',
-    marginBottom: 16,
-  },
-  consistencyGrid: {
+  
+  // ✨ NEW: Movement Grid
+  movementGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  consistencyDay: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+  movementPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#1E2340',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    gap: 6,
+  },
+  movementIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#00F5A0',
+  },
+  movementName: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    fontWeight: '500',
+  },
+  movementCount: {
+    fontSize: 12,
+    color: '#A0A3BD',
+  },
+  
+  // ✨ IMPROVED: Nutrition Visual
+  nutritionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+  },
+  nutritionCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#1E2340',
+    borderWidth: 6,
+    borderColor: '#00F5A0',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  nutritionPercent: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#00F5A0',
+  },
+  nutritionLabel: {
+    fontSize: 11,
+    color: '#A0A3BD',
+    marginTop: 2,
+  },
+  nutritionStats: {
+    flex: 1,
+    gap: 12,
+  },
+  nutritionStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  nutritionStatValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  nutritionStatLabel: {
+    fontSize: 13,
+    color: '#A0A3BD',
+  },
+  
+  // ✨ NEW: Insight Banner
+  insightBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: 'rgba(0, 245, 160, 0.1)',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#2A2F4F',
+    borderColor: 'rgba(0, 245, 160, 0.2)',
   },
-  consistencyDayActive: {
-    backgroundColor: '#00F5A0',
-    borderColor: '#00F5A0',
+  insightEmoji: {
+    fontSize: 20,
   },
-  consistencyDayFuture: {
-    opacity: 0.3,
+  insightText: {
+    fontSize: 13,
+    color: '#00F5A0',
+    fontWeight: '600',
   },
-  consistencyDayText: {
-    fontSize: 16,
+  
+  // ✨ NEW: PR (Personal Records) Rows
+  prRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E2340',
+  },
+  prRank: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#6C63FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  prRankText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  prInfo: {
+    flex: 1,
+  },
+  prLift: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  prWeight: {
+    fontSize: 12,
+    color: '#A0A3BD',
+    marginTop: 2,
+  },
+  prBadge: {
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  prBadgeText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#00F5A0',
+  },
+  
+  // ✨ IMPROVED: Photo Comparison
+  photoComparison: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  photoBox: {
+    flex: 1,
+    position: 'relative',
+  },
+  photoLarge: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 12,
+    backgroundColor: '#1E2340',
+  },
+  photoOverlay: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  photoOverlayText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  photoArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#6C63FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  photoArrowText: {
+    fontSize: 18,
     color: '#FFFFFF',
     fontWeight: 'bold',
+  },
+  
+  // ✨ IMPROVED: Empty Photo State
+  emptyPhotoCard: {
+    backgroundColor: '#151932',
+    borderRadius: 16,
+    padding: 40,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    alignItems: 'center',
+  },
+  emptyPhotoEmoji: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  emptyPhotoTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 8,
+  },
+  emptyPhotoText: {
+    fontSize: 14,
+    color: '#A0A3BD',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  
+  // ✨ Photo Action Button
+  photoActionButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  photoActionGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  photoActionText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  
+  // ✨ IMPROVED: Timeline Scroll
+  timelineScroll: {
+    paddingVertical: 4,
+    gap: 12,
+  },
+  timelineCard: {
+    width: 120,
+    alignItems: 'center',
+  },
+  timelineImage: {
+    width: 120,
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: '#1E2340',
+    marginBottom: 8,
+  },
+  timelineDate: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  timelineBadge: {
+    backgroundColor: '#6C63FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  timelineBadgeText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  
+  // Empty States
+  emptyText: {
+    fontSize: 13,
+    color: '#A0A3BD',
+    textAlign: 'center',
+    paddingVertical: 12,
+    fontStyle: 'italic',
   },
 });

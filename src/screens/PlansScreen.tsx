@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
+  Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, PhasePlan, WorkoutSessionEntry, DailyMealPlan } from '../types/domain';
@@ -49,6 +50,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     | null
   >(null);
 
+  // Animation for modal
+  const modalScale = useRef(new Animated.Value(0)).current;
+  const modalOpacity = useRef(new Animated.Value(0)).current;
+
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
@@ -91,10 +96,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       const dateStr = date.toISOString().split('T')[0];
       const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
       const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const isToday = dateStr === todayStr;
       return {
         date,
         dateStr,
         label: `${weekday} · ${displayDate}`,
+        isToday,
         workout: getSessionForDate(dateStr),
         meals: getMealsForDate(dateStr),
       };
@@ -107,9 +114,42 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     entries: { title: string; meta: string }[]
   ) => {
     setDetailPlan({ type, label, entries });
+    
+    // Animate modal in
+    Animated.parallel([
+      Animated.spring(modalScale, {
+        toValue: 1,
+        tension: 80,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
   };
 
-  const closeDetail = () => setDetailPlan(null);
+  const closeDetail = () => {
+    // Animate modal out
+    Animated.parallel([
+      Animated.timing(modalScale, {
+        toValue: 0.9,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setDetailPlan(null);
+      modalScale.setValue(0);
+      modalOpacity.setValue(0);
+    });
+  };
 
   const hasLoadedTemplateRef = useRef(false);
 
@@ -122,53 +162,92 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   return (
     <View style={styles.container}>
       <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
+        {/* IMPROVED MODAL with smooth animations */}
         <Modal
           transparent
           visible={!!detailPlan}
-          animationType="fade"
+          animationType="none"
           onRequestClose={closeDetail}
         >
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>{detailPlan?.label}</Text>
-              <Text style={styles.modalSubtitle}>
-                {detailPlan?.type === 'workout'
-                  ? 'Full session overview'
-                  : 'Meal breakdown for the day'}
-              </Text>
-              <View style={styles.modalList}>
-                {detailPlan?.entries.map((entry) => (
-                  <View key={entry.title} style={styles.modalRow}>
-                    <Text style={styles.modalRowTitle}>{entry.title}</Text>
-                    <Text style={styles.modalRowMeta}>{entry.meta}</Text>
+          <TouchableOpacity 
+            activeOpacity={1} 
+            onPress={closeDetail}
+            style={styles.modalBackdrop}
+          >
+            <Animated.View
+              style={[
+                styles.modalCard,
+                {
+                  opacity: modalOpacity,
+                  transform: [{ scale: modalScale }],
+                },
+              ]}
+            >
+              <TouchableOpacity activeOpacity={1}>
+                {/* Header with better spacing */}
+                <View style={styles.modalHeader}>
+                  <View style={styles.modalHeaderLeft}>
+                    <Text style={styles.modalTitle}>{detailPlan?.label}</Text>
+                    <Text style={styles.modalSubtitle}>
+                      {detailPlan?.type === 'workout'
+                        ? 'Full session overview'
+                        : 'Meal breakdown for the day'}
+                    </Text>
                   </View>
-                ))}
-              </View>
-              <TouchableOpacity style={styles.modalButton} onPress={closeDetail}>
-                <Text style={styles.modalButtonText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.pageTitle}>Plans</Text>
-          <Text style={styles.pageSubtitle}>
-            Fine-tune today's prescriptions. Reorder moves or refresh the entire plan.
-          </Text>
+                  <TouchableOpacity 
+                    onPress={closeDetail}
+                    style={styles.modalCloseButton}
+                  >
+                    <Text style={styles.modalCloseText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
 
+                {/* Scrollable content */}
+                <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
+                  {detailPlan?.entries.map((entry, idx) => (
+                    <View key={`${entry.title}-${idx}`} style={styles.modalRow}>
+                      <View style={styles.modalRowLeft}>
+                        <View style={styles.modalBullet} />
+                        <Text style={styles.modalRowTitle}>{entry.title}</Text>
+                      </View>
+                      <Text style={styles.modalRowMeta}>{entry.meta}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+
+                {/* Action button */}
+                <TouchableOpacity style={styles.modalButton} onPress={closeDetail}>
+                  <Text style={styles.modalButtonText}>Got it</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </Animated.View>
+          </TouchableOpacity>
+        </Modal>
+
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {/* Page header with better hierarchy */}
+          <View style={styles.pageHeader}>
+            <Text style={styles.pageTitle}>Plans</Text>
+            <Text style={styles.pageSubtitle}>
+              Fine-tune today's prescriptions. Reorder moves or refresh the entire plan.
+            </Text>
+          </View>
+
+          {/* IMPROVED Weekly Workouts section */}
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeaderSimple}>
-              <View>
-                <Text style={styles.sectionLabel}>Weekly Workouts</Text>
+              <View style={styles.sectionHeaderLeft}>
+                <Text style={styles.sectionLabel}>WEEKLY WORKOUTS</Text>
                 <Text style={styles.sectionTitle}>Your seven-day training loop</Text>
               </View>
               <TouchableOpacity
                 style={styles.linkButton}
                 onPress={() => onRegenerateWorkoutPlan?.(todayStr)}
               >
-                <Text style={styles.linkButtonText}>Regenerate week</Text>
+                <Text style={styles.linkButtonText}>↻ Regenerate</Text>
               </TouchableOpacity>
             </View>
+            
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -177,63 +256,105 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               {weekPlans.map((plan) => {
                 const workoutDone = plan.workout.exercises.every((exercise) => exercise.completed);
                 return (
-                <TouchableOpacity
-                  key={`workout-${plan.dateStr}`}
-                  activeOpacity={0.9}
-                  onPress={() =>
-                    openDetail(
-                      'workout',
-                      `${plan.label} · Workout`,
-                      plan.workout.exercises.map((exercise) => ({
-                        title: exercise.name,
-                        meta: `${exercise.sets} x ${exercise.reps}`,
-                      }))
-                    )
-                  }
-                >
-                  <LinearGradient colors={['#1D2245', '#151B34']} style={styles.weekCard}>
-                    <View style={styles.weekCardHeader}>
-                      <Text style={styles.weekCardLabel}>{plan.label}</Text>
-                      <View style={styles.weekCardHeaderRight}>
-                        <Text style={styles.weekCardCount}>{plan.workout.exercises.length} moves</Text>
-                        {workoutDone && <Text style={styles.weekStatusPill}>Done</Text>}
-                      </View>
-                    </View>
-                    {plan.workout.exercises.slice(0, 3).map((exercise) => (
-                    <View key={exercise.name} style={styles.weekItemRow}>
-                      <View style={styles.weekBullet} />
-                      <View style={styles.weekItemCopy}>
-                        <Text style={styles.weekItemTitle}>{exercise.name}</Text>
-                        <Text style={styles.weekItemMeta}>{exercise.sets} x {exercise.reps}</Text>
-                      </View>
-                    </View>
-                  ))}
-                    <TouchableOpacity
-                      style={styles.weekButton}
-                      onPress={() => onRegenerateWorkoutPlan?.(plan.dateStr)}
+                  <TouchableOpacity
+                    key={`workout-${plan.dateStr}`}
+                    activeOpacity={0.85}
+                    onPress={() =>
+                      openDetail(
+                        'workout',
+                        `${plan.label} · Workout`,
+                        plan.workout.exercises.map((exercise) => ({
+                          title: exercise.name,
+                          meta: `${exercise.sets} × ${exercise.reps}`,
+                        }))
+                      )
+                    }
+                  >
+                    <LinearGradient 
+                      colors={plan.isToday ? ['#2A2F5A', '#1D2245'] : ['#1D2245', '#151B34']} 
+                      style={[
+                        styles.weekCard,
+                        plan.isToday && styles.weekCardToday
+                      ]}
                     >
-                      <Text style={styles.weekButtonText}>Shuffle day</Text>
-                    </TouchableOpacity>
-                  </LinearGradient>
-                </TouchableOpacity>
-              );
+                      {/* Card header */}
+                      <View style={styles.weekCardHeader}>
+                        <View style={styles.weekCardHeaderLeft}>
+                          {plan.isToday && (
+                            <View style={styles.todayBadge}>
+                              <Text style={styles.todayBadgeText}>TODAY</Text>
+                            </View>
+                          )}
+                          <Text style={styles.weekCardLabel}>{plan.label}</Text>
+                        </View>
+                        <View style={styles.weekCardHeaderRight}>
+                          <Text style={styles.weekCardCount}>
+                            {plan.workout.exercises.length} moves
+                          </Text>
+                          {workoutDone && (
+                            <View style={styles.weekStatusPill}>
+                              <Text style={styles.weekStatusPillText}>✓ Done</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Exercise preview */}
+                      <View style={styles.weekItemsContainer}>
+                        {plan.workout.exercises.slice(0, 3).map((exercise, idx) => (
+                          <View key={`${exercise.name}-${idx}`} style={styles.weekItemRow}>
+                            <View style={styles.weekBullet} />
+                            <View style={styles.weekItemCopy}>
+                              <Text style={styles.weekItemTitle} numberOfLines={1}>
+                                {exercise.name}
+                              </Text>
+                              <Text style={styles.weekItemMeta}>
+                                {exercise.sets} × {exercise.reps}
+                              </Text>
+                            </View>
+                          </View>
+                        ))}
+                        {plan.workout.exercises.length > 3 && (
+                          <Text style={styles.weekMoreText}>
+                            +{plan.workout.exercises.length - 3} more
+                          </Text>
+                        )}
+                      </View>
+
+                      {/* Action button */}
+                      <TouchableOpacity
+                        style={styles.weekButton}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          onRegenerateWorkoutPlan?.(plan.dateStr);
+                        }}
+                      >
+                        <Text style={styles.weekButtonText}>↻ Shuffle day</Text>
+                      </TouchableOpacity>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                );
               })}
             </ScrollView>
           </View>
 
+          {/* IMPROVED Weekly Meals section */}
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeaderSimple}>
-              <View>
-                <Text style={styles.sectionLabel}>Weekly Meals</Text>
-                <Text style={styles.sectionTitle}>Dialed in for {user.eatingMode.replace('_', ' ')}</Text>
+              <View style={styles.sectionHeaderLeft}>
+                <Text style={styles.sectionLabel}>WEEKLY MEALS</Text>
+                <Text style={styles.sectionTitle}>
+                  Dialed for {user.eatingMode.replace('_', ' ')}
+                </Text>
               </View>
               <TouchableOpacity
                 style={styles.linkButton}
                 onPress={() => onRegenerateMealPlan?.(todayStr)}
               >
-                <Text style={styles.linkButtonText}>Refresh menus</Text>
+                <Text style={styles.linkButtonText}>↻ Refresh</Text>
               </TouchableOpacity>
             </View>
+            
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -242,46 +363,86 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               {weekPlans.map((plan) => {
                 const mealsDone = plan.meals.meals.every((meal) => meal.completed);
                 return (
-                <TouchableOpacity
-                  key={`meal-${plan.dateStr}`}
-                  activeOpacity={0.9}
-                  onPress={() =>
-                    openDetail(
-                      'meal',
-                      `${plan.label} · Meals`,
-                      plan.meals.meals.map((meal) => ({
-                        title: meal.title,
-                        meta: `${meal.items.length} items`,
-                      }))
-                    )
-                  }
-                >
-                  <LinearGradient colors={['#1B2F2F', '#121D1D']} style={styles.weekCard}>
-                    <View style={styles.weekCardHeader}>
-                      <Text style={styles.weekCardLabel}>{plan.label}</Text>
-                      <View style={styles.weekCardHeaderRight}>
-                        <Text style={styles.weekCardCount}>{plan.meals.meals.length} meals</Text>
-                        {mealsDone && <Text style={[styles.weekStatusPill, styles.weekStatusPillSuccess]}>Logged</Text>}
-                      </View>
-                    </View>
-                    {plan.meals.meals.slice(0, 3).map((meal) => (
-                    <View key={meal.title} style={styles.weekItemRow}>
-                      <View style={styles.weekBullet} />
-                      <View style={styles.weekItemCopy}>
-                        <Text style={styles.weekItemTitle}>{meal.title}</Text>
-                        <Text style={styles.weekItemMeta}>{meal.items.length} items</Text>
-                      </View>
-                    </View>
-                  ))}
-                    <TouchableOpacity
-                      style={styles.weekButton}
-                      onPress={() => onRegenerateMealPlan?.(plan.dateStr)}
+                  <TouchableOpacity
+                    key={`meal-${plan.dateStr}`}
+                    activeOpacity={0.85}
+                    onPress={() =>
+                      openDetail(
+                        'meal',
+                        `${plan.label} · Meals`,
+                        plan.meals.meals.map((meal) => ({
+                          title: `${getMealEmoji(meal.title)} ${meal.title}`,
+                          meta: `${meal.items.length} items`,
+                        }))
+                      )
+                    }
+                  >
+                    <LinearGradient 
+                      colors={plan.isToday ? ['#2A3F3A', '#1B2F2F'] : ['#1B2F2F', '#121D1D']} 
+                      style={[
+                        styles.weekCard,
+                        plan.isToday && styles.weekCardToday
+                      ]}
                     >
-                      <Text style={styles.weekButtonText}>Swap menu</Text>
-                    </TouchableOpacity>
-                  </LinearGradient>
-                </TouchableOpacity>
-              );
+                      {/* Card header */}
+                      <View style={styles.weekCardHeader}>
+                        <View style={styles.weekCardHeaderLeft}>
+                          {plan.isToday && (
+                            <View style={[styles.todayBadge, styles.todayBadgeMeal]}>
+                              <Text style={styles.todayBadgeText}>TODAY</Text>
+                            </View>
+                          )}
+                          <Text style={styles.weekCardLabel}>{plan.label}</Text>
+                        </View>
+                        <View style={styles.weekCardHeaderRight}>
+                          <Text style={styles.weekCardCount}>
+                            {plan.meals.meals.length} meals
+                          </Text>
+                          {mealsDone && (
+                            <View style={[styles.weekStatusPill, styles.weekStatusPillSuccess]}>
+                              <Text style={[styles.weekStatusPillText, styles.weekStatusPillTextSuccess]}>
+                                ✓ Logged
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Meal preview */}
+                      <View style={styles.weekItemsContainer}>
+                        {plan.meals.meals.slice(0, 3).map((meal, idx) => (
+                          <View key={`${meal.title}-${idx}`} style={styles.weekItemRow}>
+                            <Text style={styles.mealEmoji}>{getMealEmoji(meal.title)}</Text>
+                            <View style={styles.weekItemCopy}>
+                              <Text style={styles.weekItemTitle} numberOfLines={1}>
+                                {meal.title}
+                              </Text>
+                              <Text style={styles.weekItemMeta}>
+                                {meal.items.length} items
+                              </Text>
+                            </View>
+                          </View>
+                        ))}
+                        {plan.meals.meals.length > 3 && (
+                          <Text style={styles.weekMoreText}>
+                            +{plan.meals.meals.length - 3} more
+                          </Text>
+                        )}
+                      </View>
+
+                      {/* Action button */}
+                      <TouchableOpacity
+                        style={styles.weekButton}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          onRegenerateMealPlan?.(plan.dateStr);
+                        }}
+                      >
+                        <Text style={styles.weekButtonText}>↻ Swap menu</Text>
+                      </TouchableOpacity>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                );
               })}
             </ScrollView>
           </View>
@@ -303,18 +464,22 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 20,
     paddingTop: 60,
-    gap: 16,
+    gap: 20,
+  },
+  pageHeader: {
+    gap: 8,
+    marginBottom: 4,
   },
   pageTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 8,
+    letterSpacing: -0.5,
   },
   pageSubtitle: {
     color: '#A0A3BD',
-    marginBottom: 16,
-    lineHeight: 20,
+    fontSize: 15,
+    lineHeight: 22,
   },
   sectionCard: {
     backgroundColor: '#151932',
@@ -327,54 +492,87 @@ const styles = StyleSheet.create({
   sectionHeaderSimple: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
   },
+  sectionHeaderLeft: {
+    flex: 1,
+    gap: 4,
+  },
   sectionLabel: {
-    color: '#A0A3BD',
-    fontSize: 12,
-    marginBottom: 4,
+    color: '#6C63FF',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   sectionTitle: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
+    lineHeight: 24,
   },
   weekScroller: {
     gap: 12,
-    paddingVertical: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
   },
   weekCard: {
-    width: 260,
-    borderRadius: 18,
+    width: 240,
+    borderRadius: 14,
     padding: 16,
-    marginRight: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
     gap: 12,
   },
+  weekCardToday: {
+    borderColor: 'rgba(108, 99, 255, 0.4)',
+    borderWidth: 1.5,
+  },
   weekCardHeader: {
+    gap: 8,
+  },
+  weekCardHeaderLeft: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
   },
   weekCardHeaderRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'space-between',
+  },
+  todayBadge: {
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  todayBadgeMeal: {
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+  },
+  todayBadgeText: {
+    color: '#6C63FF',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   weekCardLabel: {
     color: '#FFFFFF',
     fontWeight: '600',
+    fontSize: 14,
   },
   weekCardCount: {
     color: '#A0A3BD',
     fontSize: 12,
   },
+  weekItemsContainer: {
+    gap: 8,
+  },
   weekItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
   weekBullet: {
     width: 6,
@@ -382,25 +580,39 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: '#6C63FF',
   },
+  mealEmoji: {
+    fontSize: 16,
+    width: 20,
+    textAlign: 'center',
+  },
   weekItemCopy: {
     flex: 1,
   },
   weekItemTitle: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
+    marginBottom: 2,
   },
   weekItemMeta: {
     color: '#A0A3BD',
-    fontSize: 12,
+    fontSize: 11,
+  },
+  weekMoreText: {
+    color: '#6C63FF',
+    fontSize: 11,
+    fontWeight: '600',
+    marginLeft: 16,
+    marginTop: 4,
   },
   weekButton: {
     alignSelf: 'flex-start',
-    borderRadius: 999,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    paddingVertical: 6,
-    paddingHorizontal: 14,
+    borderColor: 'rgba(255,255,255,0.15)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: 4,
   },
   weekButtonText: {
     color: '#FFFFFF',
@@ -408,38 +620,66 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   weekStatusPill: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#6C63FF',
+    borderRadius: 6,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 4,
+  },
+  weekStatusPillText: {
     color: '#6C63FF',
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
   },
   weekStatusPillSuccess: {
-    borderColor: '#00F5A0',
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+  },
+  weekStatusPillTextSuccess: {
     color: '#00F5A0',
   },
+  // IMPROVED MODAL STYLES
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(5, 8, 20, 0.85)',
+    backgroundColor: 'rgba(5, 8, 20, 0.92)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   modalCard: {
     width: '100%',
-    borderRadius: 18,
+    maxHeight: '80%',
+    borderRadius: 20,
     backgroundColor: '#151932',
     borderWidth: 1,
     borderColor: '#2A2F4F',
-    padding: 20,
-    gap: 12,
+    padding: 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 20,
+    gap: 16,
+  },
+  modalHeaderLeft: {
+    flex: 1,
+    gap: 4,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseText: {
+    color: '#A0A3BD',
+    fontSize: 18,
+    fontWeight: '600',
   },
   modalTitle: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
   },
   modalSubtitle: {
@@ -447,60 +687,84 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   modalList: {
-    maxHeight: 320,
-    marginTop: 8,
-    gap: 10,
+    maxHeight: 400,
   },
   modalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    marginBottom: 8,
+  },
+  modalRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  modalBullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#6C63FF',
   },
   modalRowTitle: {
     flex: 1,
     color: '#FFFFFF',
     fontWeight: '600',
+    fontSize: 14,
   },
   modalRowMeta: {
     color: '#A0A3BD',
     fontSize: 12,
+    fontWeight: '500',
   },
   modalButton: {
-    marginTop: 8,
-    alignSelf: 'flex-end',
-    borderRadius: 999,
+    marginTop: 16,
+    alignSelf: 'stretch',
+    borderRadius: 12,
     backgroundColor: '#6C63FF',
-    paddingVertical: 10,
+    paddingVertical: 14,
     paddingHorizontal: 24,
+    alignItems: 'center',
   },
   modalButtonText: {
     color: '#FFFFFF',
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 15,
   },
   linkButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
   },
   linkButtonText: {
     color: '#6C63FF',
     fontWeight: '600',
+    fontSize: 13,
   },
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: 32,
     gap: 12,
   },
   emptyTitle: {
     color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 22,
+    fontWeight: '700',
     textAlign: 'center',
   },
   emptySubtitle: {
     color: '#A0A3BD',
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
+    fontSize: 15,
   },
 });
