@@ -38,14 +38,13 @@ const MEAL_EMOJIS: Record<string, string> = {
   dinner: '🌙',
 };
 
-// ✨ REFINED: Subtle accent colors for muscle tags (not backgrounds)
 const MUSCLE_TAG_COLORS: Record<string, string> = {
-  chest: 'rgba(255, 107, 107, 0.2)',      // Soft red tint
-  back: 'rgba(78, 205, 196, 0.2)',        // Soft teal tint
-  legs: 'rgba(149, 225, 211, 0.2)',       // Soft green tint
-  shoulders: 'rgba(255, 217, 61, 0.2)',   // Soft yellow tint
-  arms: 'rgba(255, 135, 135, 0.2)',       // Soft pink tint
-  core: 'rgba(168, 230, 207, 0.2)',       // Soft mint tint
+  chest: 'rgba(255, 107, 107, 0.2)',
+  back: 'rgba(78, 205, 196, 0.2)',
+  legs: 'rgba(149, 225, 211, 0.2)',
+  shoulders: 'rgba(255, 217, 61, 0.2)',
+  arms: 'rgba(255, 135, 135, 0.2)',
+  core: 'rgba(168, 230, 207, 0.2)',
 };
 
 const WORKOUT_CARD_WIDTH = 280;
@@ -101,7 +100,6 @@ const renderBarRow = (filled: number, total: number) => (
   </View>
 );
 
-// ✨ IMPROVED: Cleaner Progress Ring Component
 const ProgressRing: React.FC<{ progress: number; size: number; strokeWidth: number }> = ({ 
   progress, 
   size, 
@@ -111,7 +109,6 @@ const ProgressRing: React.FC<{ progress: number; size: number; strokeWidth: numb
 
   return (
     <View style={{ width: size, height: size, position: 'relative' }}>
-      {/* Background circle */}
       <View
         style={{
           position: 'absolute',
@@ -122,7 +119,6 @@ const ProgressRing: React.FC<{ progress: number; size: number; strokeWidth: numb
           borderColor: 'rgba(255,255,255,0.08)',
         }}
       />
-      {/* Progress arc - simplified visual */}
       <View
         style={{
           position: 'absolute',
@@ -154,7 +150,6 @@ const ProgressRing: React.FC<{ progress: number; size: number; strokeWidth: numb
   );
 };
 
-// ✨ Swipeable Card Component
 const SwipeableCard: React.FC<{
   children: React.ReactNode;
   onSwipeRight?: () => void;
@@ -213,7 +208,6 @@ const SwipeableCard: React.FC<{
   );
 };
 
-// ✨ Date Navigation Component
 const DateNavigator: React.FC<{
   currentDate: string;
   onDateChange: (date: string) => void;
@@ -293,7 +287,6 @@ const DateNavigator: React.FC<{
   );
 };
 
-// ✨ IMPROVED: Cleaner Bottom Sheet Celebration
 const CelebrationBottomSheet: React.FC<{
   visible: boolean;
   onClose: () => void;
@@ -687,7 +680,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           contentContainerStyle={styles.dashboardContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* ✨ IMPROVED: Cleaner header with progress ring */}
           <View style={styles.dashboardHeader}>
             <View style={styles.headerLeft}>
               <Text style={styles.smallLabel}>
@@ -783,7 +775,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </View>
           )}
 
-          {/* ✨ IMPROVED: Workout Section with cleaner structure */}
+          {/* ✨ FIXED: Workout Section - Proper spacing */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionHeaderLeft}>
@@ -827,17 +819,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                       key={`${currentDateStr}-${exercise.name}-${index}`}
                       enabled={canLogWorkouts && !isCompleted}
                       onSwipeRight={() => handleSwipeExercise(exercise.name)}
-                      style={[
-                        styles.exerciseCardWrapper,
-                        index === visibleWorkoutCards.length - 1 && styles.lastCardWrapper,
-                      ]}
+                      style={styles.exerciseCardWrapper}
                     >
                       <TouchableWithoutFeedback onPress={() => openExercisePreview(exercise, enhancedExercises)}>
                         <LinearGradient
                           colors={
                             isCompleted
                               ? ['#0BA360', '#3CBA92']
-                              : ['#1C1F3F', '#101329']  // ✨ FIXED: Dark gradient for all incomplete cards
+                              : ['#1C1F3F', '#101329']
                           }
                           style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
                         >
@@ -852,7 +841,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         
                         <Text style={styles.exerciseName}>{exercise.name}</Text>
                         
-                        {/* ✨ NEW: Subtle muscle tag */}
                         <View style={[
                           styles.muscleTag,
                           { backgroundColor: getMuscleTagColor(exercise.bodyParts) }
@@ -910,7 +898,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             )}
           </View>
 
-          {/* ✨ Meals Section */}
+          {/* ✨ FIXED: Meals Section - No checkbox, proper spacing */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionHeaderLeft}>
@@ -951,10 +939,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                       key={`${currentDateStr}-${meal.title}-${index}`}
                       enabled={canLogMeals && !isCompleted}
                       onSwipeRight={() => handleSwipeMeal(meal.title)}
-                      style={[
-                        styles.mealCardWrapper,
-                        index === visibleMealCards.length - 1 && styles.lastCardWrapper,
-                      ]}
+                      style={styles.mealCardWrapper}
                     >
                       <LinearGradient
                         colors={
@@ -964,13 +949,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         }
                         style={[styles.mealCard, isCompleted && styles.mealCardCompleted]}
                       >
+                        {/* ✨ FIXED: No checkbox - just emoji and badge */}
                         <View style={styles.mealHeaderRow}>
                           <Text style={styles.mealEmoji}>{getMealEmoji(meal.title)}</Text>
-                          <View style={[styles.mealCheckbox, isCompleted && styles.mealCheckboxComplete]}>
-                            {isCompleted && (
-                              <Text style={styles.mealCheckboxMark}>✓</Text>
-                            )}
-                          </View>
+                          {isCompleted && (
+                            <View style={styles.completedBadge}>
+                              <Text style={styles.completedBadgeText}>✓</Text>
+                            </View>
+                          )}
                         </View>
                         <Text style={styles.mealTitle}>{meal.title}</Text>
                         {meal.items.map((item) => (
@@ -1025,7 +1011,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 20,
     paddingTop: 60,
-    gap: 16,  // Reduced from 20 to 16
+    gap: 16,
   },
   dashboardHeader: {
     flexDirection: 'row',
@@ -1081,7 +1067,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   
-  // Date Navigator - Compact Design
   dateNavigator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1178,7 +1163,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   
-  // Bulk Action Button - Compact
   bulkButton: {
     backgroundColor: '#111638',
     borderRadius: 12,
@@ -1217,7 +1201,6 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // Past/Future Cards - Compact
   pastSummaryCard: {
     backgroundColor: 'rgba(160, 163, 189, 0.1)',
     borderRadius: 12,
@@ -1251,9 +1234,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   
-  // Section Styles - Compact
   section: {
-    gap: 12,  // Reduced from 16
+    gap: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1295,7 +1277,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   
-  // All Complete Card
   allCompleteCard: {
     backgroundColor: 'rgba(0, 245, 160, 0.08)',
     borderRadius: 20,
@@ -1319,14 +1300,14 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // Exercise Cards
+  // ✨ FIXED: Workout cards with proper gap
   horizontalScroller: {
     paddingVertical: 4,
-    paddingRight: 4,
+    paddingRight: 20,
+    gap: 16,
   },
   exerciseCardWrapper: {
     width: WORKOUT_CARD_WIDTH,
-    marginRight: 16,
   },
   exerciseCard: {
     borderRadius: 20,
@@ -1369,7 +1350,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginBottom: 4,
   },
-  // ✨ NEW: Subtle muscle tag
   muscleTag: {
     alignSelf: 'flex-start',
     paddingHorizontal: 12,
@@ -1431,16 +1411,79 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 13,
   },
-  manualCompleteButtonDisabled: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderColor: 'rgba(255,255,255,0.08)',
+  
+  // ✨ FIXED: Meal cards with proper gap and NO checkbox
+  mealCarousel: {
+    paddingVertical: 4,
+    paddingRight: 20,
+    gap: 16,
   },
-  manualCompleteButtonComplete: {
-    backgroundColor: 'rgba(0, 245, 160, 0.08)',
+  mealCardWrapper: {
+    width: MEAL_CARD_WIDTH,
   },
-  manualCompleteButtonTextMuted: {
-    color: '#A0A3BD',
+  mealCard: {
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.04)',
+    gap: 10,
   },
+  mealCardCompleted: {
+    opacity: 0.8,
+  },
+  mealHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  mealEmoji: {
+    fontSize: 28,
+  },
+  mealTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  mealItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mealBullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#00F5A0',
+  },
+  mealItemText: {
+    color: '#E3E5FF',
+    fontSize: 14,
+    flex: 1,
+  },
+  mealStatusText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+  },
+  
+  swipeIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 100,
+    backgroundColor: 'rgba(0, 245, 160, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderTopLeftRadius: 20,
+    borderBottomLeftRadius: 20,
+  },
+  swipeIndicatorText: {
+    color: '#00F5A0',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  
   previewBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(5, 8, 20, 0.95)',
@@ -1450,13 +1493,6 @@ const styles = StyleSheet.create({
   previewOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(5, 8, 20, 0.6)',
-  },
-  previewBackdropTouchable: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
   },
   previewFullScreen: {
     width: '100%',
@@ -1567,101 +1603,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   
-  // Swipe Indicator
-  swipeIndicator: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 100,
-    backgroundColor: 'rgba(0, 245, 160, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderTopLeftRadius: 20,
-    borderBottomLeftRadius: 20,
-  },
-  swipeIndicatorText: {
-    color: '#00F5A0',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  
-  // Meal Cards
-  mealCarousel: {
-    paddingVertical: 4,
-    paddingRight: 4,
-  },
-  mealCardWrapper: {
-    width: MEAL_CARD_WIDTH,
-    marginRight: 16,
-  },
-  lastCardWrapper: {
-    marginRight: 0,
-  },
-  mealCard: {
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.04)',
-    gap: 10,
-  },
-  mealCardCompleted: {
-    opacity: 0.8,
-  },
-  mealHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  mealEmoji: {
-    fontSize: 28,
-  },
-  mealTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  mealItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  mealBullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#00F5A0',
-  },
-  mealItemText: {
-    color: '#E3E5FF',
-    fontSize: 14,
-    flex: 1,
-  },
-  mealCheckbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mealCheckboxComplete: {
-    backgroundColor: '#00F5A0',
-    borderColor: '#00F5A0',
-  },
-  mealCheckboxMark: {
-    color: '#051937',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  mealStatusText: {
-    marginTop: 6,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
-  },
-  
-  // Celebration Bottom Sheet
   celebrationBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(5, 9, 25, 0.9)',
@@ -1733,3 +1674,5 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 });
+
+export default DashboardScreen;

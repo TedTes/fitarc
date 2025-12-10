@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DailyMealPlan, PhasePlan, User } from '../types/domain';
 import weeklyPlanTemplate from '../data/weeklyPlanTemplate.json';
@@ -22,11 +22,24 @@ type MacroTargets = {
 };
 
 const MACRO_TARGETS: Record<User['eatingMode'], MacroTargets> = {
-  mild_deficit: { calories: '2,200 kcal', protein: '185 g', carbs: '210 g', fats: '65 g' },
-  recomp: { calories: '2,450 kcal', protein: '190 g', carbs: '240 g', fats: '70 g' },
-  lean_bulk: { calories: '2,800 kcal', protein: '200 g', carbs: '280 g', fats: '80 g' },
-  maintenance: { calories: '2,500 kcal', protein: '185 g', carbs: '250 g', fats: '75 g' },
+  mild_deficit: { calories: '2,200', protein: '185', carbs: '210', fats: '65' },
+  recomp: { calories: '2,450', protein: '190', carbs: '240', fats: '70' },
+  lean_bulk: { calories: '2,800', protein: '200', carbs: '280', fats: '80' },
+  maintenance: { calories: '2,500', protein: '185', carbs: '250', fats: '75' },
 };
+
+const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'];
+const CARD_GRADIENT = {
+  today: ['#2A2F5A', '#1D2245'],
+  default: ['#1B233F', '#101529'],
+};
+const ACCENT_COLOR = '#6C63FF';
+const ACCENT_GLOW = 'rgba(108, 99, 255, 0.2)';
+const ACCENT_DARK = '#0A0E27';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const CARD_WIDTH = SCREEN_WIDTH - 40;
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({
   user,
@@ -37,7 +50,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   const templateDays = weeklyPlanTemplate as TemplateEntry[];
   const today = new Date();
   const todayKey = today.toISOString().split('T')[0];
-  const [selectedDate, setSelectedDate] = useState(todayKey);
 
   const getMealsForDate = (dateStr: string) => {
     if (!phase) return null;
@@ -56,7 +68,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
       const date = new Date(anchor);
       date.setDate(anchor.getDate() + idx);
       const dateStr = date.toISOString().split('T')[0];
-      const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
+      const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
       const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       const isToday = dateStr === todayKey;
       const templateEntry = templateDays[idx % templateDays.length];
@@ -69,7 +81,9 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
         })) ?? []);
       return {
         dateStr,
-        label: `${weekday} · ${displayDate}`,
+        weekday,
+        displayDate,
+        label: `${weekday}, ${displayDate}`,
         templateLabel: templateEntry?.label || `Day ${idx + 1}`,
         isToday,
         meals,
@@ -77,232 +91,179 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
     });
   }, [todayKey, mealPlans, phase?.id, user, templateDays]);
 
-  useEffect(() => {
-    if (!weeklyMenus.length) return;
-    const hasSelection = weeklyMenus.some((plan) => plan.dateStr === selectedDate);
-    if (!hasSelection) {
-      const fallback = weeklyMenus.find((plan) => plan.isToday) || weeklyMenus[0];
-      if (fallback) {
-        setSelectedDate(fallback.dateStr);
-      }
-    }
-  }, [weeklyMenus, selectedDate]);
+  const macroTargets = MACRO_TARGETS[user.eatingMode];
 
-  const selectedPlan =
-    weeklyMenus.find((plan) => plan.dateStr === selectedDate) ||
-    weeklyMenus.find((plan) => plan.isToday) ||
-    weeklyMenus[0] ||
-    null;
-
-  const mealsToRender = selectedPlan?.meals ?? [];
-
-  const groceryItems = useMemo(() => {
-    if (!selectedPlan) return [];
-    const items = selectedPlan.meals.flatMap((meal) => meal.items);
-    return Array.from(new Set(items));
-  }, [selectedPlan]);
-
-  const hasStoredSelectedPlan = !!mealPlans.find(
-    (plan) => plan.phasePlanId === phase?.id && plan.date === selectedPlan?.dateStr
+  // Calculate total meals and completed meals in week
+  const totalMeals = weeklyMenus.reduce((sum, plan) => sum + plan.meals.length, 0);
+  const completedMeals = weeklyMenus.reduce(
+    (sum, plan) => sum + plan.meals.filter(m => m.completed).length,
+    0
   );
 
-  const isViewingToday = selectedPlan?.dateStr === todayKey;
-  const sectionTitle = isViewingToday
-    ? "Today's menu"
-    : `${selectedPlan?.templateLabel || 'Menu'} menu`;
-  const sectionSubtitle = hasStoredSelectedPlan
-    ? 'Auto-generated from your phase'
-    : 'Sample rotation from this phase';
-
-  const macroTargets = MACRO_TARGETS[user.eatingMode];
+  if (!phase) {
+    return (
+      <View style={styles.container}>
+        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyIcon}>🍽️</Text>
+            <Text style={styles.emptyTitle}>No Active Meal Plan</Text>
+            <Text style={styles.emptySubtitle}>
+              Complete onboarding to generate your personalized nutrition plan
+            </Text>
+          </View>
+        </LinearGradient>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#06081A', '#0D1128', '#151932']} style={styles.gradient}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View>
-              <Text style={styles.headerEyebrow}>Fuel plan</Text>
-              <Text style={styles.headerTitle}>Menu</Text>
-              <Text style={styles.headerSubtitle}>
-                Dialed for {user.eatingMode.replace('_', ' ')}
-              </Text>
+      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+        {/* ✨ MINIMAL: Compact Header with Macros */}
+        <View style={styles.pageHeader}>
+          <View style={styles.headerRow}>
+            <View style={styles.headerLeft}>
+              <Text style={styles.pageTitle}>Menu</Text>
+            </View>
+            <View style={styles.headerRight}>
+              <Text style={styles.weekStatsValue}>{completedMeals}/{totalMeals}</Text>
             </View>
           </View>
-
-          {/* ✨ ONLY: Weekly meal cards (removed duplicate day selector) */}
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeaderSimple}>
-              <View style={styles.sectionHeaderLeft}>
-                <Text style={styles.sectionLabel}>Weekly meals</Text>
-                <Text style={styles.sectionTitle}>Preview your next 7 days</Text>
-              </View>
-              {onRegenerateMealPlan && selectedPlan && (
-                <TouchableOpacity
-                  style={styles.linkButton}
-                  onPress={() => onRegenerateMealPlan(selectedPlan.dateStr)}
-                >
-                  <Text style={styles.linkButtonText}>↻ Refresh</Text>
-                </TouchableOpacity>
-              )}
+          
+          {/* ✨ MACROS IN HEADER */}
+          <View style={styles.macrosHeader}>
+            <View style={styles.macroHeaderItem}>
+              <Text style={styles.macroHeaderValue}>{macroTargets.calories}</Text>
+              <Text style={styles.macroHeaderLabel}>kcal</Text>
             </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.weekScroller}
-            >
-              {weeklyMenus.map((plan) => {
-                const mealsDone = plan.meals.every((meal) => meal.completed);
-                const isSelected = plan.dateStr === selectedDate;
-                return (
-                  <TouchableOpacity
-                    key={`menu-${plan.dateStr}`}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedDate(plan.dateStr)}
-                  >
-                    <LinearGradient
-                      colors={plan.isToday ? ['#2A3F3A', '#1B2F2F'] : ['#1B2F2F', '#121D1D']}
-                      style={[
-                        styles.weekCard,
-                        plan.isToday && styles.weekCardToday,
-                        isSelected && styles.weekCardSelected,
-                      ]}
-                    >
-                      <View style={styles.weekCardHeader}>
-                        <View style={styles.weekCardHeaderLeft}>
-                          {plan.isToday && (
-                            <View style={styles.todayBadge}>
-                              <Text style={styles.todayBadgeText}>TODAY</Text>
-                            </View>
-                          )}
-                          <Text style={styles.weekCardLabel}>{plan.label}</Text>
-                        </View>
-                        <View style={styles.weekCardHeaderRight}>
-                          <Text style={styles.weekCardCount}>{plan.meals.length} meals</Text>
-                          {mealsDone && (
-                            <View style={[styles.weekStatusPill, styles.weekStatusPillSuccess]}>
-                              <Text style={[styles.weekStatusPillText, styles.weekStatusPillTextSuccess]}>
-                                ✓ Logged
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                      <View style={styles.weekItemsContainer}>
-                        {plan.meals.slice(0, 3).map((meal, idx) => (
-                          <View key={`${meal.title}-${idx}`} style={styles.weekItemRow}>
-                            <Text style={styles.mealEmoji}>{getMealEmoji(meal.title)}</Text>
-                            <View style={styles.weekItemCopy}>
-                              <Text style={styles.weekItemTitle} numberOfLines={1}>
-                                {meal.title}
-                              </Text>
-                              <Text style={styles.weekItemMeta}>{meal.items.length} items</Text>
-                            </View>
-                          </View>
-                        ))}
-                        {plan.meals.length > 3 && (
-                          <Text style={styles.weekMoreText}>
-                            +{plan.meals.length - 3} more
-                          </Text>
-                        )}
-                      </View>
-                      {onRegenerateMealPlan && (
-                        <TouchableOpacity
-                          style={styles.weekButton}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            onRegenerateMealPlan(plan.dateStr);
-                          }}
-                        >
-                          <Text style={styles.weekButtonText}>↻ Swap menu</Text>
-                        </TouchableOpacity>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+            <View style={styles.macroHeaderDivider} />
+            <View style={styles.macroHeaderItem}>
+              <Text style={styles.macroHeaderValue}>{macroTargets.protein}g</Text>
+              <Text style={styles.macroHeaderLabel}>Protein</Text>
+            </View>
+            <View style={styles.macroHeaderDivider} />
+            <View style={styles.macroHeaderItem}>
+              <Text style={styles.macroHeaderValue}>{macroTargets.carbs}g</Text>
+              <Text style={styles.macroHeaderLabel}>Carbs</Text>
+            </View>
+            <View style={styles.macroHeaderDivider} />
+            <View style={styles.macroHeaderItem}>
+              <Text style={styles.macroHeaderValue}>{macroTargets.fats}g</Text>
+              <Text style={styles.macroHeaderLabel}>Fats</Text>
+            </View>
           </View>
+        </View>
 
-          {/* Macro Card */}
-          <LinearGradient colors={['#1C2144', '#11152A']} style={styles.macroCard}>
-            <View style={styles.macroHeader}>
-              <View>
-                <Text style={styles.macroEyebrow}>Daily targets</Text>
-                <Text style={styles.macroTitle}>{macroTargets.calories}</Text>
-              </View>
-              <View style={styles.macroBadge}>
-                <Text style={styles.macroBadgeText}>
-                  {selectedPlan?.meals.length || 0} meals
-                </Text>
-              </View>
-            </View>
-            <View style={styles.macroGrid}>
-              <View style={styles.macroItem}>
-                <Text style={styles.macroLabel}>Protein</Text>
-                <Text style={styles.macroValue}>{macroTargets.protein}</Text>
-              </View>
-              <View style={styles.macroItem}>
-                <Text style={styles.macroLabel}>Carbs</Text>
-                <Text style={styles.macroValue}>{macroTargets.carbs}</Text>
-              </View>
-              <View style={styles.macroItem}>
-                <Text style={styles.macroLabel}>Fats</Text>
-                <Text style={styles.macroValue}>{macroTargets.fats}</Text>
-              </View>
-            </View>
-          </LinearGradient>
-
-          {/* Today's Menu Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>{sectionTitle}</Text>
-              <Text style={styles.sectionSubtitle}>{sectionSubtitle}</Text>
-            </View>
-
-            <View style={styles.mealList}>
-              {mealsToRender.map((meal, mealIndex) => (
-                <LinearGradient
-                  key={`${meal.title}-${mealIndex}`}
-                  colors={['#1B233F', '#101529']}
-                  style={styles.mealCard}
-                >
-                  <View style={styles.mealCardHeader}>
-                    <Text style={styles.mealEmoji}>{getMealEmoji(meal.title)}</Text>
-                    <Text style={styles.mealTitle}>{meal.title}</Text>
-                  </View>
-                  {meal.items.map((item, itemIndex) => (
-                    <View key={`${item}-${itemIndex}`} style={styles.mealItemRow}>
-                      <View style={styles.mealBullet} />
-                      <Text style={styles.mealItemText}>{item}</Text>
+        {/* ✨ HORIZONTAL SCROLLING Meal Cards */}
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.horizontalScroller}
+          snapToInterval={CARD_WIDTH + 20}
+          decelerationRate="fast"
+        >
+          {weeklyMenus.map((plan) => {
+            const mealsDone = plan.meals.every((meal) => meal.completed);
+            const mealProgress = plan.meals.length > 0
+              ? plan.meals.filter(m => m.completed).length / plan.meals.length
+              : 0;
+            
+            return (
+              <LinearGradient
+                key={`menu-${plan.dateStr}`}
+                colors={plan.isToday ? CARD_GRADIENT.today : CARD_GRADIENT.default}
+                style={[
+                  styles.mealCard,
+                  plan.isToday && styles.mealCardToday,
+                ]}
+              >
+                {/* ✨ MINIMAL: Card Header (date + badge only) */}
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardDate}>{plan.label}</Text>
+                  {plan.isToday && (
+                    <View style={styles.todayBadge}>
+                      <View style={styles.todayDot} />
+                      <Text style={styles.todayBadgeText}>TODAY</Text>
                     </View>
-                  ))}
-                  <View style={styles.mealFooter}>
-                    <Text style={styles.mealFooterLabel}>
-                      {meal.items.length} items
-                    </Text>
-                    {meal.completed && <Text style={styles.mealFooterDone}>✓ Logged</Text>}
-                  </View>
-                </LinearGradient>
-              ))}
-            </View>
-          </View>
-
-          {/* Grocery List */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Grocery list</Text>
-              <Text style={styles.sectionSubtitle}>Auto-built from this menu</Text>
-            </View>
-            <View style={styles.groceryGrid}>
-              {groceryItems.map((item) => (
-                <View key={item} style={styles.groceryPill}>
-                  <Text style={styles.groceryText}>{item}</Text>
+                  )}
+                  {mealsDone && !plan.isToday && (
+                    <View style={styles.doneBadge}>
+                      <Text style={styles.doneBadgeText}>✓</Text>
+                    </View>
+                  )}
                 </View>
-              ))}
-            </View>
-          </View>
+
+                {/* Progress Bar */}
+                {mealProgress > 0 && (
+                  <View style={styles.progressBarContainer}>
+                    <View style={styles.progressBarTrack}>
+                      <View 
+                        style={[
+                          styles.progressBarFill,
+                          { width: `${mealProgress * 100}%` }
+                        ]} 
+                      />
+                    </View>
+                    <Text style={styles.progressBarText}>
+                      {Math.round(mealProgress * 100)}%
+                    </Text>
+                  </View>
+                )}
+
+                {/* ✨ DYNAMIC/FLEXIBLE: Scrollable Meal List */}
+                <ScrollView 
+                  style={styles.cardScrollContent}
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.cardScrollContentInner}
+                >
+                  {/* Meal Details List */}
+                  <View style={styles.mealDetailsList}>
+                    {plan.meals.map((meal, idx) => (
+                      <View key={`${meal.title}-${idx}`} style={styles.mealDetailCard}>
+                        {/* Meal Header */}
+                        <View style={styles.mealDetailHeader}>
+                          <View style={styles.mealIconBox}>
+                            <Text style={styles.mealIcon}>{getMealEmoji(meal.title)}</Text>
+                          </View>
+                          <View style={styles.mealDetailHeaderText}>
+                            <Text style={styles.mealDetailTitle}>{meal.title}</Text>
+                            <Text style={styles.mealDetailMeta}>{meal.items.length} items</Text>
+                          </View>
+                          <View style={[
+                            styles.mealCheckbox,
+                            meal.completed && styles.mealCheckboxComplete
+                          ]}>
+                            {meal.completed && (
+                              <Text style={styles.mealCheckboxCheck}>✓</Text>
+                            )}
+                          </View>
+                        </View>
+                        
+                        {/* Meal Items */}
+                        <View style={styles.mealItemsList}>
+                          {meal.items.map((item, itemIdx) => (
+                            <View key={`${item}-${itemIdx}`} style={styles.mealItemRow}>
+                              <View style={styles.mealItemBullet} />
+                              <Text style={styles.mealItemText}>{item}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Action Button */}
+                  <TouchableOpacity
+                    style={styles.cardActionButton}
+                    onPress={() => onRegenerateMealPlan?.(plan.dateStr)}
+                  >
+                    <Text style={styles.cardActionButtonText}>↻ Regenerate Day</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </LinearGradient>
+            );
+          })}
         </ScrollView>
       </LinearGradient>
     </View>
@@ -324,312 +285,297 @@ const getMealEmoji = (title: string): string => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#050814',
+    backgroundColor: '#0A0E27',
   },
   gradient: {
     flex: 1,
   },
-  content: {
-    paddingTop: 60,
-    paddingBottom: 40,
+  
+  // ✨ COMPACT: Minimal Header with Macros
+  pageHeader: {
     paddingHorizontal: 20,
-    gap: 24,
+    paddingTop: 60,
+    paddingBottom: 12,
+    gap: 12,
   },
-  header: {
+  headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
-  headerEyebrow: {
-    color: '#6C7CFF',
-    fontSize: 12,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
+  headerLeft: {
+    flex: 1,
   },
-  headerTitle: {
-    fontSize: 32,
+  pageTitle: {
+    fontSize: 28,
     fontWeight: '700',
     color: '#FFFFFF',
+    letterSpacing: -0.5,
   },
-  headerSubtitle: {
+  headerRight: {
+    alignItems: 'flex-end',
+  },
+  weekStatsValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: ACCENT_COLOR,
+  },
+
+  // ✨ NEW: Macros in Header
+  macrosHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#151932',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  macroHeaderItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  macroHeaderValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: ACCENT_COLOR,
+    marginBottom: 2,
+  },
+  macroHeaderLabel: {
+    fontSize: 10,
     color: '#A0A3BD',
-    fontSize: 14,
-    marginTop: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  sectionCard: {
-    backgroundColor: '#151A2E',
-    borderRadius: 18,
+  macroHeaderDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: '#2A2F4F',
+  },
+
+  // Horizontal Scroller
+  horizontalScroller: {
+    paddingHorizontal: 20,
+    gap: 20,
+    paddingBottom: 20,
+  },
+  
+  // ✨ IMPROVED: Full-Height Meal Cards
+  mealCard: {
+    width: CARD_WIDTH,
+    height: SCREEN_HEIGHT - 170, // ✨ MAXIMUM HEIGHT
+    borderRadius: 16,
     padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
-    gap: 16,
-  },
-  sectionHeaderSimple: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
     gap: 12,
   },
-  sectionHeaderLeft: {
-    flex: 1,
-    gap: 4,
-  },
-  sectionLabel: {
-    color: '#6C63FF',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  linkButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  linkButtonText: {
-    color: '#6C63FF',
-    fontWeight: '600',
-  },
-  weekScroller: {
-    gap: 12,
-    paddingVertical: 4,
-  },
-  weekCard: {
-    width: 220,
-    borderRadius: 16,
-    padding: 16,
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    gap: 12,
-  },
-  weekCardToday: {
-    borderColor: 'rgba(0, 245, 160, 0.3)',
-  },
-  weekCardSelected: {
-    borderColor: '#6C63FF',
+  mealCardToday: {
+    borderColor: ACCENT_GLOW,
     borderWidth: 2,
   },
-  weekCardHeader: {
-    gap: 6,
-  },
-  weekCardHeaderLeft: {
+  
+  // ✨ MINIMAL: Card Header (just date)
+  cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  weekCardHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardDate: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   todayBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: ACCENT_GLOW,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  todayDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: ACCENT_COLOR,
   },
   todayBadgeText: {
-    color: '#00F5A0',
-    fontSize: 10,
+    color: ACCENT_COLOR,
+    fontSize: 11,
     fontWeight: '700',
+    letterSpacing: 0.5,
   },
-  weekCardLabel: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+  doneBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: ACCENT_COLOR,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  weekCardCount: {
-    color: '#A0A3BD',
-    fontSize: 12,
+  doneBadgeText: {
+    color: ACCENT_DARK,
+    fontSize: 14,
+    fontWeight: 'bold',
   },
-  weekItemsContainer: {
-    gap: 8,
-  },
-  weekItemRow: {
+  
+  // Progress Bar
+  progressBarContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  weekItemCopy: {
+  progressBarTrack: {
     flex: 1,
+    height: 6,
+    backgroundColor: '#1E2340',
+    borderRadius: 3,
+    overflow: 'hidden',
   },
-  weekItemTitle: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: ACCENT_COLOR,
+    borderRadius: 3,
   },
-  weekItemMeta: {
-    color: '#A0A3BD',
-    fontSize: 12,
-  },
-  weekMoreText: {
-    color: '#6C63FF',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  weekButton: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-  },
-  weekButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  weekStatusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-  },
-  weekStatusPillText: {
-    color: '#6C63FF',
+  progressBarText: {
     fontSize: 11,
     fontWeight: '700',
+    color: ACCENT_COLOR,
+    minWidth: 36,
+    textAlign: 'right',
   },
-  weekStatusPillSuccess: {
-    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+
+  // ✨ DYNAMIC: Flexible Scrollable Content
+  cardScrollContent: {
+    flex: 1, // ✨ Takes all remaining space
   },
-  weekStatusPillTextSuccess: {
-    color: '#00F5A0',
+  cardScrollContentInner: {
+    paddingBottom: 20,
+    gap: 12, // ✨ Flexible gap between meals
   },
-  macroCard: {
-    borderRadius: 20,
-    padding: 20,
-    gap: 16,
+  
+  // Meal Details List
+  mealDetailsList: {
+    gap: 12, // ✨ Dynamic spacing
   },
-  macroHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  macroEyebrow: {
-    color: '#A0A3BD',
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  macroTitle: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  macroBadge: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+  mealDetailCard: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  macroBadgeText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  macroGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  macroItem: {
-    flex: 1,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    padding: 12,
-    marginRight: 8,
-  },
-  macroLabel: {
-    color: '#A0A3BD',
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  macroValue: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 4,
-  },
-  section: {
-    gap: 12,
-  },
-  sectionHeader: {
-    gap: 4,
-  },
-  sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  sectionSubtitle: {
-    color: '#7C80A7',
-    fontSize: 14,
-  },
-  mealList: {
-    gap: 12,
-  },
-  mealCard: {
-    borderRadius: 18,
-    padding: 16,
+    padding: 14,
+    gap: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
-    gap: 10,
   },
-  mealCardHeader: {
+  mealDetailHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
-  mealEmoji: {
+  mealIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#1E2340',
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mealIcon: {
     fontSize: 20,
   },
-  mealTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  mealDetailHeaderText: {
+    flex: 1,
+  },
+  mealDetailTitle: {
+    fontSize: 15,
     fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  mealDetailMeta: {
+    fontSize: 12,
+    color: '#A0A3BD',
+  },
+  mealCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#1E2340',
+    borderWidth: 2,
+    borderColor: '#2A2F4F',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mealCheckboxComplete: {
+    backgroundColor: ACCENT_COLOR,
+    borderColor: ACCENT_COLOR,
+  },
+  mealCheckboxCheck: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: ACCENT_DARK,
+  },
+  mealItemsList: {
+    gap: 6,
   },
   mealItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  mealBullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#6C63FF',
+  mealItemBullet: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: ACCENT_COLOR,
   },
   mealItemText: {
     color: '#E3E6FF',
+    fontSize: 13,
+    flex: 1,
+  },
+  
+  // Card Action
+  cardActionButton: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    marginTop: 8,
+  },
+  cardActionButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
     fontSize: 14,
   },
-  mealFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+
+  // Empty State
+  emptyState: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 16,
   },
-  mealFooterLabel: {
-    color: '#A0A3BD',
-    fontSize: 12,
+  emptyIcon: {
+    fontSize: 64,
   },
-  mealFooterDone: {
-    color: '#00F5A0',
-    fontWeight: '700',
-  },
-  groceryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  groceryPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  groceryText: {
+  emptyTitle: {
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 22,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    color: '#A0A3BD',
+    textAlign: 'center',
+    lineHeight: 22,
+    fontSize: 15,
   },
 });
 

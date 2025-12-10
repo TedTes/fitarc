@@ -7,6 +7,7 @@ import {
   ScrollView,
   Modal,
   Animated,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, PhasePlan, WorkoutSessionEntry } from '../types/domain';
@@ -20,6 +21,12 @@ type PlansScreenProps = {
   onLoadTemplate?: () => void;
 };
 
+const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'];
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const CARD_WIDTH = SCREEN_WIDTH - 40;
+
 export const PlansScreen: React.FC<PlansScreenProps> = ({
   user,
   phase,
@@ -27,20 +34,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onRegenerateWorkoutPlan,
   onLoadTemplate,
 }) => {
-  const [detailPlan, setDetailPlan] = useState<{
-    type: 'workout';
-    label: string;
-    entries: { title: string; meta: string; bodyParts?: string[] }[];
-  } | null>(null);
-
   const [animationModal, setAnimationModal] = useState<{
     visible: boolean;
     exerciseName: string;
     muscleGroups: string;
   } | null>(null);
 
-  const modalScale = useRef(new Animated.Value(0)).current;
-  const modalOpacity = useRef(new Animated.Value(0)).current;
   const animModalScale = useRef(new Animated.Value(0)).current;
   const animModalOpacity = useRef(new Animated.Value(0)).current;
 
@@ -50,7 +49,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   if (!phase) {
     return (
       <View style={styles.container}>
-        <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
+        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>🏋️</Text>
             <Text style={styles.emptyTitle}>No Active Training Plan</Text>
@@ -77,7 +76,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       const date = new Date(anchor);
       date.setDate(anchor.getDate() + idx);
       const dateStr = date.toISOString().split('T')[0];
-      const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
+      const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
       const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       const isToday = dateStr === todayStr;
       return {
@@ -85,52 +84,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         dateStr,
         weekday,
         displayDate,
-        label: `${weekday} · ${displayDate}`,
+        label: `${weekday}, ${displayDate}`,
         isToday,
         workout: getSessionForDate(dateStr),
       };
     });
   }, [todayStr, workoutSessions, phase?.id, user]);
-
-  const openDetail = (
-    label: string,
-    entries: { title: string; meta: string; bodyParts?: string[] }[]
-  ) => {
-    setDetailPlan({ type: 'workout', label, entries });
-    
-    Animated.parallel([
-      Animated.spring(modalScale, {
-        toValue: 1,
-        tension: 80,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-      Animated.timing(modalOpacity, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
-  const closeDetail = () => {
-    Animated.parallel([
-      Animated.timing(modalScale, {
-        toValue: 0.9,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-      Animated.timing(modalOpacity, {
-        toValue: 0,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      setDetailPlan(null);
-      modalScale.setValue(0);
-      modalOpacity.setValue(0);
-    });
-  };
 
   const openAnimationModal = (exerciseName: string, muscleGroups: string) => {
     setAnimationModal({ visible: true, exerciseName, muscleGroups });
@@ -185,8 +144,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
-        {/* Animation Modal */}
+      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+        {/* ✨ Animation Modal */}
         <Modal
           transparent
           visible={animationModal?.visible || false}
@@ -269,279 +228,152 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </TouchableOpacity>
         </Modal>
 
-        {/* Detail Modal */}
-        <Modal
-          transparent
-          visible={!!detailPlan}
-          animationType="none"
-          onRequestClose={closeDetail}
+        {/* ✨ MINIMAL: Compact Header */}
+        <View style={styles.pageHeader}>
+          <View style={styles.headerRow}>
+            <View style={styles.headerLeft}>
+              <Text style={styles.pageTitle}>Workouts</Text>
+            </View>
+            <View style={styles.headerRight}>
+              <Text style={styles.weekStatsValue}>{completedExercises}/{totalExercises}</Text>
+            </View>
+          </View>
+          
+          {/* ✨ WORKOUT SPLIT IN HEADER */}
+          <View style={styles.splitHeader}>
+            <Text style={styles.splitHeaderText}>
+              {user.trainingSplit.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} Program
+            </Text>
+          </View>
+        </View>
+
+        {/* ✨ HORIZONTAL SCROLLING Full-Height Workout Cards */}
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.horizontalScroller}
+          snapToInterval={CARD_WIDTH + 20}
+          decelerationRate="fast"
         >
-          <TouchableOpacity 
-            activeOpacity={1} 
-            onPress={closeDetail}
-            style={styles.modalBackdrop}
-          >
-            <Animated.View
-              style={[
-                styles.modalCard,
-                {
-                  opacity: modalOpacity,
-                  transform: [{ scale: modalScale }],
-                },
-              ]}
-            >
-              <TouchableOpacity activeOpacity={1}>
-                <View style={styles.modalHeader}>
-                  <View style={styles.modalHeaderLeft}>
-                    <Text style={styles.modalTitle}>{detailPlan?.label}</Text>
-                    <Text style={styles.modalSubtitle}>
-                      Tap any exercise to see form guide
-                    </Text>
-                  </View>
-                  <TouchableOpacity 
-                    onPress={closeDetail}
-                    style={styles.modalCloseButton}
-                  >
-                    <Text style={styles.modalCloseText}>✕</Text>
-                  </TouchableOpacity>
+          {weekPlans.map((plan) => {
+            const workoutDone = plan.workout.exercises.every((exercise) => exercise.completed);
+            const workoutProgress = plan.workout.exercises.length > 0
+              ? plan.workout.exercises.filter(e => e.completed).length / plan.workout.exercises.length
+              : 0;
+            const totalSets = plan.workout.exercises.reduce((sum, e) => sum + (e.sets || 4), 0);
+            
+            return (
+              <LinearGradient
+                key={`workout-${plan.dateStr}`}
+                colors={plan.isToday ? ['#2A2F5A', '#1D2245'] : ['#1A1F3D', '#141832']}
+                style={[
+                  styles.workoutCard,
+                  plan.isToday && styles.workoutCardToday,
+                ]}
+              >
+                {/* ✨ MINIMAL: Card Header (just date) */}
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardDate}>{plan.label}</Text>
+                  {plan.isToday && (
+                    <View style={styles.todayBadge}>
+                      <View style={styles.todayDot} />
+                      <Text style={styles.todayBadgeText}>TODAY</Text>
+                    </View>
+                  )}
+                  {workoutDone && !plan.isToday && (
+                    <View style={styles.doneBadge}>
+                      <Text style={styles.doneBadgeText}>✓</Text>
+                    </View>
+                  )}
                 </View>
 
-                <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
-                  {detailPlan?.entries.map((entry, idx) => (
-                    <TouchableOpacity
-                      key={`${entry.title}-${idx}`}
-                      style={styles.modalRow}
-                      onPress={() => {
-                        const muscleGroups = entry.bodyParts?.join(' • ') || 'Full Body';
-                        openAnimationModal(entry.title, muscleGroups);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.modalRowLeft}>
-                        <View style={styles.modalBullet} />
-                        <Text style={styles.modalRowTitle}>{entry.title}</Text>
-                      </View>
-                      <View style={styles.modalRowRight}>
-                        <Text style={styles.modalRowMeta}>{entry.meta}</Text>
-                        <Text style={styles.animationIcon}>🎬</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-
-                <TouchableOpacity style={styles.modalButton} onPress={closeDetail}>
-                  <Text style={styles.modalButtonText}>Close</Text>
-                </TouchableOpacity>
-              </TouchableOpacity>
-            </Animated.View>
-          </TouchableOpacity>
-        </Modal>
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* ✨ IMPROVED: Compact Header with inline week overview */}
-          <View style={styles.pageHeader}>
-            <View style={styles.headerRow}>
-              <View style={styles.headerLeft}>
-                <Text style={styles.pageTitle}>Workouts</Text>
-                <Text style={styles.pageSubtitle}>
-                  {user.trainingSplit.replace('_', ' ')} program
-                </Text>
-              </View>
-              <View style={styles.headerRight}>
-                <Text style={styles.weekStatsValue}>{completedExercises}/{totalExercises}</Text>
-                <Text style={styles.weekStatsLabel}>This Week</Text>
-              </View>
-            </View>
-            
-            {/* ✨ COMPACT: Week dots inline */}
-            <View style={styles.weekDotsInline}>
-              {weekPlans.map((plan) => {
-                const completionPercent = plan.workout.exercises.length > 0
-                  ? plan.workout.exercises.filter(e => e.completed).length / plan.workout.exercises.length
-                  : 0;
-                const isComplete = completionPercent === 1;
-                
-                return (
-                  <View key={plan.dateStr} style={styles.weekDotCompact}>
-                    <View style={[
-                      styles.weekDotCircleCompact,
-                      plan.isToday && styles.weekDotTodayCompact,
-                      isComplete && styles.weekDotCompleteCompact,
-                    ]}>
-                      {isComplete && <Text style={styles.weekDotCheckCompact}>✓</Text>}
+                {/* Progress Bar */}
+                {workoutProgress > 0 && (
+                  <View style={styles.progressBarContainer}>
+                    <View style={styles.progressBarTrack}>
+                      <View 
+                        style={[
+                          styles.progressBarFill,
+                          { width: `${workoutProgress * 100}%` }
+                        ]} 
+                      />
                     </View>
-                    <Text style={[
-                      styles.weekDotLabelCompact,
-                      plan.isToday && styles.weekDotLabelTodayCompact
-                    ]}>
-                      {plan.weekday.charAt(0)}
+                    <Text style={styles.progressBarText}>
+                      {Math.round(workoutProgress * 100)}%
                     </Text>
                   </View>
-                );
-              })}
-            </View>
-          </View>
+                )}
 
-          {/* ✨ IMPROVED: Weekly Workouts Section with TALLER cards */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>7-Day Plan</Text>
-              <TouchableOpacity
-                style={styles.regenerateButton}
-                onPress={() => onRegenerateWorkoutPlan?.(todayStr)}
-              >
-                <Text style={styles.regenerateButtonText}>↻</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.workoutScroller}
-              snapToInterval={290}
-              decelerationRate="fast"
-            >
-              {weekPlans.map((plan) => {
-                const totalSets = plan.workout.exercises.reduce((sum, e) => sum + (e.sets || 4), 0);
-                const workoutDone = plan.workout.exercises.every((exercise) => exercise.completed);
-                const workoutProgress = plan.workout.exercises.length > 0
-                  ? plan.workout.exercises.filter(e => e.completed).length / plan.workout.exercises.length
-                  : 0;
-                
-                return (
-                  <TouchableOpacity
-                    key={`workout-${plan.dateStr}`}
-                    activeOpacity={0.85}
-                    onPress={() =>
-                      openDetail(
-                        `${plan.weekday}, ${plan.displayDate}`,
-                        plan.workout.exercises.map((exercise) => ({
-                          title: exercise.name,
-                          meta: `${exercise.sets} × ${exercise.reps}`,
-                          bodyParts: exercise.bodyParts,
-                        }))
-                      )
-                    }
-                  >
-                    <LinearGradient 
-                      colors={plan.isToday ? ['#2A2F5A', '#1D2245'] : ['#1A1F3D', '#141832']} 
-                      style={[
-                        styles.workoutCard,
-                        plan.isToday && styles.workoutCardToday
-                      ]}
-                    >
-                      {/* Card Header */}
-                      <View style={styles.cardHeader}>
-                        <View style={styles.cardHeaderLeft}>
-                          <Text style={styles.cardWeekday}>{plan.weekday}</Text>
-                          <Text style={styles.cardDate}>{plan.displayDate}</Text>
-                        </View>
-                        {plan.isToday && (
-                          <View style={styles.todayBadge}>
-                            <View style={styles.todayDot} />
-                            <Text style={styles.todayBadgeText}>NOW</Text>
-                          </View>
-                        )}
-                        {workoutDone && !plan.isToday && (
-                          <View style={styles.doneBadge}>
-                            <Text style={styles.doneBadgeText}>✓</Text>
-                          </View>
-                        )}
-                      </View>
-
-                      {/* Progress Bar */}
-                      {workoutProgress > 0 && (
-                        <View style={styles.progressBarContainer}>
-                          <View style={styles.progressBarTrack}>
-                            <View 
-                              style={[
-                                styles.progressBarFill,
-                                { width: `${workoutProgress * 100}%` }
-                              ]} 
-                            />
-                          </View>
-                          <Text style={styles.progressBarText}>
-                            {Math.round(workoutProgress * 100)}%
-                          </Text>
-                        </View>
-                      )}
-
-                      {/* Workout Summary */}
-                      <View style={styles.workoutSummary}>
-                        <View style={styles.summaryBadge}>
-                          <Text style={styles.summaryBadgeText}>
-                            {plan.workout.exercises.length} exercises
-                          </Text>
-                        </View>
-                        <View style={styles.summaryBadge}>
-                          <Text style={styles.summaryBadgeText}>{totalSets} sets</Text>
-                        </View>
-                      </View>
-
-                      {/* ✨ IMPROVED: Exercise List with GIF placeholders */}
-                      <View style={styles.exerciseList}>
-                        {plan.workout.exercises.slice(0, 5).map((exercise, idx) => (
-                          <View 
-                            key={`${exercise.name}-${idx}`} 
-                            style={styles.exerciseRow}
-                          >
-                            {/* ✨ NEW: GIF Placeholder on left */}
-                            <View style={styles.exerciseGifPlaceholder}>
-                              <Text style={styles.gifPlaceholderIcon}>🎬</Text>
-                            </View>
-                            
-                            <View style={styles.exerciseContent}>
-                              <View style={styles.exerciseTopRow}>
-                                <View style={[
-                                  styles.exerciseBullet,
-                                  exercise.completed && styles.exerciseBulletComplete
-                                ]}>
-                                  {exercise.completed && (
-                                    <Text style={styles.exerciseBulletCheck}>✓</Text>
-                                  )}
-                                </View>
-                                <View style={styles.exerciseInfo}>
-                                  <Text 
-                                    style={[
-                                      styles.exerciseTitle,
-                                      exercise.completed && styles.exerciseTitleComplete
-                                    ]} 
-                                    numberOfLines={1}
-                                  >
-                                    {exercise.name}
-                                  </Text>
-                                  <Text style={styles.exerciseMeta}>
-                                    {exercise.sets} × {exercise.reps}
-                                  </Text>
-                                </View>
-                              </View>
-                            </View>
-                          </View>
-                        ))}
-                        {plan.workout.exercises.length > 5 && (
-                          <Text style={styles.moreExercises}>
-                            +{plan.workout.exercises.length - 5} more
-                          </Text>
-                        )}
-                      </View>
-
-                      {/* Action Button */}
+                {/* ✨ DYNAMIC/FLEXIBLE: Scrollable Exercise List */}
+                <ScrollView 
+                  style={styles.cardScrollContent}
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.cardScrollContentInner}
+                >
+                  {/* Exercise Details List */}
+                  <View style={styles.exerciseDetailsList}>
+                    {plan.workout.exercises.map((exercise, idx) => (
                       <TouchableOpacity
-                        style={styles.cardActionButton}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          onRegenerateWorkoutPlan?.(plan.dateStr);
+                        key={`${exercise.name}-${idx}`}
+                        style={styles.exerciseDetailCard}
+                        onPress={() => {
+                          const muscleGroups = exercise.bodyParts?.join(' • ') || 'Full Body';
+                          openAnimationModal(exercise.name, muscleGroups);
                         }}
+                        activeOpacity={0.7}
                       >
-                        <Text style={styles.cardActionButtonText}>↻ Regenerate</Text>
+                        {/* Exercise Header */}
+                        <View style={styles.exerciseDetailHeader}>
+                          <View style={styles.exerciseGifBox}>
+                            <Text style={styles.exerciseGifIcon}>🎬</Text>
+                          </View>
+                          <View style={styles.exerciseDetailHeaderText}>
+                            <Text style={[
+                              styles.exerciseDetailTitle,
+                              exercise.completed && styles.exerciseDetailTitleComplete
+                            ]}>
+                              {exercise.name}
+                            </Text>
+                            <Text style={styles.exerciseDetailMeta}>
+                              {exercise.sets} sets × {exercise.reps} reps
+                            </Text>
+                          </View>
+                          <View style={[
+                            styles.exerciseCheckbox,
+                            exercise.completed && styles.exerciseCheckboxComplete
+                          ]}>
+                            {exercise.completed && (
+                              <Text style={styles.exerciseCheckboxCheck}>✓</Text>
+                            )}
+                          </View>
+                        </View>
+                        
+                        {/* Muscle Groups */}
+                        {exercise.bodyParts && exercise.bodyParts.length > 0 && (
+                          <View style={styles.muscleTagsRow}>
+                            {exercise.bodyParts.slice(0, 3).map((part, partIdx) => (
+                              <View key={`${part}-${partIdx}`} style={styles.muscleTag}>
+                                <Text style={styles.muscleTagText}>{part}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        )}
                       </TouchableOpacity>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
+                    ))}
+                  </View>
 
+                  {/* Action Button */}
+                  <TouchableOpacity
+                    style={styles.cardActionButton}
+                    onPress={() => onRegenerateWorkoutPlan?.(plan.dateStr)}
+                  >
+                    <Text style={styles.cardActionButtonText}>↻ Regenerate Day</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </LinearGradient>
+            );
+          })}
         </ScrollView>
       </LinearGradient>
     </View>
@@ -556,161 +388,85 @@ const styles = StyleSheet.create({
   gradient: {
     flex: 1,
   },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 20,
-    paddingTop: 60,
-    gap: 20,
-  },
   
-  // ✨ IMPROVED: Compact Header
+  // ✨ COMPACT: Minimal Header
   pageHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 12,
     gap: 12,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   headerLeft: {
     flex: 1,
   },
   pageTitle: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: -0.5,
-    marginBottom: 2,
-  },
-  pageSubtitle: {
-    color: '#A0A3BD',
-    fontSize: 14,
   },
   headerRight: {
     alignItems: 'flex-end',
   },
   weekStatsValue: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#00F5A0',
+    color: '#6C63FF',
   },
-  weekStatsLabel: {
-    fontSize: 10,
-    color: '#A0A3BD',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  
-  // ✨ COMPACT: Inline week dots
-  weekDotsInline: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+
+  // ✨ NEW: Split Info in Header
+  splitHeader: {
     backgroundColor: '#151932',
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
     borderColor: '#2A2F4F',
-  },
-  weekDotCompact: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  weekDotCircleCompact: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1E2340',
-    borderWidth: 2,
-    borderColor: '#2A2F4F',
-    justifyContent: 'center',
     alignItems: 'center',
   },
-  weekDotTodayCompact: {
-    borderColor: '#6C63FF',
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-  },
-  weekDotCompleteCompact: {
-    backgroundColor: '#00F5A0',
-    borderColor: '#00F5A0',
-  },
-  weekDotCheckCompact: {
-    color: '#0A0E27',
+  splitHeaderText: {
     fontSize: 14,
-    fontWeight: 'bold',
-  },
-  weekDotLabelCompact: {
-    fontSize: 10,
-    color: '#A0A3BD',
     fontWeight: '600',
-  },
-  weekDotLabelTodayCompact: {
     color: '#6C63FF',
+    textTransform: 'capitalize',
+  },
+
+  // Horizontal Scroller
+  horizontalScroller: {
+    paddingHorizontal: 20,
+    gap: 20,
+    paddingBottom: 20,
   },
   
-  // Section
-  section: {
-    gap: 16,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  regenerateButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  regenerateButtonText: {
-    fontSize: 20,
-    color: '#6C63FF',
-  },
-  
-  // ✨ IMPROVED: TALLER Workout Cards
-  workoutScroller: {
-    gap: 16,
-    paddingVertical: 4,
-    paddingRight: 20,
-  },
+  // ✨ IMPROVED: Full-Height Workout Cards
   workoutCard: {
-    width: 290,       // Slightly wider
-    minHeight: 480,   // ✨ TALLER: Increased from ~380px
+    width: CARD_WIDTH,
+    height: SCREEN_HEIGHT - 170, // ✨ MAXIMUM HEIGHT
     borderRadius: 16,
     padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
-    gap: 14,
+    gap: 12,
   },
   workoutCardToday: {
     borderColor: 'rgba(108, 99, 255, 0.5)',
     borderWidth: 2,
   },
   
-  // Card Header
+  // ✨ MINIMAL: Card Header (just date)
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  cardHeaderLeft: {
-    gap: 2,
-  },
-  cardWeekday: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    alignItems: 'center',
   },
   cardDate: {
-    fontSize: 13,
-    color: '#A0A3BD',
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   todayBadge: {
     flexDirection: 'row',
@@ -734,16 +490,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   doneBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#00F5A0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   doneBadgeText: {
     color: '#0A0E27',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
   },
   
@@ -772,38 +528,36 @@ const styles = StyleSheet.create({
     minWidth: 36,
     textAlign: 'right',
   },
-  
-  // Workout Summary
-  workoutSummary: {
-    flexDirection: 'row',
-    gap: 8,
+
+  // ✨ DYNAMIC: Flexible Scrollable Content
+  cardScrollContent: {
+    flex: 1, // ✨ Takes all remaining space
   },
-  summaryBadge: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  summaryBadgeText: {
-    fontSize: 11,
-    color: '#A0A3BD',
-    fontWeight: '600',
+  cardScrollContentInner: {
+    paddingBottom: 20,
+    gap: 12, // ✨ Flexible gap between exercises
   },
   
-  // ✨ IMPROVED: Exercise List with GIF placeholders
-  exerciseList: {
-    gap: 12,  // Increased gap for taller rows
-    flex: 1,   // Take up remaining space
+  // Exercise Details List
+  exerciseDetailsList: {
+    gap: 12, // ✨ Dynamic spacing
   },
-  exerciseRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+  exerciseDetailCard: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 14,
     gap: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
-  // ✨ NEW: GIF Placeholder
-  exerciseGifPlaceholder: {
-    width: 56,
-    height: 56,
+  exerciseDetailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  exerciseGifBox: {
+    width: 48,
+    height: 48,
     borderRadius: 10,
     backgroundColor: '#1E2340',
     borderWidth: 1,
@@ -811,184 +565,77 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  gifPlaceholderIcon: {
+  exerciseGifIcon: {
     fontSize: 24,
   },
-  exerciseContent: {
+  exerciseDetailHeaderText: {
     flex: 1,
   },
-  exerciseTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+  exerciseDetailTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
   },
-  exerciseBullet: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  exerciseDetailTitleComplete: {
+    color: '#A0A3BD',
+  },
+  exerciseDetailMeta: {
+    fontSize: 12,
+    color: '#A0A3BD',
+  },
+  exerciseCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: '#1E2340',
     borderWidth: 2,
     borderColor: '#2A2F4F',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 2,
   },
-  exerciseBulletComplete: {
+  exerciseCheckboxComplete: {
     backgroundColor: '#00F5A0',
     borderColor: '#00F5A0',
   },
-  exerciseBulletCheck: {
-    fontSize: 10,
+  exerciseCheckboxCheck: {
+    fontSize: 12,
     fontWeight: 'bold',
     color: '#0A0E27',
   },
-  exerciseInfo: {
-    flex: 1,
+  muscleTagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
   },
-  exerciseTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 4,
+  muscleTag: {
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.2)',
   },
-  exerciseTitleComplete: {
-    color: '#A0A3BD',
-  },
-  exerciseMeta: {
-    fontSize: 12,
-    color: '#A0A3BD',
-  },
-  moreExercises: {
-    fontSize: 11,
+  muscleTagText: {
+    fontSize: 10,
     color: '#6C63FF',
     fontWeight: '600',
-    marginLeft: 66,  // Align with exercise titles (56px GIF + 10px gap)
-    marginTop: 4,
   },
   
   // Card Action
   cardActionButton: {
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 10,
-    paddingVertical: 10,
+    paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+    marginTop: 8,
   },
   cardActionButtonText: {
     color: '#FFFFFF',
     fontWeight: '600',
-    fontSize: 13,
-  },
-  
-  // Modals (abbreviated for space)
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(5, 8, 20, 0.92)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    maxHeight: '80%',
-    borderRadius: 20,
-    backgroundColor: '#151932',
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    padding: 24,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
-    gap: 16,
-  },
-  modalHeaderLeft: {
-    flex: 1,
-    gap: 4,
-  },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCloseText: {
-    color: '#A0A3BD',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  modalTitle: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  modalSubtitle: {
-    color: '#A0A3BD',
-    fontSize: 13,
-  },
-  modalList: {
-    maxHeight: 400,
-  },
-  modalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    marginBottom: 8,
-  },
-  modalRowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: 12,
-  },
-  modalRowRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  modalBullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#6C63FF',
-  },
-  modalRowTitle: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontWeight: '600',
     fontSize: 14,
-  },
-  modalRowMeta: {
-    color: '#A0A3BD',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  animationIcon: {
-    fontSize: 16,
-  },
-  modalButton: {
-    marginTop: 16,
-    alignSelf: 'stretch',
-    borderRadius: 12,
-    backgroundColor: '#6C63FF',
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-  },
-  modalButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 15,
   },
   
   // Animation Modal
