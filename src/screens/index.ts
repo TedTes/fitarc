@@ -7,3 +7,4 @@ export { PlansScreen } from './PlansScreen';
 export { ProgressScreen } from './ProgressScreen';
 export { PhaseCompleteScreen } from './PhaseCompleteScreen';
 export { ProfileScreen } from './ProfileScreen';
+export { MenuScreen } from './MenuScreen';

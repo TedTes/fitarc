@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Switch } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, TrainingSplit, EatingMode, ExperienceLevel } from '../types/domain';
 
@@ -24,6 +24,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>(user.experienceLevel);
   const [trainingSplit, setTrainingSplit] = useState<TrainingSplit>(user.trainingSplit);
   const [eatingMode, setEatingMode] = useState<EatingMode>(user.eatingMode);
+
+  // ✨ NEW: Settings toggles
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [darkModeEnabled, setDarkModeEnabled] = useState(true);
+  const [autoRestTimer, setAutoRestTimer] = useState(true);
+
+  // ✨ NEW: Modal states for pickers
+  const [showExperiencePicker, setShowExperiencePicker] = useState(false);
+  const [showSplitPicker, setShowSplitPicker] = useState(false);
+  const [showEatingPicker, setShowEatingPicker] = useState(false);
 
   const handleSave = () => {
     const ageNum = parseInt(age, 10);
@@ -53,94 +63,180 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     onClose();
   };
 
+  // Helper functions to format labels
+  const formatTrainingSplit = (split: TrainingSplit): string => {
+    const labels: Record<TrainingSplit, string> = {
+      full_body: 'Full Body',
+      upper_lower: 'Upper/Lower',
+      push_pull_legs: 'Push/Pull/Legs',
+      bro_split: 'Bro Split',
+      custom: 'Custom',
+    };
+    return labels[split];
+  };
+
+  const formatEatingMode = (mode: EatingMode): string => {
+    const labels: Record<EatingMode, string> = {
+      mild_deficit: 'Mild Deficit',
+      recomp: 'Recomp',
+      lean_bulk: 'Lean Bulk',
+      maintenance: 'Maintenance',
+    };
+    return labels[mode];
+  };
+
+  const formatExperience = (exp: ExperienceLevel): string => {
+    return exp.charAt(0).toUpperCase() + exp.slice(1);
+  };
+
   return (
     <View style={styles.container}>
       <LinearGradient
         colors={['#0A0E27', '#151932', '#1E2340']}
         style={styles.gradient}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           {/* Header */}
           <View style={styles.header}>
+            <Text style={styles.title}>Settings</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Text style={styles.closeButtonText}>✕</Text>
             </TouchableOpacity>
-            <Text style={styles.title}>Profile & Settings</Text>
-            <View style={styles.headerSpacer} />
           </View>
 
-          {/* Basic Info */}
+          {/* ✨ PROFILE SECTION */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Basic Information</Text>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Sex</Text>
-              <View style={styles.buttonGroup}>
+            <Text style={styles.sectionTitle}>PROFILE</Text>
+            
+            {/* Sex */}
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>👤</Text>
+                <Text style={styles.settingLabel}>Sex</Text>
+              </View>
+              <View style={styles.inlineButtonGroup}>
                 {(['male', 'female', 'other'] as const).map((option) => (
                   <TouchableOpacity
                     key={option}
-                    style={[styles.optionButton, sex === option && styles.optionButtonActive]}
+                    style={[
+                      styles.inlineButton,
+                      sex === option && styles.inlineButtonActive
+                    ]}
                     onPress={() => setSex(option)}
                   >
-                    <Text style={[styles.optionText, sex === option && styles.optionTextActive]}>
-                      {option.charAt(0).toUpperCase() + option.slice(1)}
+                    <Text style={[
+                      styles.inlineButtonText,
+                      sex === option && styles.inlineButtonTextActive
+                    ]}>
+                      {option.charAt(0).toUpperCase()}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </View>
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Age</Text>
+            {/* Age */}
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>🎂</Text>
+                <Text style={styles.settingLabel}>Age</Text>
+              </View>
               <TextInput
-                style={styles.input}
+                style={styles.settingInput}
                 value={age}
                 onChangeText={setAge}
                 keyboardType="number-pad"
-                placeholder="Enter your age"
+                placeholder="--"
                 placeholderTextColor="#A0A3BD"
                 maxLength={3}
               />
             </View>
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Height (cm)</Text>
-              <TextInput
-                style={styles.input}
-                value={heightCm}
-                onChangeText={setHeightCm}
-                keyboardType="number-pad"
-                placeholder="Enter your height"
-                placeholderTextColor="#A0A3BD"
-                maxLength={3}
-              />
+            {/* Height */}
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>📏</Text>
+                <Text style={styles.settingLabel}>Height</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <TextInput
+                  style={styles.settingInput}
+                  value={heightCm}
+                  onChangeText={setHeightCm}
+                  keyboardType="number-pad"
+                  placeholder="--"
+                  placeholderTextColor="#A0A3BD"
+                  maxLength={3}
+                />
+                <Text style={styles.settingUnit}>cm</Text>
+              </View>
             </View>
           </View>
 
-          {/* Training Settings */}
+          {/* ✨ TRAINING SECTION */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Training</Text>
+            <Text style={styles.sectionTitle}>TRAINING</Text>
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Experience Level</Text>
-              <View style={styles.buttonGroup}>
+            {/* Experience Level */}
+            <TouchableOpacity 
+              style={styles.settingRow}
+              onPress={() => setShowExperiencePicker(!showExperiencePicker)}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>💪</Text>
+                <Text style={styles.settingLabel}>Experience Level</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <Text style={styles.settingValue}>{formatExperience(experienceLevel)}</Text>
+                <Text style={styles.settingChevron}>›</Text>
+              </View>
+            </TouchableOpacity>
+
+            {showExperiencePicker && (
+              <View style={styles.pickerContainer}>
                 {(['beginner', 'intermediate', 'advanced'] as const).map((option) => (
                   <TouchableOpacity
                     key={option}
-                    style={[styles.optionButton, experienceLevel === option && styles.optionButtonActive]}
-                    onPress={() => setExperienceLevel(option)}
+                    style={styles.pickerOption}
+                    onPress={() => {
+                      setExperienceLevel(option);
+                      setShowExperiencePicker(false);
+                    }}
                   >
-                    <Text style={[styles.optionText, experienceLevel === option && styles.optionTextActive]}>
-                      {option.charAt(0).toUpperCase() + option.slice(1)}
+                    <Text style={[
+                      styles.pickerOptionText,
+                      experienceLevel === option && styles.pickerOptionTextActive
+                    ]}>
+                      {formatExperience(option)}
                     </Text>
+                    {experienceLevel === option && (
+                      <Text style={styles.pickerCheck}>✓</Text>
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>
-            </View>
+            )}
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Training Split</Text>
-              <View style={styles.splitGrid}>
+            {/* Training Split */}
+            <TouchableOpacity 
+              style={styles.settingRow}
+              onPress={() => setShowSplitPicker(!showSplitPicker)}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>🏋️</Text>
+                <Text style={styles.settingLabel}>Training Split</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <Text style={styles.settingValue}>{formatTrainingSplit(trainingSplit)}</Text>
+                <Text style={styles.settingChevron}>›</Text>
+              </View>
+            </TouchableOpacity>
+
+            {showSplitPicker && (
+              <View style={styles.pickerContainer}>
                 {([
                   { value: 'full_body', label: 'Full Body' },
                   { value: 'upper_lower', label: 'Upper/Lower' },
@@ -150,25 +246,48 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 ] as const).map((option) => (
                   <TouchableOpacity
                     key={option.value}
-                    style={[styles.splitButton, trainingSplit === option.value && styles.splitButtonActive]}
-                    onPress={() => setTrainingSplit(option.value)}
+                    style={styles.pickerOption}
+                    onPress={() => {
+                      setTrainingSplit(option.value);
+                      setShowSplitPicker(false);
+                    }}
                   >
-                    <Text style={[styles.splitText, trainingSplit === option.value && styles.splitTextActive]}>
+                    <Text style={[
+                      styles.pickerOptionText,
+                      trainingSplit === option.value && styles.pickerOptionTextActive
+                    ]}>
                       {option.label}
                     </Text>
+                    {trainingSplit === option.value && (
+                      <Text style={styles.pickerCheck}>✓</Text>
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>
-            </View>
+            )}
           </View>
 
-          {/* Nutrition Settings */}
+          {/* ✨ NUTRITION SECTION */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Nutrition</Text>
+            <Text style={styles.sectionTitle}>NUTRITION</Text>
 
-            <View style={styles.field}>
-              <Text style={styles.label}>Eating Mode</Text>
-              <View style={styles.splitGrid}>
+            {/* Eating Mode */}
+            <TouchableOpacity 
+              style={styles.settingRow}
+              onPress={() => setShowEatingPicker(!showEatingPicker)}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>🍽️</Text>
+                <Text style={styles.settingLabel}>Eating Mode</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <Text style={styles.settingValue}>{formatEatingMode(eatingMode)}</Text>
+                <Text style={styles.settingChevron}>›</Text>
+              </View>
+            </TouchableOpacity>
+
+            {showEatingPicker && (
+              <View style={styles.pickerContainer}>
                 {([
                   { value: 'mild_deficit', label: 'Mild Deficit' },
                   { value: 'recomp', label: 'Recomp' },
@@ -177,52 +296,162 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 ] as const).map((option) => (
                   <TouchableOpacity
                     key={option.value}
-                    style={[styles.splitButton, eatingMode === option.value && styles.splitButtonActive]}
-                    onPress={() => setEatingMode(option.value)}
+                    style={styles.pickerOption}
+                    onPress={() => {
+                      setEatingMode(option.value);
+                      setShowEatingPicker(false);
+                    }}
                   >
-                    <Text style={[styles.splitText, eatingMode === option.value && styles.splitTextActive]}>
+                    <Text style={[
+                      styles.pickerOptionText,
+                      eatingMode === option.value && styles.pickerOptionTextActive
+                    ]}>
                       {option.label}
                     </Text>
+                    {eatingMode === option.value && (
+                      <Text style={styles.pickerCheck}>✓</Text>
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>
+            )}
+          </View>
+
+          {/* ✨ APP SETTINGS SECTION */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>APP SETTINGS</Text>
+
+            {/* Notifications */}
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>🔔</Text>
+                <View>
+                  <Text style={styles.settingLabel}>Notifications</Text>
+                  <Text style={styles.settingSubtext}>Daily workout reminders</Text>
+                </View>
+              </View>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={setNotificationsEnabled}
+                trackColor={{ false: '#2A2F4F', true: '#6C63FF' }}
+                thumbColor={notificationsEnabled ? '#FFFFFF' : '#A0A3BD'}
+              />
+            </View>
+
+            {/* Auto Rest Timer */}
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>⏱️</Text>
+                <View>
+                  <Text style={styles.settingLabel}>Auto Rest Timer</Text>
+                  <Text style={styles.settingSubtext}>Start timer after each set</Text>
+                </View>
+              </View>
+              <Switch
+                value={autoRestTimer}
+                onValueChange={setAutoRestTimer}
+                trackColor={{ false: '#2A2F4F', true: '#6C63FF' }}
+                thumbColor={autoRestTimer ? '#FFFFFF' : '#A0A3BD'}
+              />
+            </View>
+
+            {/* Dark Mode (always on for now) */}
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>🌙</Text>
+                <View>
+                  <Text style={styles.settingLabel}>Dark Mode</Text>
+                  <Text style={styles.settingSubtext}>Currently enabled</Text>
+                </View>
+              </View>
+              <Switch
+                value={darkModeEnabled}
+                onValueChange={setDarkModeEnabled}
+                trackColor={{ false: '#2A2F4F', true: '#6C63FF' }}
+                thumbColor={darkModeEnabled ? '#FFFFFF' : '#A0A3BD'}
+                disabled
+              />
             </View>
           </View>
 
-          {/* Arc Management */}
+          {/* ✨ ARC MANAGEMENT SECTION */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Arc Management</Text>
+            <Text style={styles.sectionTitle}>ARC MANAGEMENT</Text>
 
             {onChangeCurrentLevel && (
-              <TouchableOpacity style={styles.arcButton} onPress={onChangeCurrentLevel}>
-                <Text style={styles.arcButtonText}>Change Current Physique Level</Text>
-                <Text style={styles.arcButtonSubtext}>Update where you are now</Text>
+              <TouchableOpacity 
+                style={styles.settingRow}
+                onPress={onChangeCurrentLevel}
+              >
+                <View style={styles.settingLeft}>
+                  <Text style={styles.settingIcon}>📍</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.settingLabel}>Current Physique Level</Text>
+                    <Text style={styles.settingSubtext}>Update where you are now</Text>
+                  </View>
+                </View>
+                <Text style={styles.settingChevron}>›</Text>
               </TouchableOpacity>
             )}
 
             {onChangeTargetLevel && (
-              <TouchableOpacity style={styles.arcButton} onPress={onChangeTargetLevel}>
-                <Text style={styles.arcButtonText}>Start New Arc</Text>
-                <Text style={styles.arcButtonSubtext}>Set a new target and begin a fresh arc</Text>
+              <TouchableOpacity 
+                style={styles.settingRow}
+                onPress={onChangeTargetLevel}
+              >
+                <View style={styles.settingLeft}>
+                  <Text style={styles.settingIcon}>🎯</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.settingLabel}>Start New Arc</Text>
+                    <Text style={styles.settingSubtext}>Set a new target and begin fresh</Text>
+                  </View>
+                </View>
+                <Text style={styles.settingChevron}>›</Text>
               </TouchableOpacity>
             )}
           </View>
 
-          {/* Save/Cancel Buttons */}
-          <View style={styles.actions}>
-            <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+          {/* ✨ ABOUT SECTION */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>ABOUT</Text>
+
+            <TouchableOpacity style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>ℹ️</Text>
+                <Text style={styles.settingLabel}>App Version</Text>
+              </View>
+              <Text style={styles.settingValue}>1.0.0</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-              <LinearGradient
-                colors={['#6C63FF', '#5449CC']}
-                style={styles.saveButtonGradient}
-              >
-                <Text style={styles.saveButtonText}>Save Changes</Text>
-              </LinearGradient>
+            <TouchableOpacity style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>📖</Text>
+                <Text style={styles.settingLabel}>Terms & Privacy</Text>
+              </View>
+              <Text style={styles.settingChevron}>›</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>💬</Text>
+                <Text style={styles.settingLabel}>Send Feedback</Text>
+              </View>
+              <Text style={styles.settingChevron}>›</Text>
             </TouchableOpacity>
           </View>
+
+          {/* ✨ Save Button */}
+          <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+            <LinearGradient
+              colors={['#6C63FF', '#5449CC']}
+              style={styles.saveButtonGradient}
+            >
+              <Text style={styles.saveButtonText}>Save Changes</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          {/* Spacing for bottom */}
+          <View style={{ height: 40 }} />
         </ScrollView>
       </LinearGradient>
     </View>
@@ -239,156 +468,180 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    padding: 20,
-    paddingTop: 60,
-    paddingBottom: 40,
+    paddingTop: 20,
   },
+  
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 32,
+    paddingHorizontal: 20,
+    marginBottom: 24,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
   },
   closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+
+  // Section
+  section: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6C63FF',
+    letterSpacing: 1,
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+
+  // Setting Row
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     backgroundColor: '#151932',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E2340',
+  },
+  settingLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  settingIcon: {
+    fontSize: 20,
+    width: 28,
+  },
+  settingLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  settingSubtext: {
+    fontSize: 12,
+    color: '#A0A3BD',
+    marginTop: 2,
+  },
+  settingRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  settingValue: {
+    fontSize: 15,
+    color: '#A0A3BD',
+    fontWeight: '500',
+  },
+  settingUnit: {
+    fontSize: 14,
+    color: '#A0A3BD',
+  },
+  settingChevron: {
+    fontSize: 20,
+    color: '#A0A3BD',
+    fontWeight: '300',
+  },
+
+  // Input
+  settingInput: {
+    minWidth: 60,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#1E2340',
+    borderRadius: 8,
+    fontSize: 15,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+
+  // Inline Button Group (for Sex)
+  inlineButtonGroup: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  inlineButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1E2340',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#2A2F4F',
   },
-  closeButtonText: {
-    fontSize: 20,
-    color: '#FFFFFF',
-  },
-  headerSpacer: {
-    width: 40,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  section: {
-    marginBottom: 32,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 16,
-  },
-  field: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#A0A3BD',
-    marginBottom: 10,
-  },
-  input: {
-    backgroundColor: '#151932',
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: '#FFFFFF',
-  },
-  buttonGroup: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  optionButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    backgroundColor: '#151932',
-    alignItems: 'center',
-  },
-  optionButtonActive: {
+  inlineButtonActive: {
     backgroundColor: '#6C63FF',
     borderColor: '#6C63FF',
   },
-  optionText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#A0A3BD',
-  },
-  optionTextActive: {
-    color: '#FFFFFF',
-  },
-  splitGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  splitButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    backgroundColor: '#151932',
-  },
-  splitButtonActive: {
-    backgroundColor: '#6C63FF',
-    borderColor: '#6C63FF',
-  },
-  splitText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#A0A3BD',
-  },
-  splitTextActive: {
-    color: '#FFFFFF',
-  },
-  arcButton: {
-    backgroundColor: '#151932',
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  arcButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  arcButtonSubtext: {
+  inlineButtonText: {
     fontSize: 13,
+    fontWeight: '700',
     color: '#A0A3BD',
   },
-  actions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 24,
+  inlineButtonTextActive: {
+    color: '#FFFFFF',
   },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#A0A3BD',
-  },
-  saveButton: {
-    flex: 1,
+
+  // Picker
+  pickerContainer: {
+    backgroundColor: '#1E2340',
+    marginHorizontal: 20,
+    marginTop: -1,
+    marginBottom: 12,
     borderRadius: 12,
     overflow: 'hidden',
+  },
+  pickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#151932',
+  },
+  pickerOptionText: {
+    fontSize: 15,
+    color: '#A0A3BD',
+    fontWeight: '500',
+  },
+  pickerOptionTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  pickerCheck: {
+    fontSize: 16,
+    color: '#00F5A0',
+    fontWeight: 'bold',
+  },
+
+  // Save Button
+  saveButton: {
+    marginHorizontal: 20,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 16,
   },
   saveButtonGradient: {
     paddingVertical: 16,

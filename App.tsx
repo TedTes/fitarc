@@ -1,59 +1,82 @@
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
 import { 
-  ProfileSetupScreen,
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
   PlansScreen,
   ProgressScreen, 
+  MenuScreen,
   PhotoCaptureScreen,
-  PhaseCompleteScreen,
   ProfileScreen
 } from './src/screens';
-import { generatePhase,  isPhaseComplete } from './src/utils';
+import { generatePhase } from './src/utils';
 import { useEffect, useState } from 'react';
 import { PhotoCheckin, User } from './src/types/domain';
 
-const Tab = createBottomTabNavigator();
+type RootTabParamList = {
+  Home: undefined;
+  Workouts: undefined;
+  Menu: undefined;
+  Progress: undefined;
+  More: undefined;
+};
 
-const TAB_ICONS: Record<string, { default: string; active: string }> = {
+const Tab = createBottomTabNavigator<RootTabParamList>();
+
+type IoniconName = keyof typeof Ionicons.glyphMap;
+
+const TAB_ICONS: Record<keyof RootTabParamList, { default: IoniconName; active: IoniconName }> = {
   Home: { default: 'home-outline', active: 'home' },
-  Plans: { default: 'calendar-outline', active: 'calendar' },
+  Workouts: { default: 'barbell-outline', active: 'barbell' },
+  Menu: { default: 'fast-food-outline', active: 'fast-food' },
   Progress: { default: 'stats-chart-outline', active: 'stats-chart' },
+  More: { default: 'menu-outline', active: 'menu' },
 };
 
 type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'complete';
 
+const EmptyScreen = () => null;
+
 export default function App() {
   const storage = createStorageAdapter();
-  const { state, isLoading, updateUser, addPhotoCheckin, startPhase, markDayConsistent, recalculateProgress, completePhase, seedPerformanceData, toggleWorkoutExercise, toggleMealCompletion, reorderWorkoutExercise, regenerateWorkoutPlan, regenerateMealPlan, loadWeeklyTemplate } = useAppState(storage);
+  const navigationRef = useNavigationContainerRef<RootTabParamList>();
+  const {
+    state,
+    isLoading,
+    updateUser,
+    addPhotoCheckin,
+    startPhase,
+    markDayConsistent,
+    recalculateProgress,
+    seedPerformanceData,
+    toggleWorkoutExercise,
+    toggleMealCompletion,
+    regenerateWorkoutPlan,
+    regenerateMealPlan,
+    loadWeeklyTemplate,
+  } = useAppState(storage);
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
   const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
   const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
   const [isProfileVisible, setProfileVisible] = useState(false);
+
+  const closeProfileSheet = () => {
+    setProfileVisible(false);
+    if (navigationRef.getCurrentRoute()?.name === 'More') {
+      navigationRef.navigate('Home');
+    }
+  };
   
   // Onboarding state
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('profile');
   const [tempProfileData, setTempProfileData] = useState<any>(null);
   const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
-
-  const handleProfileComplete = (data: {
-    sex: 'male' | 'female' | 'other';
-    age: number;
-    heightCm: number;
-    experienceLevel: 'beginner' | 'intermediate' | 'advanced';
-    trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
-    eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
-  }) => {
-    setTempProfileData(data);
-    setOnboardingStep('current_physique');
-  };
 
   const handleCurrentPhysiqueSelect = (levelId: number) => {
     setTempCurrentLevel(levelId);
@@ -142,15 +165,6 @@ export default function App() {
 
   // Onboarding flow
   if (shouldShowOnboarding) {
-    // if (onboardingStep === 'profile') {
-    //   return (
-    //     <View style={styles.container}>
-    //       <ProfileSetupScreen onComplete={handleProfileComplete} />
-    //       <StatusBar style="light" />
-    //     </View>
-    //   );
-    // }
-
     if (onboardingStep === 'current_physique' && tempProfileData) {
       return (
         <View style={styles.container}>
@@ -177,44 +191,6 @@ export default function App() {
     }
   }
 
-  if (isProfileVisible && state?.user) {
-    return (
-      <View style={styles.container}>
-        <ProfileScreen 
-          user={state.user}
-          onSave={updateUser}
-          onClose={() => setProfileVisible(false)}
-          onChangeCurrentLevel={() => {
-            setProfileVisible(false);
-            setTempProfileData({
-              sex: state.user!.sex,
-              age: state.user!.age,
-              heightCm: state.user!.heightCm,
-              experienceLevel: state.user!.experienceLevel,
-              trainingSplit: state.user!.trainingSplit,
-              eatingMode: state.user!.eatingMode,
-            });
-            setOnboardingStep('current_physique');
-          }}
-          onChangeTargetLevel={() => {
-            setProfileVisible(false);
-            setTempProfileData({
-              sex: state.user!.sex,
-              age: state.user!.age,
-              heightCm: state.user!.heightCm,
-              experienceLevel: state.user!.experienceLevel,
-              trainingSplit: state.user!.trainingSplit,
-              eatingMode: state.user!.eatingMode,
-            });
-            setTempCurrentLevel(state.user!.currentPhysiqueLevel);
-            setOnboardingStep('target_physique');
-          }}
-        />
-        <StatusBar style="light" />
-      </View>
-    );
-  }
-
   if (isPhotoCaptureVisible && photoCapturePhaseId) {
     return (
       <View style={styles.container}>
@@ -229,57 +205,62 @@ export default function App() {
     );
   }
 
-  const phaseComplete = state?.currentPhase ? isPhaseComplete(state.currentPhase, state.progressEstimate) : false;
-
-  // if (phaseComplete && state?.currentPhase) {
-  //   const baselinePhoto = state.photoCheckins.find(p => p.phasePlanId === 'baseline');
-  //   const phasePhotos = state.photoCheckins.filter(p => p.phasePlanId === state.currentPhase?.id);
-  //   const latestPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : null;
-
-  //   return (
-  //     <View style={styles.container}>
-  //       <PhaseCompleteScreen 
-  //         phase={state.currentPhase}
-  //         beforePhoto={baselinePhoto || null}
-  //         afterPhoto={latestPhoto}
-  //         progressPercent={state.progressEstimate?.progressPercent || 0}
-  //         onStartNextPhase={completePhase}
-  //       />
-  //       <StatusBar style="light" />
-  //     </View>
-  //   );
-  // }
-
   return (
-    <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={({ route }) => {
-          const icon = TAB_ICONS[route.name] || TAB_ICONS.Home;
-          return {
-            headerShown: false,
-            tabBarActiveTintColor: '#6C63FF',
-            tabBarInactiveTintColor: '#A0A3BD',
-            tabBarStyle: {
-              paddingBottom: 6,
-              paddingTop: 10,
-              height: 72,
-              backgroundColor: '#0A0E27',
-              borderTopColor: '#2A2F4F',
+    <View style={styles.appShell}>
+      <NavigationContainer ref={navigationRef}>
+        <Tab.Navigator
+          screenListeners={({ route }) => ({
+            tabPress: () => {
+              if (route.name !== 'More' && isProfileVisible) {
+                setProfileVisible(false);
+              }
             },
-            tabBarLabelStyle: {
-              fontSize: 12,
-              marginBottom: 4,
-            },
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? icon.active : icon.default}
-                size={28}
-                color={color}
-              />
-            ),
-          };
-        }}
-      >
+          })}
+          screenOptions={({ route }) => {
+            const icon = TAB_ICONS[route.name as keyof typeof TAB_ICONS] || TAB_ICONS.Home;
+            const isMoreRoute = route.name === 'More';
+            const forcedActive = isMoreRoute && isProfileVisible;
+            return {
+              headerShown: false,
+              tabBarActiveTintColor: '#6C63FF',
+              tabBarInactiveTintColor: '#A0A3BD',
+              tabBarStyle: {
+                paddingBottom: 4,
+                paddingTop: 6,
+                height: 64,
+                backgroundColor: '#0A0E27',
+                borderTopColor: '#2A2F4F',
+              },
+              tabBarLabelStyle: {
+                fontSize: 12,
+                marginBottom: 2,
+              },
+              tabBarIcon: ({ color, focused }) => {
+                const isActive = focused || forcedActive;
+                const tint = forcedActive ? '#6C63FF' : color;
+                if (isMoreRoute) {
+                  return (
+                    <View style={styles.menuIconStack}>
+                      {[0, 1, 2, 3].map((idx) => (
+                        <View
+                          key={idx}
+                          style={[styles.menuIconBar, { backgroundColor: tint }]}
+                        />
+                      ))}
+                    </View>
+                  );
+                }
+                return (
+                  <Ionicons
+                    name={isActive ? icon.active : icon.default}
+                    size={28}
+                    color={tint}
+                  />
+                );
+              },
+            };
+          }}
+        >
         <Tab.Screen 
           name="Home" 
           options={{ tabBarLabel: 'Home' }}
@@ -288,7 +269,7 @@ export default function App() {
            state &&  <DashboardScreen 
               user={state.user!}
               phase={state.currentPhase}
-              onMarkConsistent={markDayConsistent}
+          onMarkConsistent={markDayConsistent}
               workoutLogs={state.workoutLogs}
               workoutSessions={state.workoutSessions}
               mealPlans={state.mealPlans}
@@ -304,18 +285,29 @@ export default function App() {
           )}
         </Tab.Screen>
         <Tab.Screen 
-          name="Plans"
-          options={{ tabBarLabel: 'Plans' }}
+          name="Workouts"
+          options={{ tabBarLabel: 'Workouts' }}
         >
           {() => (
             state && <PlansScreen
               user={state.user!}
               phase={state.currentPhase}
               workoutSessions={state.workoutSessions}
-              mealPlans={state.mealPlans}
               onRegenerateWorkoutPlan={regenerateWorkoutPlan}
-              onRegenerateMealPlan={regenerateMealPlan}
               onLoadTemplate={loadWeeklyTemplate}
+            />
+          )}
+        </Tab.Screen>
+        <Tab.Screen 
+          name="Menu"
+          options={{ tabBarLabel: 'Menu' }}
+        >
+          {() => (
+            state && <MenuScreen
+              user={state.user!}
+              phase={state.currentPhase}
+              mealPlans={state.mealPlans}
+              onRegenerateMealPlan={regenerateMealPlan}
             />
           )}
         </Tab.Screen>
@@ -336,13 +328,83 @@ export default function App() {
             />
           )}
         </Tab.Screen>
+        <Tab.Screen
+          name="More"
+          component={EmptyScreen}
+          options={{
+            tabBarLabel: 'More', 
+            tabBarIcon: ({ color, focused }) => (
+              <View style={styles.menuIconContainer}>
+                <View style={styles.menuIconStack}>
+                  {[0, 1, 2].map((idx) => (
+                    <View
+                      key={idx}
+                      style={[
+                        styles.menuIconBar, 
+                        { backgroundColor: color },
+                        focused && styles.menuIconBarActive
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+            ),
+          }}
+          listeners={{
+            tabPress: () => {
+              setProfileVisible(true);
+            },
+          }}
+        />
       </Tab.Navigator>
+      </NavigationContainer>
+      {isProfileVisible && state?.user && (
+        <View style={styles.profileSheet} pointerEvents="box-none">
+          <View style={styles.profileSheetHandle} />
+          <View style={styles.profileSheetContent}>
+            <ProfileScreen 
+              user={state.user}
+              onSave={updateUser}
+              onClose={closeProfileSheet}
+              onChangeCurrentLevel={() => {
+                closeProfileSheet();
+                setTempProfileData({
+                  sex: state.user!.sex,
+                  age: state.user!.age,
+                  heightCm: state.user!.heightCm,
+                  experienceLevel: state.user!.experienceLevel,
+                  trainingSplit: state.user!.trainingSplit,
+                  eatingMode: state.user!.eatingMode,
+                });
+                setOnboardingStep('current_physique');
+              }}
+              onChangeTargetLevel={() => {
+                closeProfileSheet();
+                setTempProfileData({
+                  sex: state.user!.sex,
+                  age: state.user!.age,
+                  heightCm: state.user!.heightCm,
+                  experienceLevel: state.user!.experienceLevel,
+                  trainingSplit: state.user!.trainingSplit,
+                  eatingMode: state.user!.eatingMode,
+                });
+                setTempCurrentLevel(state.user!.currentPhysiqueLevel);
+                setOnboardingStep('target_physique');
+              }}
+            />
+          </View>
+        </View>
+      )}
       <StatusBar style="light" />
-    </NavigationContainer>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  appShell: {
+    flex: 1,
+    backgroundColor: '#0A0E27',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -352,5 +414,55 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0E27',
+  },
+  profileSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 64,
+    backgroundColor: '#050714',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingTop: 24,
+    paddingHorizontal: 18,
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: -6 },
+    elevation: 16,
+  },
+  profileSheetHandle: {
+    alignSelf: 'center',
+    width: 44,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    marginBottom: 12,
+  },
+  profileSheetContent: {
+    flex: 1,
+  },
+  menuIconContainer: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuIconStack: {
+    width: 24,
+    height: 18,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  menuIconBar: {
+    width: 24,
+    height: 3, 
+    borderRadius: 2,
+  },
+  menuIconBarActive: {
+    height: 3.5,
   },
 });
