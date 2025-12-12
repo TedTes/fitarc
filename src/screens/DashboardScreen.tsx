@@ -25,8 +25,8 @@ import {
   MuscleGroup,
   DailyMealPlan,
 } from '../types/domain';
-import { createSessionForDate } from '../utils/workoutPlanner';
-import { dietTips, mealPlanTemplates } from '../data';
+import { useHomeScreenData } from '../hooks/useHomeScreenData';
+import { dietTips } from '../data';
 import { getBodyPartLabel } from '../utils';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -406,7 +406,6 @@ type DashboardScreenProps = {
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
   onToggleMeal?: (date: string, mealTitle: string) => void;
   onMarkConsistent?: (log: DailyConsistencyLog) => void;
-  onRegenerateWorkoutPlan?: (date: string) => void;
   onRegenerateMealPlan?: (date: string) => void;
 };
 
@@ -420,9 +419,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onStartPhase,
   onToggleWorkoutExercise,
   onToggleMeal,
-  onRegenerateWorkoutPlan,
   onRegenerateMealPlan,
 }) => {
+  const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
   const [exercisePreview, setExercisePreview] = useState<{
     exercises: WorkoutSessionExercise[];
@@ -433,6 +432,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const now = new Date();
     return now.toISOString().split('T')[0];
   });
+  const resolvedPhase = homeData?.phase ?? phase;
+  const resolvedSessions = homeData?.recentSessions ?? workoutSessions;
+  const todayMealPlanFromRemote = homeData?.todayMealPlan;
   
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -441,39 +443,42 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const isToday = currentDateStr === todayStr;
   const isPastDate = currentDateStr < todayStr;
   
-  const activePhaseId = phase?.id || 'preview';
   const storedSession =
-    phase &&
-    workoutSessions.find(
-      (session) => session.phasePlanId === phase.id && session.date === currentDateStr
+    resolvedPhase &&
+    resolvedSessions.find(
+      (session) => session.phasePlanId === resolvedPhase.id && session.date === currentDateStr
     );
-  const fallbackSession = createSessionForDate(user, activePhaseId, currentDateStr);
   const todaySession =
-    storedSession && storedSession.exercises.length
-      ? storedSession
-      : fallbackSession;
-  const displayExercises = todaySession.exercises;
+    storedSession && storedSession.exercises.length ? storedSession : null;
+  const displayExercises = todaySession?.exercises ?? [];
   
   const focusAreas = Array.from(
     new Set(displayExercises.flatMap((exercise) => exercise.bodyParts))
   ) as MuscleGroup[];
-  const workoutSummary = `${displayExercises.length} ${getWorkoutDescriptor(focusAreas)}`;
-  const focusDescription = formatBodyPartList(focusAreas);
+  const hasSyncedWorkout = displayExercises.length > 0;
+  const workoutSummary = hasSyncedWorkout
+    ? `${displayExercises.length} ${getWorkoutDescriptor(focusAreas)}`
+    : isHomeLoading
+    ? 'Syncing workouts...'
+    : 'No synced workouts';
+  const focusDescription = hasSyncedWorkout
+    ? formatBodyPartList(focusAreas)
+    : isHomeLoading
+    ? 'Fetching recent sessions'
+    : 'Your synced workouts will appear here';
   const weekdayLabel = currentDateObj.toLocaleDateString(undefined, { weekday: 'long' });
   const dateLabel = currentDateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   
   const dietGuide = dietTips[user.eatingMode];
-  const mealTemplates = mealPlanTemplates[user.eatingMode];
   const savedMealPlan =
-    phase &&
-    mealPlans.find((plan) => plan.phasePlanId === phase.id && plan.date === currentDateStr);
-  const meals = mealTemplates.map((meal) => {
-    const saved = savedMealPlan?.meals.find((savedMeal) => savedMeal.title === meal.title);
-    return {
-      ...meal,
-      completed: saved?.completed ?? false,
-    };
-  });
+    resolvedPhase &&
+    (todayMealPlanFromRemote?.date === currentDateStr
+      ? todayMealPlanFromRemote
+      : mealPlans.find(
+          (plan) => plan.phasePlanId === resolvedPhase.id && plan.date === currentDateStr
+        ));
+  const meals = savedMealPlan?.meals ?? [];
+  const hasMeals = meals.length > 0;
   
   const progressPercent = progressEstimate?.progressPercent || 0;
   const weeksIntoPhase = Math.max(1, Math.floor((progressEstimate?.daysActive || 0) / 7) + 1);
@@ -531,7 +536,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const seedDate = new Date(currentDateStr);
     seedDate.setDate(seedDate.getDate() + 1);
     const nextDateStr = seedDate.toISOString().split('T')[0];
-    onRegenerateWorkoutPlan?.(nextDateStr);
     onRegenerateMealPlan?.(nextDateStr);
     setActiveDate(nextDateStr);
     setHasQueuedNextSession(true);
@@ -552,6 +556,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (canLogMeals && onToggleMeal) {
       onToggleMeal(currentDateStr, mealTitle);
     }
+  };
+
+  const handleGenerateMealPlan = () => {
+    if (!resolvedPhase) return;
+    onRegenerateMealPlan?.(currentDateStr);
   };
 
   const markEverythingDone = () => {
@@ -794,7 +803,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               )}
             </View>
 
-            {canLogWorkouts && completedExercises.length === totalWorkoutCount && totalWorkoutCount > 0 ? (
+            {!hasSyncedWorkout ? (
+              <View style={styles.emptyWorkoutCard}>
+                <Text style={styles.emptyWorkoutEmoji}>📭</Text>
+                <Text style={styles.emptyWorkoutTitle}>No workouts loaded</Text>
+                <Text style={styles.emptyWorkoutText}>
+                  Add or import workouts from your account to see them here.
+                </Text>
+              </View>
+            ) : canLogWorkouts && completedExercises.length === totalWorkoutCount && totalWorkoutCount > 0 ? (
               <View style={styles.allCompleteCard}>
                 <Text style={styles.allCompleteEmoji}>💪</Text>
                 <Text style={styles.allCompleteTitle}>Workout Complete!</Text>
@@ -903,8 +920,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <View style={styles.sectionHeader}>
               <View style={styles.sectionHeaderLeft}>
                 <Text style={styles.sectionEyebrow}>Nutrition · {dietGuide.label}</Text>
-                <Text style={styles.sectionTitle}>Meals for your goal</Text>
-                <Text style={styles.sectionSubtitle}>{dietGuide.description}</Text>
+                <Text style={styles.sectionTitle}>
+                  {hasMeals ? 'Meals for your goal' : 'No meals synced yet'}
+                </Text>
+                <Text style={styles.sectionSubtitle}>
+                  {hasMeals ? dietGuide.description : 'Generate a plan to see meals for this day.'}
+                </Text>
               </View>
               {totalMealCount > 0 && (
                 <View style={styles.sectionProgress}>
@@ -915,7 +936,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               )}
             </View>
 
-            {canLogMeals && completedMeals.length === totalMealCount && totalMealCount > 0 ? (
+            {!hasMeals ? (
+              <View style={styles.emptyMealCard}>
+                <Text style={styles.emptyMealEmoji}>🍽️</Text>
+                <Text style={styles.emptyMealTitle}>Meals not available</Text>
+                <Text style={styles.emptyMealText}>
+                  {resolvedPhase
+                    ? 'Generate or sync a plan for this day to start logging meals.'
+                    : 'Start an arc to unlock nutrition tracking.'}
+                </Text>
+                {resolvedPhase && onRegenerateMealPlan && (
+                  <TouchableOpacity style={styles.generateMealButton} onPress={handleGenerateMealPlan}>
+                    <Text style={styles.generateMealButtonText}>Generate Plan</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : canLogMeals && completedMeals.length === totalMealCount && totalMealCount > 0 ? (
               <View style={styles.allCompleteCard}>
                 <Text style={styles.allCompleteEmoji}>🍽️</Text>
                 <Text style={styles.allCompleteTitle}>All Meals Logged!</Text>
@@ -1275,6 +1311,63 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#00F5A0',
     fontWeight: 'bold',
+  },
+  emptyWorkoutCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    padding: 24,
+    backgroundColor: 'rgba(20, 24, 50, 0.8)',
+    alignItems: 'center',
+    gap: 10,
+  },
+  emptyWorkoutEmoji: {
+    fontSize: 42,
+  },
+  emptyWorkoutTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  emptyWorkoutText: {
+    fontSize: 14,
+    color: '#A0A3BD',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  emptyMealCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    padding: 24,
+    backgroundColor: 'rgba(17, 21, 42, 0.9)',
+    alignItems: 'center',
+    gap: 10,
+  },
+  emptyMealEmoji: {
+    fontSize: 38,
+  },
+  emptyMealTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  emptyMealText: {
+    fontSize: 14,
+    color: '#A0A3BD',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  generateMealButton: {
+    marginTop: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#6C63FF',
+  },
+  generateMealButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   
   allCompleteCard: {

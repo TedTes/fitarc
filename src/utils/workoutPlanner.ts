@@ -1,11 +1,12 @@
-import { User, WorkoutSessionEntry, WorkoutSessionExercise, MuscleGroup, WorkoutLog, MovementPattern } from '../types/domain';
+import {
+  User,
+  WorkoutSessionEntry,
+  WorkoutSessionExercise,
+  WorkoutLog,
+  MovementPattern,
+  MuscleGroup,
+} from '../types/domain';
 import { getTodayFocusAreas, BodyPart } from './trainingSplitHelper';
-import { getExercisesForBodyParts, exercises } from '../data/exercises';
-
-const DEFAULT_EXERCISE_COUNT = 7;
-const DEFAULT_FOCUS: BodyPart[] = ['chest', 'back', 'shoulders', 'arms'];
-const DEFAULT_SET_PATTERN = [5, 4, 4, 3, 3, 4, 3];
-const DEFAULT_REP_PATTERN = ['6-8', '8-10', '10-12'];
 
 const BODY_PART_TO_MOVEMENT: Record<BodyPart, MovementPattern[]> = {
   chest: ['horizontal_push'],
@@ -17,15 +18,20 @@ const BODY_PART_TO_MOVEMENT: Record<BodyPart, MovementPattern[]> = {
 };
 
 const BASE_SETS_PER_EXERCISE = 4;
+const PLACEHOLDER_SET_COUNT = 4;
+const PLACEHOLDER_REP_RANGE = '8-12';
+const DEFAULT_FOCUS: BodyPart[] = ['chest', 'back', 'shoulders', 'arms'];
 
-const buildExerciseLookup = (): Record<string, MuscleGroup[]> => {
-  return exercises.reduce<Record<string, MuscleGroup[]>>((acc, exercise) => {
-    acc[exercise.name] = exercise.bodyParts as MuscleGroup[];
-    return acc;
-  }, {});
-};
-
-const EXERCISE_LOOKUP = buildExerciseLookup();
+const buildPlaceholderExercises = (
+  focusAreas: BodyPart[]
+): WorkoutSessionExercise[] =>
+  focusAreas.map((part, index) => ({
+    name: `${part.charAt(0).toUpperCase() + part.slice(1)} Focus ${index + 1}`,
+    bodyParts: [part as MuscleGroup],
+    completed: false,
+    sets: PLACEHOLDER_SET_COUNT,
+    reps: PLACEHOLDER_REP_RANGE,
+  }));
 
 export const createSessionForDate = (
   user: User,
@@ -34,26 +40,14 @@ export const createSessionForDate = (
 ): WorkoutSessionEntry => {
   const focusAreas =
     getTodayFocusAreas(user.trainingSplit, new Date(date).getDay()) || [];
-  const desiredFocus = focusAreas.length ? focusAreas : DEFAULT_FOCUS;
-  const plannedExercises = getExercisesForBodyParts(
-    desiredFocus,
-    DEFAULT_EXERCISE_COUNT,
-    `${phasePlanId}_${date}`
-  );
-
-  const sessionExercises: WorkoutSessionExercise[] = plannedExercises.map((name, index) => ({
-    name,
-    bodyParts: EXERCISE_LOOKUP[name] || desiredFocus,
-    completed: false,
-    sets: DEFAULT_SET_PATTERN[index % DEFAULT_SET_PATTERN.length],
-    reps: DEFAULT_REP_PATTERN[index % DEFAULT_REP_PATTERN.length],
-  }));
+  const plannedFocus = focusAreas.length ? focusAreas : DEFAULT_FOCUS;
+  const placeholderExercises = buildPlaceholderExercises(plannedFocus);
 
   return {
     id: `session_${phasePlanId}_${date}`,
     date,
     phasePlanId,
-    exercises: sessionExercises,
+    exercises: placeholderExercises,
   };
 };
 

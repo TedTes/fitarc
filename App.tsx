@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Text } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,11 +13,15 @@ import {
   ProgressScreen, 
   MenuScreen,
   PhotoCaptureScreen,
-  ProfileScreen
+  ProfileScreen,
+  ProfileSetupScreen,
+  AuthNavigator,
 } from './src/screens';
 import { generatePhase } from './src/utils';
 import { useEffect, useState } from 'react';
 import { PhotoCheckin, User } from './src/types/domain';
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { fetchUserProfile, saveUserProfile } from './src/services/userProfileService';
 
 type RootTabParamList = {
   Home: undefined;
@@ -43,9 +47,20 @@ type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'comp
 
 const EmptyScreen = () => null;
 
-export default function App() {
+const TabPlaceholder: React.FC<{ title: string; subtitle: string }> = ({ title, subtitle }) => (
+  <View style={styles.container}>
+    <View style={styles.placeholderCard}>
+      <Text style={styles.placeholderTitle}>{title}</Text>
+      <Text style={styles.placeholderSubtitle}>{subtitle}</Text>
+    </View>
+  </View>
+);
+
+function AppContent() {
   const storage = createStorageAdapter();
   const navigationRef = useNavigationContainerRef<RootTabParamList>();
+  const { user: authUser, isLoading: isAuthLoading, isAuthenticated } = useAuth();
+  
   const {
     state,
     isLoading,
@@ -57,9 +72,7 @@ export default function App() {
     seedPerformanceData,
     toggleWorkoutExercise,
     toggleMealCompletion,
-    regenerateWorkoutPlan,
     regenerateMealPlan,
-    loadWeeklyTemplate,
   } = useAppState(storage);
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
   const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
@@ -83,12 +96,23 @@ export default function App() {
     setOnboardingStep('target_physique');
   };
 
+  const handleProfileSave = async (profile: User) => {
+    await updateUser(profile);
+    try {
+      await saveUserProfile(profile);
+    } catch (err) {
+      console.error('Failed to persist profile', err);
+    }
+  };
+
   const handleTargetPhysiqueSelect = async (targetLevelId: number) => {
-    if (!tempCurrentLevel) return;
+    if (!tempCurrentLevel || !authUser) return;
 
     const existingUser = state?.user;
+    
+    // Create user with auth user ID
     const user: User = {
-      id: existingUser?.id || `user_${Date.now()}`,
+      id: authUser.id, // Use Supabase auth user ID
       sex: tempProfileData.sex,
       age: tempProfileData.age,
       heightCm: tempProfileData.heightCm,
@@ -96,10 +120,10 @@ export default function App() {
       currentPhysiqueLevel: tempCurrentLevel,
       trainingSplit: tempProfileData.trainingSplit || 'full_body',
       eatingMode: tempProfileData.eatingMode || 'maintenance',
-      createdAt: new Date().toISOString(),
+      createdAt: existingUser?.createdAt || new Date().toISOString(),
     };
 
-    await updateUser(user);
+    await handleProfileSave(user);
 
     // Generate and start phase
     const phase = generatePhase(user, tempCurrentLevel, targetLevelId);
@@ -108,7 +132,19 @@ export default function App() {
     
     // Open photo capture for baseline photo
     setOnboardingStep('complete');
-    openPhotoCapture('baseline');
+    setPhotoCaptureVisible(false);
+  };
+
+  const handleProfileSetupComplete = (profileData: {
+    sex: 'male' | 'female' | 'other';
+    age: number;
+    heightCm: number;
+    experienceLevel: 'beginner' | 'intermediate' | 'advanced';
+    trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
+    eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
+  }) => {
+    setTempProfileData(profileData);
+    setOnboardingStep('current_physique');
   };
 
   useEffect(() => {
@@ -116,6 +152,29 @@ export default function App() {
       recalculateProgress();
     }
   }, [state?.dailyConsistency?.length]);
+
+  useEffect(() => {
+    if (!authUser || state?.user) return;
+    let cancelled = false;
+
+    const syncProfile = async () => {
+      try {
+        const remoteProfile = await fetchUserProfile(authUser.id);
+        if (!cancelled && remoteProfile) {
+          await updateUser(remoteProfile);
+          setOnboardingStep('complete');
+        }
+      } catch (err) {
+        console.error('Profile sync failed', err);
+      }
+    };
+
+    syncProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.id, state?.user, updateUser]);
 
   const handleStartPhaseFromDashboard = () => {
     if (!state?.user) {
@@ -150,9 +209,11 @@ export default function App() {
   const handlePhotoCaptured = async (photo: PhotoCheckin) => {
     await addPhotoCheckin(photo);
     closePhotoCapture();
+    setOnboardingStep('complete');
   };
 
-  if (isLoading) {
+  // Show loading while checking auth or loading app state
+  if (isAuthLoading || isLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#6C63FF" />
@@ -160,11 +221,31 @@ export default function App() {
     );
   }
 
+  // Show auth screens if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <View style={styles.container}>
+        <AuthNavigator />
+        <StatusBar style="light" />
+      </View>
+    );
+  }
+
+  // Check if user needs onboarding
   const shouldShowOnboarding =
-    !state?.user || (onboardingStep !== 'complete' && onboardingStep !== null);
+    !state?.user || (!state.currentPhase && onboardingStep !== 'complete');
 
   // Onboarding flow
   if (shouldShowOnboarding) {
+    if (onboardingStep === 'profile' || !tempProfileData) {
+      return (
+        <View style={styles.container}>
+          <ProfileSetupScreen onComplete={handleProfileSetupComplete} />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
+
     if (onboardingStep === 'current_physique' && tempProfileData) {
       return (
         <View style={styles.container}>
@@ -191,6 +272,7 @@ export default function App() {
     }
   }
 
+  // Photo capture overlay
   if (isPhotoCaptureVisible && photoCapturePhaseId) {
     return (
       <View style={styles.container}>
@@ -198,165 +280,191 @@ export default function App() {
           phasePlanId={photoCapturePhaseId}
           onComplete={handlePhotoCaptured}
           onSkip={photoCaptureOptional ? closePhotoCapture : undefined}
-          isOptional={photoCaptureOptional}
         />
         <StatusBar style="light" />
       </View>
     );
   }
 
+  // Main app
   return (
     <View style={styles.appShell}>
       <NavigationContainer ref={navigationRef}>
         <Tab.Navigator
-          screenListeners={({ route }) => ({
-            tabPress: () => {
-              if (route.name !== 'More' && isProfileVisible) {
-                setProfileVisible(false);
-              }
+          screenOptions={({ route }) => ({
+            headerShown: false,
+            tabBarStyle: {
+              backgroundColor: '#0A0E27',
+              borderTopColor: 'rgba(255,255,255,0.1)',
+              height: 64,
+              paddingBottom: 8,
+              paddingTop: 8,
             },
-          })}
-          screenOptions={({ route }) => {
-            const icon = TAB_ICONS[route.name as keyof typeof TAB_ICONS] || TAB_ICONS.Home;
-            const isMoreRoute = route.name === 'More';
-            const forcedActive = isMoreRoute && isProfileVisible;
-            return {
-              headerShown: false,
-              tabBarActiveTintColor: '#6C63FF',
-              tabBarInactiveTintColor: '#A0A3BD',
-              tabBarStyle: {
-                paddingBottom: 4,
-                paddingTop: 6,
-                height: 64,
-                backgroundColor: '#0A0E27',
-                borderTopColor: '#2A2F4F',
-              },
-              tabBarLabelStyle: {
-                fontSize: 12,
-                marginBottom: 2,
-              },
-              tabBarIcon: ({ color, focused }) => {
-                const isActive = focused || forcedActive;
-                const tint = forcedActive ? '#6C63FF' : color;
-                if (isMoreRoute) {
-                  return (
+            tabBarActiveTintColor: '#6C63FF',
+            tabBarInactiveTintColor: 'rgba(255,255,255,0.5)',
+            tabBarIcon: ({ focused, color }) => {
+              const icon = TAB_ICONS[route.name];
+              if (!icon) return null;
+              
+              if (route.name === 'More') {
+                return (
+                  <View style={styles.menuIconContainer}>
                     <View style={styles.menuIconStack}>
-                      {[0, 1, 2, 3].map((idx) => (
+                      {[0, 1, 2].map((idx) => (
                         <View
                           key={idx}
-                          style={[styles.menuIconBar, { backgroundColor: tint }]}
+                          style={[
+                            styles.menuIconBar, 
+                            { backgroundColor: color },
+                            focused && styles.menuIconBarActive
+                          ]}
                         />
                       ))}
                     </View>
-                  );
-                }
-                return (
-                  <Ionicons
-                    name={isActive ? icon.active : icon.default}
-                    size={28}
-                    color={tint}
-                  />
+                  </View>
                 );
-              },
-            };
-          }}
-        >
-        <Tab.Screen 
-          name="Home" 
-          options={{ tabBarLabel: 'Home' }}
-        >
-          {() => (
-           state &&  <DashboardScreen 
-              user={state.user!}
-              phase={state.currentPhase}
-          onMarkConsistent={markDayConsistent}
-              workoutLogs={state.workoutLogs}
-              workoutSessions={state.workoutSessions}
-              mealPlans={state.mealPlans}
-              strengthSnapshots={state.strengthSnapshots}
-              progressEstimate={state.progressEstimate}
-              onProfilePress={() => setProfileVisible(true)}
-              onStartPhase={handleStartPhaseFromDashboard}
-              onToggleWorkoutExercise={toggleWorkoutExercise}
-              onToggleMeal={toggleMealCompletion}
-              onRegenerateWorkoutPlan={regenerateWorkoutPlan}
-              onRegenerateMealPlan={regenerateMealPlan}
-            />
-          )}
-        </Tab.Screen>
-        <Tab.Screen 
-          name="Workouts"
-          options={{ tabBarLabel: 'Workouts' }}
-        >
-          {() => (
-            state && <PlansScreen
-              user={state.user!}
-              phase={state.currentPhase}
-              workoutSessions={state.workoutSessions}
-              onRegenerateWorkoutPlan={regenerateWorkoutPlan}
-              onLoadTemplate={loadWeeklyTemplate}
-            />
-          )}
-        </Tab.Screen>
-        <Tab.Screen 
-          name="Menu"
-          options={{ tabBarLabel: 'Menu' }}
-        >
-          {() => (
-            state && <MenuScreen
-              user={state.user!}
-              phase={state.currentPhase}
-              mealPlans={state.mealPlans}
-              onRegenerateMealPlan={regenerateMealPlan}
-            />
-          )}
-        </Tab.Screen>
-        <Tab.Screen 
-          name="Progress"
-          options={{ tabBarLabel: 'Progress' }}
-        >
-          {() => (
-           state &&  <ProgressScreen 
-              phase={state.currentPhase!}
-              photoCheckins={state.photoCheckins}
-              progressEstimate={state.progressEstimate}
-              dailyConsistency={state.dailyConsistency}
-              workoutLogs={state.workoutLogs}
-              mealPlans={state.mealPlans}
-              strengthSnapshots={state.strengthSnapshots}
-              onTakePhoto={() => state.currentPhase && openPhotoCapture(state.currentPhase.id, { optional: true })}
-            />
-          )}
-        </Tab.Screen>
-        <Tab.Screen
-          name="More"
-          component={EmptyScreen}
-          options={{
-            tabBarLabel: 'More', 
-            tabBarIcon: ({ color, focused }) => (
-              <View style={styles.menuIconContainer}>
-                <View style={styles.menuIconStack}>
-                  {[0, 1, 2].map((idx) => (
-                    <View
-                      key={idx}
-                      style={[
-                        styles.menuIconBar, 
-                        { backgroundColor: color },
-                        focused && styles.menuIconBarActive
-                      ]}
-                    />
-                  ))}
-                </View>
-              </View>
-            ),
-          }}
-          listeners={{
-            tabPress: () => {
-              setProfileVisible(true);
+              }
+              
+              return (
+                <Ionicons
+                  name={focused ? icon.active : icon.default}
+                  size={28}
+                  color={color}
+                />
+              );
             },
-          }}
-        />
-      </Tab.Navigator>
+          })}
+        >
+          <Tab.Screen 
+            name="Home" 
+            options={{ tabBarLabel: 'Home' }}
+            listeners={{
+              tabPress: () => setProfileVisible(false),
+            }}
+          >
+            {() =>
+              state?.user ? (
+                <DashboardScreen 
+                  user={state.user}
+                  phase={state.currentPhase}
+                  onMarkConsistent={markDayConsistent}
+                  workoutLogs={state.workoutLogs}
+                  workoutSessions={state.workoutSessions}
+                  mealPlans={state.mealPlans}
+                  strengthSnapshots={state.strengthSnapshots}
+                  progressEstimate={state.progressEstimate}
+                  onProfilePress={() => setProfileVisible(true)}
+                  onStartPhase={handleStartPhaseFromDashboard}
+                  onToggleWorkoutExercise={toggleWorkoutExercise}
+                  onToggleMeal={toggleMealCompletion}
+                  onRegenerateMealPlan={regenerateMealPlan}
+                />
+              ) : (
+                <TabPlaceholder
+                  title="Welcome to FitArc"
+                  subtitle="Complete onboarding to unlock your dashboard."
+                />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen 
+            name="Workouts"
+            options={{ tabBarLabel: 'Workouts' }}
+            listeners={{
+              tabPress: () => setProfileVisible(false),
+            }}
+          >
+            {() =>
+              state?.user ? (
+                <PlansScreen
+                  user={state.user}
+                  phase={state.currentPhase}
+                  workoutSessions={state.workoutSessions}
+                />
+              ) : (
+                <TabPlaceholder
+                  title="Workouts loading"
+                  subtitle="Finish onboarding to sync your workouts."
+                />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen 
+            name="Menu"
+            options={{ tabBarLabel: 'Menu' }}
+            listeners={{
+              tabPress: () => setProfileVisible(false),
+            }}
+          >
+            {() =>
+              state?.user ? (
+                <MenuScreen
+                  user={state.user}
+                  phase={state.currentPhase}
+                  mealPlans={state.mealPlans}
+                  onRegenerateMealPlan={regenerateMealPlan}
+                />
+              ) : (
+                <TabPlaceholder
+                  title="Nutrition coming soon"
+                  subtitle="Complete onboarding to generate meal plans."
+                />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen 
+            name="Progress"
+            options={{ tabBarLabel: 'Progress' }}
+            listeners={{
+              tabPress: () => setProfileVisible(false),
+            }}
+          >
+            {() =>
+              state?.currentPhase && state?.user ? (
+                <ProgressScreen 
+                  user={state.user}
+                  phase={state.currentPhase}
+                  onTakePhoto={() =>
+                    state.currentPhase && openPhotoCapture(state.currentPhase.id, { optional: true })
+                  }
+                />
+              ) : (
+                <TabPlaceholder
+                  title="Track progress"
+                  subtitle="Start an arc to unlock progress tracking."
+                />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen
+            name="More"
+            component={EmptyScreen}
+            options={{
+              tabBarLabel: 'More', 
+              tabBarIcon: ({ color, focused }) => (
+                <View style={styles.menuIconContainer}>
+                  <View style={styles.menuIconStack}>
+                    {[0, 1, 2].map((idx) => (
+                      <View
+                        key={idx}
+                        style={[
+                          styles.menuIconBar, 
+                          { backgroundColor: color },
+                          focused && styles.menuIconBarActive
+                        ]}
+                      />
+                    ))}
+                  </View>
+                </View>
+              ),
+            }}
+            listeners={{
+              tabPress: () => {
+                setProfileVisible(true);
+              },
+            }}
+          />
+        </Tab.Navigator>
       </NavigationContainer>
       {isProfileVisible && state?.user && (
         <View style={styles.profileSheet} pointerEvents="box-none">
@@ -364,7 +472,7 @@ export default function App() {
           <View style={styles.profileSheetContent}>
             <ProfileScreen 
               user={state.user}
-              onSave={updateUser}
+              onSave={handleProfileSave}
               onClose={closeProfileSheet}
               onChangeCurrentLevel={() => {
                 closeProfileSheet();
@@ -397,6 +505,14 @@ export default function App() {
       )}
       <StatusBar style="light" />
     </View>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
@@ -464,5 +580,25 @@ const styles = StyleSheet.create({
   },
   menuIconBarActive: {
     height: 3.5,
+  },
+  placeholderCard: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#0A0E27',
+  },
+  placeholderTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  placeholderSubtitle: {
+    color: '#A0A3BD',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });

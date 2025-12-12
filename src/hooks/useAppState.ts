@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   AppState,
   User,
@@ -24,9 +24,7 @@ import {
   sessionToWorkoutLog,
 } from '../utils/workoutPlanner';
 import { createMealPlanForDate } from '../utils/dietPlanner';
-import weeklyPlanTemplate from '../data/weeklyPlanTemplate.json';
-
-type WeeklyTemplateEntry = typeof weeklyPlanTemplate[number];
+import { fetchWorkoutSessionEntries } from '../services/supabaseWorkoutService';
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
@@ -124,6 +122,11 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
   const [state, setState] = useState<AppState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const stateRef = useRef<AppState | null>(null);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     loadState();
@@ -144,7 +147,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     }
   };
 
-  const persistState = async (newState: AppState) => {
+  const persistState = useCallback(async (newState: AppState) => {
     try {
       await storageAdapter.saveAppState(newState);
       setState(newState);
@@ -153,7 +156,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       console.error('Persist state error:', err);
       throw err;
     }
-  };
+  }, [storageAdapter]);
 
   const updateUser = useCallback(async (user: User) => {
     if (!state) return;
@@ -348,19 +351,6 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     [state]
   );
 
-  const regenerateWorkoutPlan = useCallback(
-    async (date: string) => {
-      if (!state || !state.currentPhase || !state.user) return;
-      const session = createSessionForDate(state.user, state.currentPhase.id, date);
-      const updatedSessions = upsertWorkoutSession(state.workoutSessions, session);
-      await persistState({
-        ...state,
-        workoutSessions: updatedSessions,
-      });
-    },
-    [state]
-  );
-
   const toggleHabit = useCallback(
     async (date: string, habit: HabitType, value: boolean) => {
       if (!state || !state.currentPhase) return;
@@ -427,51 +417,22 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     [state]
   );
 
-  const loadWeeklyTemplate = useCallback(
-    async (anchorDate?: string) => {
-      if (!state || !state.currentPhase || !state.user) return;
-      const base = anchorDate ? new Date(anchorDate) : new Date();
-      const baseDate = new Date(base.toISOString().split('T')[0]);
-      let sessions = state.workoutSessions;
-      let plans = state.mealPlans;
-
-      weeklyPlanTemplate.forEach((template, index) => {
-        const date = new Date(baseDate);
-        date.setDate(baseDate.getDate() + index);
-        const dateStr = date.toISOString().split('T')[0];
-        const session: WorkoutSessionEntry = {
-          id: `session_${state.currentPhase!.id}_${dateStr}`,
-          date: dateStr,
-          phasePlanId: state.currentPhase!.id,
-          exercises: template.workout.map((exercise) => ({
-            name: exercise.name,
-            sets: exercise.sets,
-            reps: exercise.reps,
-            bodyParts: exercise.bodyParts as MuscleGroup[],
-            completed: false,
-          })),
-        };
-        const mealPlan: DailyMealPlan = {
-          id: `meal_${state.currentPhase!.id}_${dateStr}`,
-          date: dateStr,
-          phasePlanId: state.currentPhase!.id,
-          meals: template.meals.map((meal) => ({
-            title: meal.title,
-            items: meal.items,
-            completed: false,
-          })),
-        };
-        sessions = upsertWorkoutSession(sessions, session);
-        plans = upsertMealPlan(plans, mealPlan);
-      });
-
-      await persistState({
-        ...state,
-        workoutSessions: sessions,
-        mealPlans: plans,
-      });
+  const loadWorkoutSessionsFromSupabase = useCallback(
+    async (userId: string, phaseId?: string) => {
+      const currentState = stateRef.current;
+      if (!currentState) return;
+      try {
+        const remoteSessions = await fetchWorkoutSessionEntries(userId, phaseId);
+        await persistState({
+          ...currentState,
+          workoutSessions: remoteSessions,
+        });
+      } catch (err) {
+        console.error('Failed to load workouts from Supabase:', err);
+        setError('Failed to load workouts from Supabase');
+      }
     },
-    [state]
+    [persistState]
   );
 
   const schedulePhotoReminder = useCallback(
@@ -488,49 +449,23 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
   useEffect(() => {
     if (!state?.currentPhase || !state.user) return;
     const todayStr = new Date().toISOString().split('T')[0];
-    const hasSession = state.workoutSessions.some(
-      (session) =>
-        session.date === todayStr && session.phasePlanId === state.currentPhase!.id
-    );
     const hasMealPlan = state.mealPlans.some(
       (plan) => plan.date === todayStr && plan.phasePlanId === state.currentPhase!.id
     );
-    if (hasSession && hasMealPlan) {
+    if (hasMealPlan) {
       return;
     }
 
-    const ensureEntries = async () => {
-      let nextState = state;
-
-      if (!hasSession) {
-        const session = createSessionForDate(state.user!, state.currentPhase!.id, todayStr);
-        nextState = {
-          ...nextState,
-          workoutSessions: upsertWorkoutSession(nextState.workoutSessions, session),
-        };
-      }
-
-      if (!hasMealPlan) {
-        const plan = createMealPlanForDate(state.user!, state.currentPhase!.id, todayStr);
-        nextState = {
-          ...nextState,
-          mealPlans: upsertMealPlan(nextState.mealPlans, plan),
-        };
-      }
-
-      if (nextState !== state) {
-        await persistState(nextState);
-      }
+    const ensureMealPlan = async () => {
+      const plan = createMealPlanForDate(state.user!, state.currentPhase!.id, todayStr);
+      await persistState({
+        ...state,
+        mealPlans: upsertMealPlan(state.mealPlans, plan),
+      });
     };
 
-    ensureEntries();
-  }, [
-    state,
-    state?.currentPhase?.id,
-    state?.user,
-    state?.workoutSessions,
-    state?.mealPlans,
-  ]);
+    ensureMealPlan();
+  }, [state?.currentPhase?.id, state?.mealPlans, state?.user]);
 
   const clearAllData = useCallback(async () => {
     try {
@@ -559,11 +494,10 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     seedPerformanceData,
     toggleWorkoutExercise,
     reorderWorkoutExercise,
-    regenerateWorkoutPlan,
     toggleHabit,
     schedulePhotoReminder,
     toggleMealCompletion,
     regenerateMealPlan,
-    loadWeeklyTemplate,
+    loadWorkoutSessionsFromSupabase,
   };
 };

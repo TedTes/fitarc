@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,17 +11,18 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, PhasePlan, WorkoutSessionEntry } from '../types/domain';
-import { createSessionForDate } from '../utils/workoutPlanner';
+import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 
 type PlansScreenProps = {
   user: User;
   phase: PhasePlan | null;
   workoutSessions: WorkoutSessionEntry[];
-  onRegenerateWorkoutPlan?: (date: string) => void;
-  onLoadTemplate?: () => void;
 };
 
-const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'];
+const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
+const ACCENT_COLOR = '#6C63FF';
+const ACCENT_GLOW = 'rgba(108, 99, 255, 0.2)';
+const ACCENT_DARK = '#0A0E27';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -31,9 +32,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   user,
   phase,
   workoutSessions,
-  onRegenerateWorkoutPlan,
-  onLoadTemplate,
 }) => {
+  const { sessions: remoteSessions, isLoading: sessionsLoading } = useWorkoutSessions(
+    user.id,
+    phase?.id ?? undefined
+  );
   const [animationModal, setAnimationModal] = useState<{
     visible: boolean;
     exerciseName: string;
@@ -45,6 +48,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
+
+  const resolvedSessions =
+    phase && remoteSessions.length ? remoteSessions : workoutSessions;
 
   if (!phase) {
     return (
@@ -62,34 +68,26 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     );
   }
 
-  const getSessionForDate = (dateStr: string) => {
-    const stored = workoutSessions.find(
-      (session) => session.phasePlanId === phase.id && session.date === dateStr
-    );
-    if (stored && stored.exercises.length) return stored;
-    return createSessionForDate(user, phase.id, dateStr);
-  };
-
-  const weekPlans = useMemo(() => {
-    const anchor = new Date(todayStr);
-    return Array.from({ length: 7 }).map((_, idx) => {
-      const date = new Date(anchor);
-      date.setDate(anchor.getDate() + idx);
-      const dateStr = date.toISOString().split('T')[0];
+  const sessionPlans = useMemo(() => {
+    const sessions = resolvedSessions
+      .filter((session) => session.phasePlanId === phase.id && session.exercises.length > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return sessions.map((session) => {
+      const date = new Date(session.date);
       const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
       const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      const isToday = dateStr === todayStr;
+      const label = `${weekday}, ${displayDate}`;
+      const isToday = session.date === todayStr;
       return {
-        date,
-        dateStr,
+        session,
+        dateStr: session.date,
         weekday,
         displayDate,
-        label: `${weekday}, ${displayDate}`,
+        label,
         isToday,
-        workout: getSessionForDate(dateStr),
       };
     });
-  }, [todayStr, workoutSessions, phase?.id, user]);
+  }, [todayStr, resolvedSessions, phase?.id]);
 
   const openAnimationModal = (exerciseName: string, muscleGroups: string) => {
     setAnimationModal({ visible: true, exerciseName, muscleGroups });
@@ -128,17 +126,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     });
   };
 
-  const hasLoadedTemplateRef = useRef(false);
-
-  useEffect(() => {
-    if (!phase || !onLoadTemplate || hasLoadedTemplateRef.current) return;
-    onLoadTemplate();
-    hasLoadedTemplateRef.current = true;
-  }, [phase, onLoadTemplate]);
-
-  const totalExercises = weekPlans.reduce((sum, plan) => sum + plan.workout.exercises.length, 0);
-  const completedExercises = weekPlans.reduce(
-    (sum, plan) => sum + plan.workout.exercises.filter(e => e.completed).length,
+  const totalExercises = sessionPlans.reduce(
+    (sum, plan) => sum + plan.session.exercises.length,
+    0
+  );
+  const completedExercises = sessionPlans.reduce(
+    (sum, plan) => sum + plan.session.exercises.filter(e => e.completed).length,
     0
   );
 
@@ -247,134 +240,140 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </View>
         </View>
 
-        {/* ✨ HORIZONTAL SCROLLING Full-Height Workout Cards */}
-        <ScrollView
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.horizontalScroller}
-          snapToInterval={CARD_WIDTH + 20}
-          decelerationRate="fast"
-        >
-          {weekPlans.map((plan) => {
-            const workoutDone = plan.workout.exercises.every((exercise) => exercise.completed);
-            const workoutProgress = plan.workout.exercises.length > 0
-              ? plan.workout.exercises.filter(e => e.completed).length / plan.workout.exercises.length
-              : 0;
-            const totalSets = plan.workout.exercises.reduce((sum, e) => sum + (e.sets || 4), 0);
-            
-            return (
-              <LinearGradient
-                key={`workout-${plan.dateStr}`}
-                colors={plan.isToday ? ['#2A2F5A', '#1D2245'] : ['#1A1F3D', '#141832']}
-                style={[
-                  styles.workoutCard,
-                  plan.isToday && styles.workoutCardToday,
-                ]}
-              >
-                {/* ✨ MINIMAL: Card Header (just date) */}
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardDate}>{plan.label}</Text>
-                  {plan.isToday && (
-                    <View style={styles.todayBadge}>
-                      <View style={styles.todayDot} />
-                      <Text style={styles.todayBadgeText}>TODAY</Text>
-                    </View>
-                  )}
-                  {workoutDone && !plan.isToday && (
-                    <View style={styles.doneBadge}>
-                      <Text style={styles.doneBadgeText}>✓</Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Progress Bar */}
-                {workoutProgress > 0 && (
-                  <View style={styles.progressBarContainer}>
-                    <View style={styles.progressBarTrack}>
-                      <View 
-                        style={[
-                          styles.progressBarFill,
-                          { width: `${workoutProgress * 100}%` }
-                        ]} 
-                      />
-                    </View>
-                    <Text style={styles.progressBarText}>
-                      {Math.round(workoutProgress * 100)}%
-                    </Text>
-                  </View>
-                )}
-
-                {/* ✨ DYNAMIC/FLEXIBLE: Scrollable Exercise List */}
-                <ScrollView 
-                  style={styles.cardScrollContent}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.cardScrollContentInner}
+        {sessionPlans.length === 0 ? (
+          <View style={styles.emptySchedule}>
+            <Text style={styles.emptyScheduleEmoji}>📅</Text>
+            <Text style={styles.emptyScheduleTitle}>
+              {sessionsLoading ? 'Syncing workouts' : 'No sessions yet'}
+            </Text>
+            <Text style={styles.emptyScheduleText}>
+              {sessionsLoading
+                ? 'Fetching your latest training plan...'
+                : 'Once you add workouts in your account they will show up here.'}
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.horizontalScroller}
+            snapToInterval={CARD_WIDTH + 20}
+            decelerationRate="fast"
+          >
+            {sessionPlans.map((plan) => {
+              const workout = plan.session;
+              const workoutDone = workout.exercises.every((exercise) => exercise.completed);
+              const workoutProgress = workout.exercises.length > 0
+                ? workout.exercises.filter(e => e.completed).length / workout.exercises.length
+                : 0;
+              
+              return (
+                <LinearGradient
+                  key={`workout-${plan.dateStr}`}
+                  colors={plan.isToday ? ['#2A2F5A', '#1D2245'] : ['#1A1F3D', '#141832']}
+                  style={[
+                    styles.workoutCard,
+                    plan.isToday && styles.workoutCardToday,
+                  ]}
                 >
-                  {/* Exercise Details List */}
-                  <View style={styles.exerciseDetailsList}>
-                    {plan.workout.exercises.map((exercise, idx) => (
-                      <TouchableOpacity
-                        key={`${exercise.name}-${idx}`}
-                        style={styles.exerciseDetailCard}
-                        onPress={() => {
-                          const muscleGroups = exercise.bodyParts?.join(' • ') || 'Full Body';
-                          openAnimationModal(exercise.name, muscleGroups);
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        {/* Exercise Header */}
-                        <View style={styles.exerciseDetailHeader}>
-                          <View style={styles.exerciseGifBox}>
-                            <Text style={styles.exerciseGifIcon}>🎬</Text>
-                          </View>
-                          <View style={styles.exerciseDetailHeaderText}>
-                            <Text style={[
-                              styles.exerciseDetailTitle,
-                              exercise.completed && styles.exerciseDetailTitleComplete
-                            ]}>
-                              {exercise.name}
-                            </Text>
-                            <Text style={styles.exerciseDetailMeta}>
-                              {exercise.sets} sets × {exercise.reps} reps
-                            </Text>
-                          </View>
-                          <View style={[
-                            styles.exerciseCheckbox,
-                            exercise.completed && styles.exerciseCheckboxComplete
-                          ]}>
-                            {exercise.completed && (
-                              <Text style={styles.exerciseCheckboxCheck}>✓</Text>
-                            )}
-                          </View>
-                        </View>
-                        
-                        {/* Muscle Groups */}
-                        {exercise.bodyParts && exercise.bodyParts.length > 0 && (
-                          <View style={styles.muscleTagsRow}>
-                            {exercise.bodyParts.slice(0, 3).map((part, partIdx) => (
-                              <View key={`${part}-${partIdx}`} style={styles.muscleTag}>
-                                <Text style={styles.muscleTagText}>{part}</Text>
-                              </View>
-                            ))}
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    ))}
+                  {/* ✨ MINIMAL: Card Header (just date) */}
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardDate}>{plan.label}</Text>
+                    {plan.isToday && (
+                      <View style={styles.todayBadge}>
+                        <View style={styles.todayDot} />
+                        <Text style={styles.todayBadgeText}>TODAY</Text>
+                      </View>
+                    )}
+                    {workoutDone && !plan.isToday && (
+                      <View style={styles.doneBadge}>
+                        <Text style={styles.doneBadgeText}>✓</Text>
+                      </View>
+                    )}
                   </View>
 
-                  {/* Action Button */}
-                  <TouchableOpacity
-                    style={styles.cardActionButton}
-                    onPress={() => onRegenerateWorkoutPlan?.(plan.dateStr)}
+                  {/* Progress Bar */}
+                  {workoutProgress > 0 && (
+                    <View style={styles.progressBarContainer}>
+                      <View style={styles.progressBarTrack}>
+                        <View 
+                          style={[
+                            styles.progressBarFill,
+                            { width: `${workoutProgress * 100}%` }
+                          ]} 
+                        />
+                      </View>
+                      <Text style={styles.progressBarText}>
+                        {Math.round(workoutProgress * 100)}%
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* ✨ DYNAMIC/FLEXIBLE: Scrollable Exercise List */}
+                  <ScrollView 
+                    style={styles.cardScrollContent}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.cardScrollContentInner}
                   >
-                    <Text style={styles.cardActionButtonText}>↻ Regenerate Day</Text>
-                  </TouchableOpacity>
-                </ScrollView>
-              </LinearGradient>
-            );
-          })}
-        </ScrollView>
+                    {/* Exercise Details List */}
+                    <View style={styles.exerciseDetailsList}>
+                      {workout.exercises.map((exercise, idx) => (
+                        <TouchableOpacity
+                          key={`${exercise.name}-${idx}`}
+                          style={styles.exerciseDetailCard}
+                          onPress={() => {
+                            const muscleGroups = exercise.bodyParts?.join(' • ') || 'Full Body';
+                            openAnimationModal(exercise.name, muscleGroups);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          {/* Exercise Header */}
+                          <View style={styles.exerciseDetailHeader}>
+                            <View style={styles.exerciseGifBox}>
+                              <Text style={styles.exerciseGifIcon}>🎬</Text>
+                            </View>
+                            <View style={styles.exerciseDetailHeaderText}>
+                              <Text style={[
+                                styles.exerciseDetailTitle,
+                                exercise.completed && styles.exerciseDetailTitleComplete
+                              ]}>
+                                {exercise.name}
+                              </Text>
+                              <Text style={styles.exerciseDetailMeta}>
+                                {exercise.sets} sets × {exercise.reps} reps
+                              </Text>
+                            </View>
+                            <View style={[
+                              styles.exerciseCheckbox,
+                              exercise.completed && styles.exerciseCheckboxComplete
+                            ]}>
+                              {exercise.completed && (
+                                <Text style={styles.exerciseCheckboxCheck}>✓</Text>
+                              )}
+                            </View>
+                          </View>
+                          
+                          {/* Muscle Groups */}
+                          {exercise.bodyParts && exercise.bodyParts.length > 0 && (
+                            <View style={styles.muscleTagsRow}>
+                              {exercise.bodyParts.slice(0, 3).map((part, partIdx) => (
+                                <View key={`${part}-${partIdx}`} style={styles.muscleTag}>
+                                  <Text style={styles.muscleTagText}>{part}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                  </ScrollView>
+                </LinearGradient>
+              );
+            })}
+          </ScrollView>
+        )}
       </LinearGradient>
     </View>
   );
@@ -417,6 +416,36 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#6C63FF',
+  },
+  emptySchedule: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderRadius: 16,
+    padding: 24,
+    backgroundColor: '#151932',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyScheduleEmoji: {
+    fontSize: 40,
+  },
+  emptyScheduleTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  emptyScheduleText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  sectionLabel: {
+    color: '#6C63FF',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
 
   // ✨ NEW: Split Info in Header
@@ -472,7 +501,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    backgroundColor: ACCENT_GLOW,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 12,
@@ -481,10 +510,10 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#6C63FF',
+    backgroundColor: ACCENT_COLOR,
   },
   todayBadgeText: {
-    color: '#6C63FF',
+    color: ACCENT_COLOR,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -493,12 +522,12 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#00F5A0',
+    backgroundColor: ACCENT_COLOR,
     justifyContent: 'center',
     alignItems: 'center',
   },
   doneBadgeText: {
-    color: '#0A0E27',
+    color: ACCENT_DARK,
     fontSize: 14,
     fontWeight: 'bold',
   },
@@ -621,21 +650,30 @@ const styles = StyleSheet.create({
     color: '#6C63FF',
     fontWeight: '600',
   },
-  
-  // Card Action
-  cardActionButton: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
+  emptySchedule: {
+    marginHorizontal: 20,
+    marginTop: 40,
+    padding: 24,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    marginTop: 8,
+    borderColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(20, 24, 50, 0.8)',
+    alignItems: 'center',
+    gap: 12,
   },
-  cardActionButtonText: {
+  emptyScheduleEmoji: {
+    fontSize: 42,
+  },
+  emptyScheduleTitle: {
+    fontSize: 18,
+    fontWeight: '700',
     color: '#FFFFFF',
-    fontWeight: '600',
+  },
+  emptyScheduleText: {
     fontSize: 14,
+    color: '#A0A3BD',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   
   // Animation Modal

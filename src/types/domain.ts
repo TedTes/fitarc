@@ -133,6 +133,8 @@ export type HabitLog = {
   habits: Record<HabitType, boolean>;
 };
 
+export const APP_STATE_VERSION = 2;
+
 export type AppState = {
   user: User | null;
   currentPhase: PhasePlan | null;
@@ -161,6 +163,6 @@ export const createEmptyAppState = (): AppState => ({
   mealPlans: [],
   habitLogs: [],
   nextPhotoReminder: null,
-  version: 1,
+  version: APP_STATE_VERSION,
   lastModified: new Date().toISOString(),
 });

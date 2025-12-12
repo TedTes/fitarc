@@ -1,11 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DailyMealPlan, PhasePlan, User } from '../types/domain';
-import weeklyPlanTemplate from '../data/weeklyPlanTemplate.json';
-import { createMealPlanForDate } from '../utils/dietPlanner';
-
-type TemplateEntry = typeof weeklyPlanTemplate[number];
+import { useMealPlans } from '../hooks/useMealPlans';
 
 type MenuScreenProps = {
   user: User;
@@ -28,11 +25,11 @@ const MACRO_TARGETS: Record<User['eatingMode'], MacroTargets> = {
   maintenance: { calories: '2,500', protein: '185', carbs: '250', fats: '75' },
 };
 
-const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'];
+const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 const CARD_GRADIENT = {
-  today: ['#2A2F5A', '#1D2245'],
-  default: ['#1B233F', '#101529'],
-};
+  today: ['#2A2F5A', '#1D2245'] as const,
+  default: ['#1B233F', '#101529'] as const,
+} as const;
 const ACCENT_COLOR = '#6C63FF';
 const ACCENT_GLOW = 'rgba(108, 99, 255, 0.2)';
 const ACCENT_DARK = '#0A0E27';
@@ -47,19 +44,23 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   mealPlans,
   onRegenerateMealPlan,
 }) => {
-  const templateDays = weeklyPlanTemplate as TemplateEntry[];
   const today = new Date();
   const todayKey = today.toISOString().split('T')[0];
+  const endDate = new Date(today);
+  endDate.setDate(today.getDate() + 6);
+  const endKey = endDate.toISOString().split('T')[0];
+  const { mealPlansByDate } = useMealPlans(user.id, todayKey, endKey);
 
   const getMealsForDate = (dateStr: string) => {
     if (!phase) return null;
-    const stored = mealPlans.find(
-      (plan) => plan.phasePlanId === phase.id && plan.date === dateStr
-    );
+    const remotePlan = mealPlansByDate[dateStr];
+    const stored = remotePlan
+      ? remotePlan
+      : mealPlans.find((plan) => plan.phasePlanId === phase.id && plan.date === dateStr);
     if (stored && stored.meals.length) {
       return stored.meals;
     }
-    return createMealPlanForDate(user, phase.id, dateStr).meals;
+    return null;
   };
 
   const weeklyMenus = useMemo(() => {
@@ -71,25 +72,17 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
       const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
       const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       const isToday = dateStr === todayKey;
-      const templateEntry = templateDays[idx % templateDays.length];
-      const meals =
-        getMealsForDate(dateStr) ||
-        (templateEntry?.meals.map((meal) => ({
-          title: meal.title,
-          items: meal.items,
-          completed: false,
-        })) ?? []);
+      const meals = getMealsForDate(dateStr) ?? [];
       return {
         dateStr,
         weekday,
         displayDate,
         label: `${weekday}, ${displayDate}`,
-        templateLabel: templateEntry?.label || `Day ${idx + 1}`,
         isToday,
         meals,
       };
     });
-  }, [todayKey, mealPlans, phase?.id, user, templateDays]);
+  }, [todayKey, mealPlansByDate, mealPlans, phase?.id]);
 
   const macroTargets = MACRO_TARGETS[user.eatingMode];
 

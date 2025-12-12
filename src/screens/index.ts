@@ -8,3 +8,7 @@ export { ProgressScreen } from './ProgressScreen';
 export { PhaseCompleteScreen } from './PhaseCompleteScreen';
 export { ProfileScreen } from './ProfileScreen';
 export { MenuScreen } from './MenuScreen';
+export { LoginScreen } from './LoginScreen';
+export { RegisterScreen } from './RegisterScreen';
+export { ForgotPasswordScreen } from './ForgotPasswordScreen';
+export { AuthNavigator } from './AuthNavigator';

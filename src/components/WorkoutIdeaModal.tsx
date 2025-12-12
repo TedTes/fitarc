@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BodyPart } from '../utils/trainingSplitHelper';
-import { getExercisesForBodyParts } from '../data/exercises';
+import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
+
+const MAX_SUGGESTIONS = 5;
 
 type WorkoutIdeaModalProps = {
   visible: boolean;
@@ -15,12 +17,47 @@ export const WorkoutIdeaModal: React.FC<WorkoutIdeaModalProps> = ({
   onClose,
   focusAreas,
 }) => {
-  const [exercises, setExercises] = useState<string[]>(() => 
-    getExercisesForBodyParts(focusAreas, 5)
+  const { exercises: catalog, isLoading } = useSupabaseExercises();
+  const [exercises, setExercises] = useState<string[]>([]);
+
+  const normalizedFocus = useMemo(
+    () => focusAreas.map((bp) => bp.toLowerCase()),
+    [focusAreas]
   );
 
+  const pickExercises = useCallback(() => {
+    if (!catalog.length) return [];
+    const pool = catalog.filter((entry) => {
+      const muscles = [...entry.primaryMuscles, ...entry.secondaryMuscles].map((muscle) =>
+        (muscle || '').toLowerCase()
+      );
+      return normalizedFocus.length === 0
+        ? false
+        : muscles.some((muscle) => normalizedFocus.includes(muscle));
+    });
+    const source = pool.length ? pool : catalog;
+    const names = source.map((entry) => entry.name);
+    const shuffled = [...names];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, Math.min(MAX_SUGGESTIONS, shuffled.length));
+  }, [catalog, normalizedFocus]);
+
+  useEffect(() => {
+    if (!catalog.length) {
+      setExercises([]);
+      return;
+    }
+    setExercises(pickExercises());
+  }, [catalog, pickExercises]);
+
   const handleShuffle = () => {
-    setExercises(getExercisesForBodyParts(focusAreas, 5));
+    const next = pickExercises();
+    if (next.length) {
+      setExercises(next);
+    }
   };
 
   const focusText = focusAreas.map(bp => 
@@ -52,15 +89,30 @@ export const WorkoutIdeaModal: React.FC<WorkoutIdeaModalProps> = ({
           </View>
 
           <View style={styles.exerciseList}>
+            {isLoading && (
+              <Text style={styles.helperText}>Loading fresh ideas...</Text>
+            )}
+            {!isLoading && exercises.length === 0 && (
+              <Text style={styles.helperText}>
+                No exercises available right now. Try again soon.
+              </Text>
+            )}
             {exercises.map((exercise, index) => (
-              <View key={index} style={styles.exerciseItem}>
+              <View key={`${exercise}-${index}`} style={styles.exerciseItem}>
                 <Text style={styles.exerciseBullet}>•</Text>
                 <Text style={styles.exerciseName}>{exercise}</Text>
               </View>
             ))}
           </View>
 
-          <TouchableOpacity style={styles.shuffleButton} onPress={handleShuffle}>
+          <TouchableOpacity
+            style={[
+              styles.shuffleButton,
+              (isLoading || !catalog.length) && styles.shuffleButtonDisabled,
+            ]}
+            onPress={handleShuffle}
+            disabled={isLoading || !catalog.length}
+          >
             <Text style={styles.shuffleButtonText}>🔄 Show Another Idea</Text>
           </TouchableOpacity>
 
@@ -140,6 +192,11 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 20,
   },
+  helperText: {
+    color: '#A0A3BD',
+    fontSize: 14,
+    textAlign: 'center',
+  },
   exerciseItem: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -161,6 +218,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
     marginBottom: 12,
+  },
+  shuffleButtonDisabled: {
+    opacity: 0.5,
   },
   shuffleButtonText: {
     fontSize: 15,

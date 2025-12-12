@@ -1,49 +1,52 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { PhasePlan, PhotoCheckin, ProgressEstimate, DailyConsistencyLog, WorkoutLog, StrengthSnapshot, DailyMealPlan } from '../types/domain';
+import { PhasePlan, User } from '../types/domain';
+import { useProgressData } from '../hooks/useProgressData';
 import {
   buildStrengthTrends,
   buildWeeklyVolumeSummary,
   buildMovementBalanceSummary,
-  getOverallStrengthDelta,
   StrengthTrendView,
   VolumeEntryView,
   MovementPatternView,
 } from '../utils/performanceSelectors';
 
 type ProgressScreenProps = {
+  user: User;
   phase: PhasePlan;
-  photoCheckins: PhotoCheckin[];
-  progressEstimate: ProgressEstimate | null;
-  dailyConsistency: DailyConsistencyLog[];
-  workoutLogs: WorkoutLog[];
-  strengthSnapshots: StrengthSnapshot[];
-  mealPlans: DailyMealPlan[];
   onTakePhoto: () => void;
 };
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
+  user,
   phase,
-  photoCheckins,
-  progressEstimate,
-  dailyConsistency,
-  workoutLogs,
-  strengthSnapshots,
-  mealPlans,
   onTakePhoto,
 }) => {
-  const phasePhotos = photoCheckins.filter(p => p.phasePlanId === phase.id);
-  const baselinePhoto = photoCheckins.find(p => p.phasePlanId === 'baseline');
-  const latestPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : baselinePhoto;
+  const { data, isLoading } = useProgressData(user.id, phase.id);
+  const resolvedPhase = data?.phase ?? phase;
+  const sessions = data?.sessions ?? [];
+  const mealPlans = data?.mealPlans ?? [];
+  const photos = data?.photos ?? [];
+  const workoutLogs = data?.workoutLogs ?? [];
+  const strengthSnapshots = data?.strengthSnapshots ?? [];
 
-  const progressPercent = progressEstimate?.progressPercent || 0;
-  const daysActive = progressEstimate?.daysActive || 0;
-  const daysLogged = progressEstimate?.daysLogged || 0;
+  const sessionDates = new Set(sessions.map((session) => session.date));
+  const today = new Date();
+  const phaseStart = new Date(resolvedPhase.startDate);
+  const daysActive = Math.max(
+    0,
+    Math.floor((today.getTime() - phaseStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  );
+  const daysLogged = sessionDates.size;
+  const expectedDays = Math.max(resolvedPhase.expectedWeeks * 7 || daysActive || 1, 1);
+  const progressPercent = expectedDays
+    ? Math.min(100, Math.round((daysLogged / expectedDays) * 100))
+    : 0;
+
   const strengthTrends = buildStrengthTrends(strengthSnapshots);
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs);
   const movementBalance = buildMovementBalanceSummary(workoutLogs);
-  const overallStrength = getOverallStrengthDelta(strengthTrends);
   
   const bestLiftRows = strengthTrends
     .map((trend) => ({
@@ -69,7 +72,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const nutritionWindowCutoff = new Date();
   nutritionWindowCutoff.setDate(nutritionWindowCutoff.getDate() - 6);
   const recentMealPlans = mealPlans.filter(
-    (plan) => new Date(plan.date) >= nutritionWindowCutoff && plan.phasePlanId === phase.id
+    (plan) => new Date(plan.date) >= nutritionWindowCutoff && plan.phasePlanId === resolvedPhase.id
   );
   const totalMeals = recentMealPlans.reduce((sum, plan) => sum + plan.meals.length, 0);
   const completedMeals = recentMealPlans.reduce(
@@ -77,14 +80,19 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     0
   );
   const mealCompliance = totalMeals ? Math.round((completedMeals / totalMeals) * 100) : 0;
+  const sortedPhotos = [...photos].sort(
+    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
+  const phasePhotos = sortedPhotos.filter((p) => p.phasePlanId === resolvedPhase.id);
+  const baselinePhoto = sortedPhotos[0];
+  const latestPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : baselinePhoto;
+  const showSyncNotice = isLoading && sessions.length === 0;
   
   const [activeTab, setActiveTab] = useState<'stats' | 'comparison'>('stats');
   const tabOptions: { key: 'stats' | 'comparison'; label: string }[] = [
     { key: 'stats', label: 'Stats' },
     { key: 'comparison', label: 'Photos' },
   ];
-
-  const formatSigned = (value: number) => `${value >= 0 ? '+' : ''}${value}`;
 
   // ✨ NEW: Render mini sparkline for strength trends
   const renderSparkline = (weights: number[]) => {
@@ -330,7 +338,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         <View style={styles.compactCard}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Photo Timeline</Text>
-            <Text style={styles.cardSubtitle}>{phasePhotos.length + 1} check-ins</Text>
+            <Text style={styles.cardSubtitle}>
+              {phasePhotos.length + (baselinePhoto ? 1 : 0)} check-ins
+            </Text>
           </View>
           
           <ScrollView 
@@ -384,9 +394,15 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           <View style={styles.header}>
             <Text style={styles.title}>Progress</Text>
             <Text style={styles.subtitle}>
-              Level {phase.currentLevelId} → {phase.targetLevelId}
+              Level {resolvedPhase.currentLevelId} → {resolvedPhase.targetLevelId}
             </Text>
           </View>
+
+          {showSyncNotice && (
+            <Text style={[styles.emptyText, styles.syncNotice]}>
+              Syncing latest progress data...
+            </Text>
+          )}
 
           {/* ✨ IMPROVED: Compact Tab Switcher */}
           <View style={styles.tabSwitcher}>
@@ -888,5 +904,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingVertical: 12,
     fontStyle: 'italic',
+  },
+  syncNotice: {
+    marginTop: -4,
+    marginBottom: 16,
   },
 });

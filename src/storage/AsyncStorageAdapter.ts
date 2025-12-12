@@ -10,10 +10,27 @@ import {
   MovementPattern,
   WorkoutSessionEntry,
   DailyMealPlan,
+  APP_STATE_VERSION,
 } from '../types/domain';
 import { StorageAdapter } from './StorageAdapter';
 
-const STORAGE_KEY = '@fitarc:app_state_v1';
+const STORAGE_KEY = '@fitarc:app_state_v2';
+const STORAGE_RESET_FLAG = '@fitarc:storage_reset_v2';
+const LEGACY_STORAGE_KEYS = ['@fitarc:app_state_v1'];
+
+const ensureStorageReset = async () => {
+  try {
+    const hasReset = await AsyncStorage.getItem(STORAGE_RESET_FLAG);
+    if (hasReset === 'true') {
+      return;
+    }
+
+    await AsyncStorage.multiRemove([STORAGE_KEY, ...LEGACY_STORAGE_KEYS]);
+    await AsyncStorage.setItem(STORAGE_RESET_FLAG, 'true');
+  } catch (error) {
+    console.warn('Unable to reset legacy storage keys', error);
+  }
+};
 
 const sanitizeDailyConsistencyLog = (log: any): DailyConsistencyLog => {
   return {
@@ -149,13 +166,14 @@ const sanitizeState = (state: any): AppState => {
     mealPlans: (state.mealPlans || []).map(sanitizeMealPlan),
     habitLogs: (state.habitLogs || []).map(sanitizeHabitLog),
     nextPhotoReminder: state.nextPhotoReminder || null,
-    version: Number(state.version) || 1,
+    version: Number(state.version) || APP_STATE_VERSION,
   };
 };
 
 export class AsyncStorageAdapter implements StorageAdapter {
   async getAppState(): Promise<AppState | null> {
     try {
+      await ensureStorageReset();
       const jsonString = await AsyncStorage.getItem(STORAGE_KEY);
       
       if (!jsonString) {
@@ -178,6 +196,7 @@ export class AsyncStorageAdapter implements StorageAdapter {
 
   async saveAppState(state: AppState): Promise<void> {
     try {
+      await ensureStorageReset();
       const sanitized = sanitizeState(state);
       const stateWithTimestamp: AppState = {
         ...sanitized,
@@ -194,6 +213,7 @@ export class AsyncStorageAdapter implements StorageAdapter {
 
   async clearAll(): Promise<void> {
     try {
+      await ensureStorageReset();
       await AsyncStorage.removeItem(STORAGE_KEY);
     } catch (error) {
       console.error('Error clearing AsyncStorage:', error);
