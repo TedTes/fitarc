@@ -1,7 +1,16 @@
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { PhasePlan, User } from '../types/domain';
+import { useFocusEffect } from '@react-navigation/native';
+import {
+  PhasePlan,
+  User,
+  WorkoutSessionEntry,
+  DailyMealPlan,
+  PhotoCheckin,
+  WorkoutLog,
+  StrengthSnapshot,
+} from '../types/domain';
 import { useProgressData } from '../hooks/useProgressData';
 import {
   buildStrengthTrends,
@@ -15,21 +24,89 @@ import {
 type ProgressScreenProps = {
   user: User;
   phase: PhasePlan;
+  workoutDataVersion: number;
+  workoutSessions: WorkoutSessionEntry[];
+  mealPlans: DailyMealPlan[];
+  photoCheckins: PhotoCheckin[];
+  workoutLogs: WorkoutLog[];
+  strengthSnapshots: StrengthSnapshot[];
   onTakePhoto: () => void;
 };
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   user,
   phase,
+  workoutDataVersion,
+  workoutSessions: sessionFallback,
+  mealPlans: mealPlanFallback,
+  photoCheckins: photoFallback,
+  workoutLogs: workoutLogFallback,
+  strengthSnapshots: snapshotFallback,
   onTakePhoto,
 }) => {
-  const { data, isLoading } = useProgressData(user.id, phase.id);
+  const { data, isLoading, refresh } = useProgressData(
+    user.id,
+    phase.id,
+    undefined,
+    workoutDataVersion
+  );
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh])
+  );
   const resolvedPhase = data?.phase ?? phase;
-  const sessions = data?.sessions ?? [];
-  const mealPlans = data?.mealPlans ?? [];
-  const photos = data?.photos ?? [];
-  const workoutLogs = data?.workoutLogs ?? [];
-  const strengthSnapshots = data?.strengthSnapshots ?? [];
+  const mergedSessions = useMemo(() => {
+    const map = new Map(
+      sessionFallback.map((session) => [`${session.phasePlanId}:${session.date}`, session])
+    );
+    (data?.sessions || []).forEach((session) => {
+      map.set(`${session.phasePlanId}:${session.date}`, session);
+    });
+    return Array.from(map.values());
+  }, [sessionFallback, data?.sessions]);
+
+  const mergedMeals = useMemo(() => {
+    const map = new Map(
+      mealPlanFallback.map((plan) => [`${plan.phasePlanId}:${plan.date}`, plan])
+    );
+    (data?.mealPlans || []).forEach((plan) => {
+      map.set(`${plan.phasePlanId}:${plan.date}`, plan);
+    });
+    return Array.from(map.values());
+  }, [mealPlanFallback, data?.mealPlans]);
+
+  const mergedWorkoutLogs = useMemo(() => {
+    const map = new Map(
+      workoutLogFallback.map((log) => [`${log.phasePlanId}:${log.date}`, log])
+    );
+    (data?.workoutLogs || []).forEach((log) => {
+      map.set(`${log.phasePlanId}:${log.date}`, log);
+    });
+    return Array.from(map.values());
+  }, [workoutLogFallback, data?.workoutLogs]);
+
+  const mergedSnapshots = useMemo(() => {
+    const map = new Map(snapshotFallback.map((snap) => [snap.id, snap]));
+    (data?.strengthSnapshots || []).forEach((snap) => {
+      map.set(snap.id, snap);
+    });
+    return Array.from(map.values());
+  }, [snapshotFallback, data?.strengthSnapshots]);
+
+  const mergedPhotos = useMemo(() => {
+    const map = new Map(photoFallback.map((photo) => [photo.id, photo]));
+    (data?.photos || []).forEach((photo) => {
+      map.set(photo.id, photo);
+    });
+    return Array.from(map.values());
+  }, [photoFallback, data?.photos]);
+
+  const sessions = mergedSessions;
+  const mealPlans = mergedMeals;
+  const photos = mergedPhotos;
+  const workoutLogs = mergedWorkoutLogs;
+  const strengthSnapshots = mergedSnapshots;
 
   const sessionDates = new Set(sessions.map((session) => session.date));
   const today = new Date();
@@ -94,7 +171,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     { key: 'comparison', label: 'Photos' },
   ];
 
-  // ✨ NEW: Render mini sparkline for strength trends
+  // ✨ Render mini sparkline for strength trends
   const renderSparkline = (weights: number[]) => {
     if (weights.length < 2) return '━━━';
     const hasGrowth = weights[weights.length - 1] > weights[0];
@@ -103,7 +180,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const renderStatsContent = () => (
     <>
-      {/* ✨ IMPROVED: Overview Stats Card */}
+      {/* ✨  Overview Stats Card */}
       <View style={styles.overviewCard}>
         <Text style={styles.overviewTitle}>Phase Overview</Text>
         <View style={styles.overviewGrid}>
@@ -124,7 +201,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         </View>
       </View>
 
-      {/* ✨ IMPROVED: Compact Strength Trends */}
+      {/* ✨ Compact Strength Trends */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Strength Trends</Text>
@@ -154,7 +231,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         )}
       </View>
 
-      {/* ✨ IMPROVED: Compact Volume Card */}
+      {/* ✨  Compact Volume Card */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Training Volume</Text>
@@ -187,7 +264,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         )}
       </View>
 
-      {/* ✨ IMPROVED: Movement Balance - More Visual */}
+      {/* ✨ Movement Balance - More Visual */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Movement Balance</Text>
@@ -218,7 +295,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         )}
       </View>
 
-      {/* ✨ IMPROVED: Nutrition Compliance - Visual Circle */}
+      {/* ✨  Nutrition Compliance - Visual Circle */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Nutrition</Text>
@@ -250,7 +327,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         )}
       </View>
 
-      {/* ✨ NEW: Top Lifts Compact View */}
+      {/* ✨Top Lifts Compact View */}
       {bestLiftRows.length > 0 && (
         <View style={styles.compactCard}>
           <View style={styles.cardHeader}>
@@ -281,7 +358,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const renderComparisonContent = () => (
     <>
-      {/* ✨ IMPROVED: Photo Comparison - Side by side */}
+      {/* ✨Photo Comparison - Side by side */}
       {baselinePhoto && latestPhoto ? (
         <View style={styles.compactCard}>
           <View style={styles.cardHeader}>
@@ -333,7 +410,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         </LinearGradient>
       </TouchableOpacity>
 
-      {/* ✨ IMPROVED: Photo Timeline - Horizontal Scroll */}
+      {/* ✨ Photo Timeline - Horizontal Scroll */}
       {phasePhotos.length > 0 && (
         <View style={styles.compactCard}>
           <View style={styles.cardHeader}>
@@ -390,7 +467,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         style={styles.gradient}
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* ✨ IMPROVED: Compact Header */}
+          {/* ✨  Compact Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Progress</Text>
             <Text style={styles.subtitle}>

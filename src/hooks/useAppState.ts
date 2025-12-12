@@ -8,16 +8,13 @@ import {
   ProgressEstimate,
   createEmptyAppState,
   WorkoutLog,
-  StrengthSnapshot,
   WorkoutSessionEntry,
   HabitLog,
   HabitType,
   DailyMealPlan,
-  MuscleGroup,
 } from '../types/domain';
 import { StorageAdapter } from '../storage';
-import { getTodayFocusAreas } from '../utils/trainingSplitHelper';
-import { buildWorkoutLogFromFocus, generateSeedPerformanceData } from '../utils/performanceTracker';
+import { generateSeedPerformanceData } from '../utils/performanceTracker';
 import {
   createSessionForDate,
   toggleExerciseCompletion,
@@ -36,19 +33,6 @@ const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => 
     return updated;
   }
   return [...logs, log];
-};
-
-const mergeSnapshots = (
-  snapshots: StrengthSnapshot[],
-  incoming: StrengthSnapshot[]
-): StrengthSnapshot[] => {
-  const existingMap = new Map(snapshots.map((snap) => [snap.id, snap]));
-  incoming.forEach((snapshot) => {
-    existingMap.set(snapshot.id, snapshot);
-  });
-  return Array.from(existingMap.values()).sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-  );
 };
 
 const upsertWorkoutSession = (
@@ -123,6 +107,8 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const stateRef = useRef<AppState | null>(null);
+  const nextWorkoutVersion = (base?: AppState | null) =>
+    (base?.workoutDataVersion ?? 0) + 1;
 
   useEffect(() => {
     stateRef.current = state;
@@ -137,7 +123,10 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       setIsLoading(true);
       setError(null);
       const loadedState = await storageAdapter.getAppState();
-      setState(loadedState || createEmptyAppState());
+      const normalizedState = loadedState
+        ? { ...loadedState, workoutDataVersion: loadedState.workoutDataVersion ?? 0 }
+        : createEmptyAppState();
+      setState(normalizedState);
     } catch (err) {
       setError('Failed to load app state');
       console.error('Load state error:', err);
@@ -157,6 +146,27 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       throw err;
     }
   }, [storageAdapter]);
+
+  const hydrateFromRemote = useCallback(
+    async (payload: {
+      user?: User | null;
+      phase?: PhasePlan | null;
+      workoutSessions?: WorkoutSessionEntry[];
+      mealPlans?: DailyMealPlan[];
+    }) => {
+      if (!state) return;
+      const newState: AppState = {
+        ...state,
+        user: payload.user !== undefined ? payload.user : state.user,
+        currentPhase: payload.phase !== undefined ? payload.phase : state.currentPhase,
+        workoutSessions:
+          payload.workoutSessions !== undefined ? payload.workoutSessions : state.workoutSessions,
+        mealPlans: payload.mealPlans !== undefined ? payload.mealPlans : state.mealPlans,
+      };
+      await persistState(newState);
+    },
+    [state, persistState]
+  );
 
   const updateUser = useCallback(async (user: User) => {
     if (!state) return;
@@ -202,42 +212,6 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       ...state,
       dailyConsistency: updatedLogs,
     };
-
-    if (
-      log.isConsistent &&
-      state.user &&
-      state.currentPhase
-    ) {
-      const sessionEntry = getOrCreateSessionEntry(
-        newState.workoutSessions,
-        state.user,
-        state.currentPhase.id,
-        log.date
-      );
-      newState = {
-        ...newState,
-        workoutSessions: upsertWorkoutSession(newState.workoutSessions, sessionEntry),
-      };
-
-      const focusAreas = getTodayFocusAreas(
-        state.user.trainingSplit,
-        new Date(log.date).getDay()
-      );
-      const generated = buildWorkoutLogFromFocus({
-        date: log.date,
-        phasePlanId: state.currentPhase.id,
-        focusAreas,
-        existingSnapshots: newState.strengthSnapshots,
-      });
-
-      if (generated) {
-        newState = {
-          ...newState,
-          workoutLogs: upsertWorkoutLog(newState.workoutLogs, generated.log),
-          strengthSnapshots: mergeSnapshots(newState.strengthSnapshots, generated.snapshots),
-        };
-      }
-    }
 
     await persistState(newState);
   }, [state]);
@@ -291,6 +265,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       workoutSessions: [],
       habitLogs: [],
       nextPhotoReminder: null,
+      workoutDataVersion: nextWorkoutVersion(state),
     };
     await persistState(newState);
   }, [state]);
@@ -314,6 +289,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         ...state,
         workoutSessions: updatedSessions,
         workoutLogs: updatedLogs,
+        workoutDataVersion: nextWorkoutVersion(state),
       });
     },
     [state]
@@ -346,6 +322,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       await persistState({
         ...state,
         workoutSessions: updatedSessions,
+        workoutDataVersion: nextWorkoutVersion(state),
       });
     },
     [state]
@@ -404,19 +381,6 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     [state]
   );
 
-  const regenerateMealPlan = useCallback(
-    async (date: string) => {
-      if (!state || !state.currentPhase || !state.user) return;
-      const plan = createMealPlanForDate(state.user, state.currentPhase.id, date);
-      const updatedPlans = upsertMealPlan(state.mealPlans, plan);
-      await persistState({
-        ...state,
-        mealPlans: updatedPlans,
-      });
-    },
-    [state]
-  );
-
   const loadWorkoutSessionsFromSupabase = useCallback(
     async (userId: string, phaseId?: string) => {
       const currentState = stateRef.current;
@@ -426,6 +390,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         await persistState({
           ...currentState,
           workoutSessions: remoteSessions,
+          workoutDataVersion: nextWorkoutVersion(currentState),
         });
       } catch (err) {
         console.error('Failed to load workouts from Supabase:', err);
@@ -446,26 +411,23 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     [state]
   );
 
-  useEffect(() => {
-    if (!state?.currentPhase || !state.user) return;
-    const todayStr = new Date().toISOString().split('T')[0];
-    const hasMealPlan = state.mealPlans.some(
-      (plan) => plan.date === todayStr && plan.phasePlanId === state.currentPhase!.id
-    );
-    if (hasMealPlan) {
-      return;
-    }
-
-    const ensureMealPlan = async () => {
-      const plan = createMealPlanForDate(state.user!, state.currentPhase!.id, todayStr);
+  const createWorkoutSession = useCallback(
+    async (date: string) => {
+      if (!state || !state.currentPhase || !state.user) return;
+      const existing = state.workoutSessions.find(
+        (session) =>
+          session.phasePlanId === state.currentPhase!.id && session.date === date
+      );
+      if (existing) return;
+      const sessionEntry = createSessionForDate(state.user, state.currentPhase.id, date);
       await persistState({
         ...state,
-        mealPlans: upsertMealPlan(state.mealPlans, plan),
+        workoutSessions: upsertWorkoutSession(state.workoutSessions, sessionEntry),
+        workoutDataVersion: nextWorkoutVersion(state),
       });
-    };
-
-    ensureMealPlan();
-  }, [state?.currentPhase?.id, state?.mealPlans, state?.user]);
+    },
+    [state]
+  );
 
   const clearAllData = useCallback(async () => {
     try {
@@ -497,7 +459,8 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     toggleHabit,
     schedulePhotoReminder,
     toggleMealCompletion,
-    regenerateMealPlan,
     loadWorkoutSessionsFromSupabase,
+    createWorkoutSession,
+    hydrateFromRemote,
   };
 };

@@ -6,9 +6,11 @@ const cache = new Map<string, ProgressData>();
 export const useProgressData = (
   userId?: string,
   phaseId?: string,
-  windowDays?: number
+  windowDays?: number,
+  version = 0
 ) => {
-  const cacheKey = userId && phaseId ? `${userId}:${phaseId}:${windowDays ?? ''}` : undefined;
+  const cacheKey =
+    userId && phaseId ? `${userId}:${phaseId}:${windowDays ?? ''}:${version}` : undefined;
   const [data, setData] = useState<ProgressData | null>(
     cacheKey && cache.has(cacheKey) ? cache.get(cacheKey)! : null
   );
@@ -21,7 +23,7 @@ export const useProgressData = (
       setIsLoading(true);
       setError(null);
       const result = await fetchProgressData(userId, phaseId, windowDays);
-      const key = `${userId}:${phaseId}:${windowDays ?? ''}`;
+      const key = `${userId}:${phaseId}:${windowDays ?? ''}:${version}`;
       cache.set(key, result);
       setData(result);
     } catch (err: any) {
@@ -29,7 +31,7 @@ export const useProgressData = (
     } finally {
       setIsLoading(false);
     }
-  }, [userId, phaseId, windowDays]);
+  }, [userId, phaseId, windowDays, version]);
 
   useEffect(() => {
     if (!cacheKey) return;

@@ -1,16 +1,18 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { AuthUser, getCurrentUser, onAuthStateChange } from '../services/authService';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { AuthUser, getCurrentUser, onAuthStateChange, signOut as authSignOut } from '../services/authService';
 
 type AuthContextType = {
   user: AuthUser | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
   isAuthenticated: false,
+  signOut: async () => {},
 });
 
 export const useAuth = () => {
@@ -55,10 +57,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, []);
 
+  const signOut = useCallback(async () => {
+    try {
+      await authSignOut();
+    } catch (error) {
+      console.error('Error signing out:', error);
+      throw error;
+    } finally {
+      setUser(null);
+    }
+  }, []);
+
   const value = {
     user,
     isLoading,
     isAuthenticated: !!user,
+    signOut,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

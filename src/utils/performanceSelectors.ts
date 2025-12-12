@@ -74,6 +74,9 @@ const sortDesc = (a: VolumeEntryView, b: VolumeEntryView) => b.sets - a.sets;
 
 export const buildStrengthTrends = (snapshots: StrengthSnapshot[]): StrengthTrendView[] => {
   const grouped = snapshots.reduce<Record<LiftId, StrengthSnapshot[]>>((acc, snapshot) => {
+    if (!snapshot.lift) {
+      return acc;
+    }
     acc[snapshot.lift] = [...(acc[snapshot.lift] || []), snapshot];
     return acc;
   }, {} as Record<LiftId, StrengthSnapshot[]>);

@@ -22,12 +22,23 @@ export type MovementPattern =
 export type LiftId = 'bench_press' | 'squat' | 'deadlift';
 export type HabitType = 'steps' | 'sleep' | 'hydration';
 
+export type WorkoutSetEntry = {
+  setNumber?: number | null;
+  weight?: number | null;
+  reps?: number | null;
+  rpe?: number | null;
+  restSeconds?: number | null;
+};
+
 export type WorkoutSessionExercise = {
   name: string;
   bodyParts: MuscleGroup[];
   completed: boolean;
   sets: number;
   reps: string;
+  setDetails?: WorkoutSetEntry[];
+  exerciseId?: string;
+  movementPattern?: string | null;
 };
 
 export type WorkoutSessionEntry = {
@@ -69,13 +80,14 @@ export type PhasePlan = {
   id: string;
   currentLevelId: number;
   targetLevelId: number;
-  
+  name?: string;
+  goalType?: string;
   startDate: string;
   expectedEndDate: string;
   expectedWeeks: number;
-  
   status: PhasePlanStatus;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type DailyConsistencyLog = {
@@ -108,6 +120,12 @@ export type WorkoutLog = {
   id: string;
   date: string;
   phasePlanId: string;
+  sessionId?: string;
+  isCompleted?: boolean;
+  totalSets?: number;
+  totalVolume?: number;
+  musclesHit?: MuscleGroup[];
+  movementPatternsHit?: MovementPattern[];
   muscleVolume: Record<MuscleGroup, number>;
   movementPatterns: Record<MovementPattern, number>;
   lifts: {
@@ -120,10 +138,15 @@ export type WorkoutLog = {
 export type StrengthSnapshot = {
   id: string;
   phasePlanId: string;
-  lift: LiftId;
+  exerciseId?: string;
+  exerciseName?: string;
+  lift?: LiftId;
   date: string;
   weight: number;
   reps: number;
+  totalSets?: number;
+  totalReps?: number;
+  estimated1RM?: number;
 };
 
 export type HabitLog = {
@@ -147,6 +170,7 @@ export type AppState = {
   mealPlans: DailyMealPlan[];
   habitLogs: HabitLog[];
   nextPhotoReminder: string | null;
+  workoutDataVersion: number;
   version: number;
   lastModified: string;
 };
@@ -163,6 +187,7 @@ export const createEmptyAppState = (): AppState => ({
   mealPlans: [],
   habitLogs: [],
   nextPhotoReminder: null,
+  workoutDataVersion: 0,
   version: APP_STATE_VERSION,
   lastModified: new Date().toISOString(),
 });

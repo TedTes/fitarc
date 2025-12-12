@@ -16,6 +16,8 @@ export const generatePhase = (
     id: `phase_${Date.now()}`,
     currentLevelId,
     targetLevelId,
+    name: `Arc ${startDate.getFullYear()}`,
+    goalType: 'general',
     startDate: startDate.toISOString(),
     expectedEndDate: expectedEndDate.toISOString(),
     expectedWeeks,

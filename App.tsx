@@ -22,6 +22,8 @@ import { useEffect, useState } from 'react';
 import { PhotoCheckin, User } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile } from './src/services/userProfileService';
+import { fetchHomeData } from './src/services/appDataService';
+import { ensureActivePhase, createPhase as createRemotePhase, completePhase as completeRemotePhase } from './src/services/phaseService';
 
 type RootTabParamList = {
   Home: undefined;
@@ -59,7 +61,7 @@ const TabPlaceholder: React.FC<{ title: string; subtitle: string }> = ({ title, 
 function AppContent() {
   const storage = createStorageAdapter();
   const navigationRef = useNavigationContainerRef<RootTabParamList>();
-  const { user: authUser, isLoading: isAuthLoading, isAuthenticated } = useAuth();
+  const { user: authUser, isLoading: isAuthLoading, isAuthenticated, signOut: signOutAuth } = useAuth();
   
   const {
     state,
@@ -72,7 +74,10 @@ function AppContent() {
     seedPerformanceData,
     toggleWorkoutExercise,
     toggleMealCompletion,
-    regenerateMealPlan,
+    createWorkoutSession,
+    clearAllData,
+    loadWorkoutSessionsFromSupabase,
+    hydrateFromRemote,
   } = useAppState(storage);
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
   const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
@@ -81,7 +86,7 @@ function AppContent() {
 
   const closeProfileSheet = () => {
     setProfileVisible(false);
-    if (navigationRef.getCurrentRoute()?.name === 'More') {
+    if (navigationRef.isReady() && navigationRef.getCurrentRoute()?.name === 'More') {
       navigationRef.navigate('Home');
     }
   };
@@ -125,14 +130,27 @@ function AppContent() {
 
     await handleProfileSave(user);
 
-    // Generate and start phase
-    const phase = generatePhase(user, tempCurrentLevel, targetLevelId);
-    await startPhase(phase);
-    await seedPerformanceData(phase, user);
-    
-    // Open photo capture for baseline photo
-    setOnboardingStep('complete');
-    setPhotoCaptureVisible(false);
+    try {
+      if (state?.currentPhase) {
+        await completeRemotePhase(state.currentPhase.id);
+      }
+      const generatedPhase = generatePhase(user, tempCurrentLevel, targetLevelId);
+      const remotePhase = await createRemotePhase(authUser.id, {
+        name: generatedPhase.name,
+        goalType: generatedPhase.goalType,
+        startDate: generatedPhase.startDate.split('T')[0],
+        endDate: generatedPhase.expectedEndDate.split('T')[0],
+        currentLevelId: tempCurrentLevel,
+        targetLevelId,
+      });
+
+      await startPhase(remotePhase);
+      await seedPerformanceData(remotePhase, user);
+      setOnboardingStep('complete');
+      setPhotoCaptureVisible(false);
+    } catch (error) {
+      console.error('Failed to create phase', error);
+    }
   };
 
   const handleProfileSetupComplete = (profileData: {
@@ -154,27 +172,57 @@ function AppContent() {
   }, [state?.dailyConsistency?.length]);
 
   useEffect(() => {
-    if (!authUser || state?.user) return;
+    if (!authUser || !state) return;
+    if (state.currentPhase) return;
     let cancelled = false;
 
-    const syncProfile = async () => {
+    const bootstrapUser = async () => {
       try {
         const remoteProfile = await fetchUserProfile(authUser.id);
-        if (!cancelled && remoteProfile) {
+        if (cancelled) return;
+
+        if (remoteProfile) {
           await updateUser(remoteProfile);
+          const phase = await ensureActivePhase(authUser.id, {
+            currentLevelId: remoteProfile.currentPhysiqueLevel,
+            targetLevelId: remoteProfile.currentPhysiqueLevel + 1,
+          });
+
+          await hydrateFromRemote({ phase });
+          const homeData = await fetchHomeData(authUser.id);
+          if (cancelled) return;
+
+          await hydrateFromRemote({
+            phase: homeData.phase ?? phase,
+            workoutSessions: homeData.recentSessions,
+            mealPlans: homeData.todayMealPlan ? [homeData.todayMealPlan] : undefined,
+          });
+
+          const activePhaseId = homeData.phase?.id ?? phase.id;
+          if (activePhaseId) {
+            await loadWorkoutSessionsFromSupabase(authUser.id, activePhaseId);
+          }
           setOnboardingStep('complete');
+        } else {
+          setOnboardingStep('profile');
         }
       } catch (err) {
-        console.error('Profile sync failed', err);
+        console.error('Failed to bootstrap user', err);
       }
     };
 
-    syncProfile();
+    bootstrapUser();
 
     return () => {
       cancelled = true;
     };
-  }, [authUser?.id, state?.user, updateUser]);
+  }, [
+    authUser?.id,
+    state,
+    updateUser,
+    hydrateFromRemote,
+    loadWorkoutSessionsFromSupabase,
+  ]);
 
   const handleStartPhaseFromDashboard = () => {
     if (!state?.user) {
@@ -198,6 +246,24 @@ function AppContent() {
     setPhotoCapturePhaseId(phaseId);
     setPhotoCaptureOptional(!!options?.optional);
     setPhotoCaptureVisible(true);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOutAuth();
+    } catch (error) {
+      console.error('Sign out failed', error);
+    }
+    try {
+      await clearAllData();
+    } catch (error) {
+      console.error('Failed to clear local data', error);
+    }
+    setProfileVisible(false);
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Home');
+    }
+    setOnboardingStep('profile');
   };
 
   const closePhotoCapture = () => {
@@ -357,7 +423,7 @@ function AppContent() {
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
                   onToggleMeal={toggleMealCompletion}
-                  onRegenerateMealPlan={regenerateMealPlan}
+                  onCreateSession={createWorkoutSession}
                 />
               ) : (
                 <TabPlaceholder
@@ -380,6 +446,7 @@ function AppContent() {
                   user={state.user}
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
+                  onCreateSession={createWorkoutSession}
                 />
               ) : (
                 <TabPlaceholder
@@ -402,7 +469,6 @@ function AppContent() {
                   user={state.user}
                   phase={state.currentPhase}
                   mealPlans={state.mealPlans}
-                  onRegenerateMealPlan={regenerateMealPlan}
                 />
               ) : (
                 <TabPlaceholder
@@ -424,6 +490,12 @@ function AppContent() {
                 <ProgressScreen 
                   user={state.user}
                   phase={state.currentPhase}
+                  workoutDataVersion={state.workoutDataVersion}
+                  workoutSessions={state.workoutSessions}
+                  mealPlans={state.mealPlans}
+                  photoCheckins={state.photoCheckins}
+                  workoutLogs={state.workoutLogs}
+                  strengthSnapshots={state.strengthSnapshots}
                   onTakePhoto={() =>
                     state.currentPhase && openPhotoCapture(state.currentPhase.id, { optional: true })
                   }
@@ -474,6 +546,7 @@ function AppContent() {
               user={state.user}
               onSave={handleProfileSave}
               onClose={closeProfileSheet}
+              onLogout={handleLogout}
               onChangeCurrentLevel={() => {
                 closeProfileSheet();
                 setTempProfileData({

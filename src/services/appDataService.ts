@@ -8,101 +8,79 @@ import {
   MuscleGroup,
   WorkoutLog,
   StrengthSnapshot,
-  MovementPattern,
-  LiftId,
+  WorkoutSetEntry,
 } from '../types/domain';
+import {
+  buildWorkoutAnalytics,
+  inferMovementPatternFromName,
+  mapMuscleNameToGroup,
+} from '../utils/workoutAnalytics';
+import { mapPhaseRow } from './phaseService';
 
 const WORKOUT_LOOKBACK_DAYS = 14;
 const PROGRESS_DEFAULT_WINDOW_DAYS = 90;
-
-const mapMuscle = (name?: string | null): MuscleGroup | null => {
-  if (!name) return null;
-  const normalized = name.toLowerCase();
-  if (['quads', 'hamstrings', 'glutes', 'calves', 'legs'].includes(normalized)) {
-    return 'legs';
-  }
-  if (['chest'].includes(normalized)) return 'chest';
-  if (['back', 'lats'].includes(normalized)) return 'back';
-  if (['shoulders', 'delts', 'rear delts'].includes(normalized)) return 'shoulders';
-  if (['arms', 'triceps', 'biceps', 'forearms'].includes(normalized)) return 'arms';
-  if (['core', 'abs', 'obliques', 'hip flexors'].includes(normalized)) return 'core';
-  return null;
-};
-
-const movementPatternMatchers: { pattern: MovementPattern; keywords: RegExp }[] = [
-  { pattern: 'squat', keywords: /squat|lunge|leg press/i },
-  { pattern: 'hinge', keywords: /deadlift|hip thrust|rdl|good morning/i },
-  { pattern: 'horizontal_push', keywords: /bench|push-up|press|dip/i },
-  { pattern: 'vertical_push', keywords: /overhead|military|shoulder press/i },
-  { pattern: 'horizontal_pull', keywords: /row|pullover/i },
-  { pattern: 'vertical_pull', keywords: /pull-up|pulldown|chin-up/i },
-];
-
-const liftMatchers: { lift: LiftId; keywords: RegExp }[] = [
-  { lift: 'bench_press', keywords: /bench/i },
-  { lift: 'squat', keywords: /squat/i },
-  { lift: 'deadlift', keywords: /deadlift|hip thrust/i },
-];
-
-const createZeroMuscleVolume = (): Record<MuscleGroup, number> => ({
-  chest: 0,
-  back: 0,
-  legs: 0,
-  shoulders: 0,
-  arms: 0,
-  core: 0,
-});
-
-const createZeroMovementVolume = (): Record<MovementPattern, number> => ({
-  squat: 0,
-  hinge: 0,
-  horizontal_push: 0,
-  vertical_push: 0,
-  horizontal_pull: 0,
-  vertical_pull: 0,
-});
-
-const inferMovementPattern = (name?: string | null): MovementPattern | null => {
-  if (!name) return null;
-  const matcher = movementPatternMatchers.find((entry) => entry.keywords.test(name));
-  return matcher ? matcher.pattern : null;
-};
-
-const inferLiftId = (name?: string | null): LiftId | null => {
-  if (!name) return null;
-  const matcher = liftMatchers.find((entry) => entry.keywords.test(name));
-  return matcher ? matcher.lift : null;
-};
 
 const extractBodyParts = (exerciseRow: any): MuscleGroup[] =>
   Array.from(
     new Set(
       (exerciseRow.exercise?.muscle_links || [])
-        .map((link: any) => mapMuscle(link.muscle?.name))
+        .map((link: any) => mapMuscleNameToGroup(link.muscle?.name))
         .filter((m: MuscleGroup | null | undefined): m is MuscleGroup => !!m)
     )
   );
 
-type RawExerciseSet = {
-  weight?: number | null;
-  reps?: number | null;
-};
-
-const normalizeSets = (exercise: any): RawExerciseSet[] =>
-  Array.isArray(exercise.sets) ? (exercise.sets as RawExerciseSet[]) : [];
-
-const mapSessionRow = (row: any, fallbackPhaseId?: string): WorkoutSessionEntry => {
+export const mapSessionRow = (row: any, fallbackPhaseId?: string): WorkoutSessionEntry => {
   const exercises = (row.session_exercises || [])
     .sort((a: any, b: any) => (a.display_order || 0) - (b.display_order || 0))
     .map((exercise: any) => {
       const muscles = extractBodyParts(exercise);
+      const sortedSets: WorkoutSetEntry[] = (exercise.sets || [])
+        .map((set: any): WorkoutSetEntry => ({
+          setNumber: typeof set.set_number === 'number' ? set.set_number : undefined,
+          weight:
+            typeof set.weight === 'number'
+              ? set.weight
+              : set.weight !== undefined
+              ? Number(set.weight)
+              : undefined,
+          reps:
+            typeof set.reps === 'number'
+              ? set.reps
+              : set.reps !== undefined
+              ? Number(set.reps)
+              : undefined,
+          rpe:
+            typeof set.rpe === 'number'
+              ? set.rpe
+              : set.rpe !== undefined
+              ? Number(set.rpe)
+              : undefined,
+          restSeconds:
+            typeof set.rest_seconds === 'number'
+              ? set.rest_seconds
+              : set.rest_seconds !== undefined
+              ? Number(set.rest_seconds)
+              : undefined,
+        }))
+        .sort(
+          (a: WorkoutSetEntry, b: WorkoutSetEntry) =>
+            (a.setNumber || 0) - (b.setNumber || 0)
+        );
+      const setCount = sortedSets.length;
+      const firstReps = sortedSets[0]?.reps;
+      const movementPattern =
+        exercise.exercise?.movement_pattern ||
+        inferMovementPatternFromName(exercise.exercise?.name);
 
       return {
         name: exercise.exercise?.name || 'Exercise',
         bodyParts: muscles,
-        completed: false,
-        sets: (exercise.sets || []).length || 3,
-        reps: exercise.sets?.[0]?.reps ? `${exercise.sets[0].reps}` : '8-12',
+        completed: setCount > 0,
+        sets: setCount || 3,
+        reps: firstReps ? `${firstReps}` : '8-12',
+        setDetails: sortedSets,
+        exerciseId: exercise.exercise?.id || undefined,
+        movementPattern,
       };
     });
 
@@ -126,87 +104,6 @@ const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
     phasePlanId: phasePlanId || row.phase_id || 'phase',
     meals,
   };
-};
-
-const buildWorkoutLogFromRow = (row: any): WorkoutLog => {
-  const muscleVolume = createZeroMuscleVolume();
-  const movementPatterns = createZeroMovementVolume();
-  const lifts: WorkoutLog['lifts'] = [];
-
-  (row.session_exercises || []).forEach((exercise: any) => {
-    const sets = normalizeSets(exercise);
-    const setCount = sets.length || 1;
-    const parts = extractBodyParts(exercise);
-    parts.forEach((part) => {
-      muscleVolume[part] += setCount;
-    });
-
-    const pattern = inferMovementPattern(exercise.exercise?.name);
-    if (pattern) {
-      movementPatterns[pattern] += setCount;
-    }
-
-    const lift = inferLiftId(exercise.exercise?.name);
-    if (lift) {
-      const heaviestSet = sets.reduce<RawExerciseSet | null>((best, current) => {
-        const weight = Number(current?.weight ?? 0);
-        if (!best || weight > Number(best.weight ?? 0)) {
-          return { weight, reps: Number(current?.reps ?? 0) };
-        }
-        return best;
-      }, null);
-
-      if (heaviestSet) {
-        lifts.push({
-          lift,
-          weight: Number(heaviestSet.weight ?? 0),
-          reps: Number(heaviestSet.reps ?? 0),
-        });
-      }
-    }
-  });
-
-  return {
-    id: row.id,
-    date: row.performed_at?.split('T')[0] || row.performed_at,
-    phasePlanId: row.phase_id || 'phase',
-    muscleVolume,
-    movementPatterns,
-    lifts,
-  };
-};
-
-const buildStrengthSnapshotsFromRow = (row: any): StrengthSnapshot[] => {
-  const date = row.performed_at?.split('T')[0] || row.performed_at;
-  const phasePlanId = row.phase_id || 'phase';
-  const snapshots: StrengthSnapshot[] = [];
-
-  (row.session_exercises || []).forEach((exercise: any, index: number) => {
-    const lift = inferLiftId(exercise.exercise?.name);
-    if (!lift) return;
-
-    const sets = normalizeSets(exercise);
-    const bestSet = sets.reduce<RawExerciseSet | null>((best, current) => {
-      const weight = Number(current?.weight ?? 0);
-      if (!best || weight > Number(best.weight ?? 0)) {
-        return { weight, reps: Number(current?.reps ?? 0) };
-      }
-      return best;
-    }, null);
-
-    if (bestSet) {
-      snapshots.push({
-        id: `${row.id}-${exercise.id || index}-${lift}`,
-        phasePlanId,
-        lift,
-        date,
-        weight: Number(bestSet.weight ?? 0),
-        reps: Number(bestSet.reps ?? 0),
-      });
-    }
-  });
-
-  return snapshots;
 };
 
 const buildConsistencySummary = (sessions: WorkoutSessionEntry[]) => {
@@ -254,7 +151,7 @@ export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => 
   const fromIso = fromDate.toISOString().split('T')[0];
   const todayIso = today.toISOString().split('T')[0];
 
-  const phasePromise = supabase
+  const phaseRes = await supabase
     .from('fitarc_phases')
     .select('*')
     .eq('user_id', userId)
@@ -263,7 +160,11 @@ export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => 
     .limit(1)
     .maybeSingle();
 
-  const sessionsPromise = supabase
+  if (phaseRes.error) throw phaseRes.error;
+  const phase = phaseRes.data ? mapPhaseRow(phaseRes.data) : null;
+  const phaseId = phase?.id;
+
+  const sessionsQuery = supabase
     .from('fitarc_workout_sessions')
     .select(
       `
@@ -277,7 +178,9 @@ export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => 
         display_order,
         notes,
         exercise:fitarc_exercises (
+          id,
           name,
+          movement_pattern,
           muscle_links:fitarc_exercise_muscle_groups (
             role,
             muscle:fitarc_muscle_groups ( name )
@@ -287,53 +190,41 @@ export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => 
           set_number,
           reps,
           weight,
-          rpe
+          rpe,
+          rest_seconds
         )
       )
     `
     )
     .eq('user_id', userId)
-    .gte('performed_at', fromIso)
-    .order('performed_at', { ascending: false });
+    .gte('performed_at', fromIso);
 
-  const mealPromise = supabase
-    .from('fitarc_meal_plans')
-    .select(
-      `
-      id,
-      date,
-      phase_id,
-      meals:fitarc_meals ( id, title, items, completed )
-    `
-    )
-    .eq('user_id', userId)
-    .eq('date', todayIso)
-    .maybeSingle();
+  if (phaseId) {
+    sessionsQuery.eq('phase_id', phaseId);
+  }
 
-  const photoPromise = supabase
+  const photoQuery = supabase
     .from('fitarc_photo_checkins')
     .select('*')
     .eq('user_id', userId)
     .order('date', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
 
-  const [phaseRes, sessionsRes, mealRes, photoRes] = await Promise.all([
-    phasePromise,
-    sessionsPromise,
-    mealPromise,
-    photoPromise,
+  if (phaseId) {
+    photoQuery.eq('phase_id', phaseId);
+  }
+
+  const [sessionsRes, photoRes] = await Promise.all([
+    sessionsQuery.order('performed_at', { ascending: false }),
+    photoQuery.maybeSingle(),
   ]);
 
-  if (phaseRes.error) throw phaseRes.error;
   if (sessionsRes.error) throw sessionsRes.error;
-  if (mealRes.error) throw mealRes.error;
   if (photoRes.error) throw photoRes.error;
 
-  const phase = (phaseRes.data as PhasePlan) || null;
   const recentSessions = (sessionsRes.data || []).map((row: any) => mapSessionRow(row, phase?.id));
   const todaySession = recentSessions.find((session) => session.date === todayIso) || null;
-  const todayMealPlan = mealRes.data ? mapMealPlanRow(mealRes.data, phase?.id) : null;
+  const todayMealPlan = null;
   const lastPhotoCheckin = photoRes.data as PhotoCheckin | null;
 
   return {
@@ -367,7 +258,9 @@ export const fetchPhaseWorkoutSessions = async (
         display_order,
         notes,
         exercise:fitarc_exercises (
+          id,
           name,
+          movement_pattern,
           muscle_links:fitarc_exercise_muscle_groups (
             role,
             muscle:fitarc_muscle_groups ( name )
@@ -377,7 +270,8 @@ export const fetchPhaseWorkoutSessions = async (
           set_number,
           reps,
           weight,
-          rpe
+          rpe,
+          rest_seconds
         )
       )
     `
@@ -438,7 +332,7 @@ export const fetchProgressData = async (
   fromDate.setDate(fromDate.getDate() - windowDays);
   const fromIso = fromDate.toISOString().split('T')[0];
 
-  const [phaseRes, sessionsRes, mealsRes, photosRes] = await Promise.all([
+  const [phaseRes, sessionsRes, photosRes] = await Promise.all([
     supabase
       .from('fitarc_phases')
       .select('*')
@@ -459,7 +353,9 @@ export const fetchProgressData = async (
           display_order,
           notes,
           exercise:fitarc_exercises (
+            id,
             name,
+            movement_pattern,
             muscle_links:fitarc_exercise_muscle_groups (
               role,
               muscle:fitarc_muscle_groups ( name )
@@ -469,7 +365,8 @@ export const fetchProgressData = async (
             set_number,
             reps,
             weight,
-            rpe
+            rpe,
+            rest_seconds
           )
         )
       `
@@ -478,25 +375,6 @@ export const fetchProgressData = async (
       .eq('phase_id', phaseId)
       .gte('performed_at', fromIso)
       .order('performed_at', { ascending: false }),
-    supabase
-      .from('fitarc_meal_plans')
-      .select(
-        `
-        id,
-        date,
-        phase_id,
-        meals:fitarc_meals (
-          id,
-          title,
-          items,
-          completed
-        )
-      `
-      )
-      .eq('user_id', userId)
-      .eq('phase_id', phaseId)
-      .gte('date', fromIso)
-      .order('date', { ascending: false }),
     supabase
       .from('fitarc_photo_checkins')
       .select('*')
@@ -507,17 +385,19 @@ export const fetchProgressData = async (
 
   if (phaseRes.error) throw phaseRes.error;
   if (sessionsRes.error) throw sessionsRes.error;
-  if (mealsRes.error) throw mealsRes.error;
   if (photosRes.error) throw photosRes.error;
 
   const sessionRows = sessionsRes.data || [];
 
+  const sessionEntries = sessionRows.map((row: any) => mapSessionRow(row, phaseId));
+  const analytics = buildWorkoutAnalytics(sessionEntries);
+
   return {
-    phase: (phaseRes.data as PhasePlan) || null,
-    sessions: sessionRows.map((row: any) => mapSessionRow(row, phaseId)),
-    mealPlans: (mealsRes.data || []).map((row: any) => mapMealPlanRow(row, phaseId)),
+    phase: phaseRes.data ? mapPhaseRow(phaseRes.data) : null,
+    sessions: sessionEntries,
+    mealPlans: [],
     photos: (photosRes.data as PhotoCheckin[]) || [],
-    workoutLogs: sessionRows.map((row: any) => buildWorkoutLogFromRow(row)),
-    strengthSnapshots: sessionRows.flatMap((row: any) => buildStrengthSnapshotsFromRow(row)),
+    workoutLogs: analytics.workoutLogs,
+    strengthSnapshots: analytics.strengthSnapshots,
   };
 };

@@ -10,6 +10,7 @@ import {
   MovementPattern,
   WorkoutSessionEntry,
   DailyMealPlan,
+  WorkoutSetEntry,
   APP_STATE_VERSION,
 } from '../types/domain';
 import { StorageAdapter } from './StorageAdapter';
@@ -100,6 +101,41 @@ const sanitizeWorkoutSession = (session: any): WorkoutSessionEntry => ({
           completed: !!exercise.completed,
           sets: Number(exercise.sets) || 4,
           reps: typeof exercise.reps === 'string' ? exercise.reps : '8-10',
+          setDetails: Array.isArray(exercise.setDetails)
+            ? exercise.setDetails
+                .map((set: any): WorkoutSetEntry => ({
+                  setNumber:
+                    typeof set?.setNumber === 'number'
+                      ? set.setNumber
+                      : Number(set?.setNumber) || undefined,
+                  weight:
+                    set?.weight === null || set?.weight === undefined
+                      ? undefined
+                      : Number(set.weight),
+                  reps:
+                    set?.reps === null || set?.reps === undefined
+                      ? undefined
+                      : Number(set.reps),
+                  rpe:
+                    set?.rpe === null || set?.rpe === undefined
+                      ? undefined
+                      : Number(set.rpe),
+                  restSeconds:
+                    set?.restSeconds === null || set?.restSeconds === undefined
+                      ? undefined
+                      : Number(set.restSeconds),
+                }))
+                .filter((set: WorkoutSetEntry) =>
+                  set.setNumber !== undefined ||
+                  set.weight !== undefined ||
+                  set.reps !== undefined ||
+                  set.rpe !== undefined ||
+                  set.restSeconds !== undefined
+                )
+            : undefined,
+          exerciseId: typeof exercise.exerciseId === 'string' ? exercise.exerciseId : undefined,
+          movementPattern:
+            typeof exercise.movementPattern === 'string' ? exercise.movementPattern : null,
         }))
     : [],
   completedAt: session.completedAt || undefined,
@@ -166,6 +202,7 @@ const sanitizeState = (state: any): AppState => {
     mealPlans: (state.mealPlans || []).map(sanitizeMealPlan),
     habitLogs: (state.habitLogs || []).map(sanitizeHabitLog),
     nextPhotoReminder: state.nextPhotoReminder || null,
+    workoutDataVersion: Number(state.workoutDataVersion) || 0,
     version: Number(state.version) || APP_STATE_VERSION,
   };
 };

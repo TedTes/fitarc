@@ -406,7 +406,7 @@ type DashboardScreenProps = {
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
   onToggleMeal?: (date: string, mealTitle: string) => void;
   onMarkConsistent?: (log: DailyConsistencyLog) => void;
-  onRegenerateMealPlan?: (date: string) => void;
+  onCreateSession?: (date: string) => void;
 };
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
@@ -419,7 +419,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onStartPhase,
   onToggleWorkoutExercise,
   onToggleMeal,
-  onRegenerateMealPlan,
+  onCreateSession,
 }) => {
   const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
@@ -536,7 +536,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const seedDate = new Date(currentDateStr);
     seedDate.setDate(seedDate.getDate() + 1);
     const nextDateStr = seedDate.toISOString().split('T')[0];
-    onRegenerateMealPlan?.(nextDateStr);
     setActiveDate(nextDateStr);
     setHasQueuedNextSession(true);
   };
@@ -558,9 +557,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
   };
 
-  const handleGenerateMealPlan = () => {
-    if (!resolvedPhase) return;
-    onRegenerateMealPlan?.(currentDateStr);
+  const handleCreateSession = () => {
+    onCreateSession?.(currentDateStr);
   };
 
   const markEverythingDone = () => {
@@ -806,10 +804,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             {!hasSyncedWorkout ? (
               <View style={styles.emptyWorkoutCard}>
                 <Text style={styles.emptyWorkoutEmoji}>📭</Text>
-                <Text style={styles.emptyWorkoutTitle}>No workouts loaded</Text>
+                <Text style={styles.emptyWorkoutTitle}>No workout logged</Text>
                 <Text style={styles.emptyWorkoutText}>
-                  Add or import workouts from your account to see them here.
+                  Start a session when you're ready to train.
                 </Text>
+                {onCreateSession && !isPastDate && (
+                  <TouchableOpacity style={styles.createSessionButton} onPress={handleCreateSession}>
+                    <Text style={styles.createSessionButtonText}>Start Session</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : canLogWorkouts && completedExercises.length === totalWorkoutCount && totalWorkoutCount > 0 ? (
               <View style={styles.allCompleteCard}>
@@ -942,14 +945,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <Text style={styles.emptyMealTitle}>Meals not available</Text>
                 <Text style={styles.emptyMealText}>
                   {resolvedPhase
-                    ? 'Generate or sync a plan for this day to start logging meals.'
+                    ? 'No meals logged for this day yet.'
                     : 'Start an arc to unlock nutrition tracking.'}
                 </Text>
-                {resolvedPhase && onRegenerateMealPlan && (
-                  <TouchableOpacity style={styles.generateMealButton} onPress={handleGenerateMealPlan}>
-                    <Text style={styles.generateMealButtonText}>Generate Plan</Text>
-                  </TouchableOpacity>
-                )}
               </View>
             ) : canLogMeals && completedMeals.length === totalMealCount && totalMealCount > 0 ? (
               <View style={styles.allCompleteCard}>
@@ -1335,6 +1333,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
+  createSessionButton: {
+    marginTop: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: '#6C63FF',
+  },
+  createSessionButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 15,
+  },
   emptyMealCard: {
     borderRadius: 20,
     borderWidth: 1,
@@ -1357,17 +1367,6 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
     textAlign: 'center',
     lineHeight: 20,
-  },
-  generateMealButton: {
-    marginTop: 8,
-    paddingHorizontal: 22,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#6C63FF',
-  },
-  generateMealButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
   },
   
   allCompleteCard: {

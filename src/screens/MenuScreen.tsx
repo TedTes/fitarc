@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DailyMealPlan, PhasePlan, User } from '../types/domain';
 import { useMealPlans } from '../hooks/useMealPlans';
@@ -8,7 +8,6 @@ type MenuScreenProps = {
   user: User;
   phase: PhasePlan | null;
   mealPlans: DailyMealPlan[];
-  onRegenerateMealPlan?: (date: string) => void;
 };
 
 type MacroTargets = {
@@ -42,7 +41,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   user,
   phase,
   mealPlans,
-  onRegenerateMealPlan,
 }) => {
   const today = new Date();
   const todayKey = today.toISOString().split('T')[0];
@@ -246,13 +244,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                     ))}
                   </View>
 
-                  {/* Action Button */}
-                  <TouchableOpacity
-                    style={styles.cardActionButton}
-                    onPress={() => onRegenerateMealPlan?.(plan.dateStr)}
-                  >
-                    <Text style={styles.cardActionButtonText}>↻ Regenerate Day</Text>
-                  </TouchableOpacity>
                 </ScrollView>
               </LinearGradient>
             );
@@ -531,22 +522,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   
-  // Card Action
-  cardActionButton: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    marginTop: 8,
-  },
-  cardActionButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-
   // Empty State
   emptyState: {
     flex: 1,

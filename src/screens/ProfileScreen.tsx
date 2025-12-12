@@ -9,6 +9,7 @@ type ProfileScreenProps = {
   onClose: () => void;
   onChangeCurrentLevel?: () => void;
   onChangeTargetLevel?: () => void;
+  onLogout?: () => void;
 };
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
@@ -17,6 +18,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onClose,
   onChangeCurrentLevel,
   onChangeTargetLevel,
+  onLogout,
 }) => {
   const [sex, setSex] = useState<'male' | 'female' | 'other'>(user.sex);
   const [age, setAge] = useState(user.age.toString());
@@ -450,6 +452,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </LinearGradient>
           </TouchableOpacity>
 
+          {onLogout && (
+            <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
+              <Text style={styles.logoutButtonText}>Log Out</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Spacing for bottom */}
           <View style={{ height: 40 }} />
         </ScrollView>
@@ -651,5 +659,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  logoutButton: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FF6B6B',
+    alignItems: 'center',
+  },
+  logoutButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FF6B6B',
+    letterSpacing: 0.5,
   },
 });
