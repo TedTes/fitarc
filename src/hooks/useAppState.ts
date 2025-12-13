@@ -9,6 +9,7 @@ import {
   createEmptyAppState,
   WorkoutLog,
   WorkoutSessionEntry,
+  WorkoutSessionExercise,
   HabitLog,
   HabitType,
   DailyMealPlan,
@@ -21,7 +22,11 @@ import {
   sessionToWorkoutLog,
 } from '../utils/workoutPlanner';
 import { createMealPlanForDate } from '../utils/dietPlanner';
-import { fetchWorkoutSessionEntries } from '../services/supabaseWorkoutService';
+import {
+  fetchWorkoutSessionEntries,
+  upsertWorkoutSessionWithExercises,
+  deleteWorkoutSessionRemote,
+} from '../services/supabaseWorkoutService';
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
@@ -429,6 +434,58 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     [state]
   );
 
+  const saveCustomWorkoutSession = useCallback(
+    async (date: string, exercises: WorkoutSessionExercise[]) => {
+      if (!state || !state.currentPhase || !state.user) return;
+      const normalizedExercises = exercises.map((exercise) => ({
+        ...exercise,
+        bodyParts: exercise.bodyParts,
+        sets: exercise.sets ?? 4,
+        reps: exercise.reps ?? '8-12',
+      }));
+
+      const remoteSession = await upsertWorkoutSessionWithExercises({
+        userId: state.user.id,
+        phaseId: state.currentPhase.id,
+        date,
+        exercises: normalizedExercises,
+      });
+
+      await persistState({
+        ...state,
+        workoutSessions: upsertWorkoutSession(state.workoutSessions, remoteSession),
+        workoutLogs: upsertWorkoutLog(state.workoutLogs, sessionToWorkoutLog(remoteSession)),
+        workoutDataVersion: nextWorkoutVersion(state),
+      });
+    },
+    [state]
+  );
+
+  const deleteWorkoutSession = useCallback(
+    async (date: string) => {
+      if (!state || !state.currentPhase || !state.user) return;
+      await deleteWorkoutSessionRemote({
+        userId: state.user.id,
+        phaseId: state.currentPhase.id,
+        date,
+      });
+      const filteredSessions = state.workoutSessions.filter(
+        (session) =>
+          !(session.phasePlanId === state.currentPhase!.id && session.date === date)
+      );
+      const filteredLogs = state.workoutLogs.filter(
+        (log) => !(log.phasePlanId === state.currentPhase!.id && log.date === date)
+      );
+      await persistState({
+        ...state,
+        workoutSessions: filteredSessions,
+        workoutLogs: filteredLogs,
+        workoutDataVersion: nextWorkoutVersion(state),
+      });
+    },
+    [state]
+  );
+
   const clearAllData = useCallback(async () => {
     try {
       await storageAdapter.clearAll();
@@ -461,6 +518,8 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     toggleMealCompletion,
     loadWorkoutSessionsFromSupabase,
     createWorkoutSession,
+    saveCustomWorkoutSession,
+    deleteWorkoutSession,
     hydrateFromRemote,
   };
 };

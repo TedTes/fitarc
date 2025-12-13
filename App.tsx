@@ -75,6 +75,8 @@ function AppContent() {
     toggleWorkoutExercise,
     toggleMealCompletion,
     createWorkoutSession,
+    saveCustomWorkoutSession,
+    deleteWorkoutSession,
     clearAllData,
     loadWorkoutSessionsFromSupabase,
     hydrateFromRemote,
@@ -447,6 +449,8 @@ function AppContent() {
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
                   onCreateSession={createWorkoutSession}
+                  onSaveCustomSession={saveCustomWorkoutSession}
+                  onDeleteSession={deleteWorkoutSession}
                 />
               ) : (
                 <TabPlaceholder

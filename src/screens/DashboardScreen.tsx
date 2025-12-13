@@ -208,85 +208,6 @@ const SwipeableCard: React.FC<{
   );
 };
 
-const DateNavigator: React.FC<{
-  currentDate: string;
-  onDateChange: (date: string) => void;
-  todayDate: string;
-}> = ({ currentDate, onDateChange, todayDate }) => {
-  const goToPreviousDay = () => {
-    const date = new Date(currentDate);
-    date.setDate(date.getDate() - 1);
-    const today = new Date(todayDate);
-    if (date >= today) {
-      onDateChange(date.toISOString().split('T')[0]);
-    }
-  };
-
-  const goToNextDay = () => {
-    const date = new Date(currentDate);
-    date.setDate(date.getDate() + 1);
-    onDateChange(date.toISOString().split('T')[0]);
-  };
-
-  const goToToday = () => {
-    onDateChange(todayDate);
-  };
-
-  const isToday = currentDate === todayDate;
-  const isPast = currentDate < todayDate;
-  const currentDateObj = new Date(currentDate);
-  const weekday = currentDateObj.toLocaleDateString(undefined, { weekday: 'short' });
-  const monthDay = currentDateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-
-  return (
-    <View style={styles.dateNavigator}>
-      <TouchableOpacity
-        onPress={goToPreviousDay}
-        style={styles.dateNavButton}
-        disabled={currentDate <= todayDate}
-      >
-        <Text
-          style={[
-            styles.dateNavButtonText,
-            currentDate <= todayDate && styles.dateNavButtonDisabled,
-          ]}
-        >
-          ←
-        </Text>
-      </TouchableOpacity>
-
-      <View style={styles.dateDisplay}>
-        <View style={styles.dateLabelRow}>
-          <Text style={styles.dateText}>
-            {weekday}, {monthDay}
-          </Text>
-          {isToday && (
-            <View style={styles.todayChip}>
-              <Text style={styles.todayChipText}>Today</Text>
-            </View>
-          )}
-        </View>
-        {!isToday && (
-          <View style={styles.dateStatusRow}>
-            {isPast ? (
-              <Text style={styles.pastLabel}>Past</Text>
-            ) : (
-              <Text style={styles.futureLabel}>Upcoming</Text>
-            )}
-            <TouchableOpacity onPress={goToToday} style={styles.todayJumpButton}>
-              <Text style={styles.todayJumpButtonText}>Jump to today</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-
-      <TouchableOpacity onPress={goToNextDay} style={styles.dateNavButton}>
-        <Text style={styles.dateNavButtonText}>→</Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
-
 const CelebrationBottomSheet: React.FC<{
   visible: boolean;
   onClose: () => void;
@@ -427,26 +348,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     exercises: WorkoutSessionExercise[];
     index: number;
   } | null>(null);
-  const [hasQueuedNextSession, setHasQueuedNextSession] = useState(false);
-  const [activeDate, setActiveDate] = useState(() => {
-    const now = new Date();
-    return now.toISOString().split('T')[0];
-  });
+  
   const resolvedPhase = homeData?.phase ?? phase;
   const resolvedSessions = homeData?.recentSessions ?? workoutSessions;
   const todayMealPlanFromRemote = homeData?.todayMealPlan;
   
+  // ✅ FIX: Dashboard always shows TODAY only
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
-  const currentDateStr = activeDate || todayStr;
-  const currentDateObj = new Date(currentDateStr);
-  const isToday = currentDateStr === todayStr;
-  const isPastDate = currentDateStr < todayStr;
   
   const storedSession =
     resolvedPhase &&
     resolvedSessions.find(
-      (session) => session.phasePlanId === resolvedPhase.id && session.date === currentDateStr
+      (session) => session.phasePlanId === resolvedPhase.id && session.date === todayStr
     );
   const todaySession =
     storedSession && storedSession.exercises.length ? storedSession : null;
@@ -466,16 +380,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     : isHomeLoading
     ? 'Fetching recent sessions'
     : 'Your synced workouts will appear here';
-  const weekdayLabel = currentDateObj.toLocaleDateString(undefined, { weekday: 'long' });
-  const dateLabel = currentDateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   
   const dietGuide = dietTips[user.eatingMode];
   const savedMealPlan =
     resolvedPhase &&
-    (todayMealPlanFromRemote?.date === currentDateStr
+    (todayMealPlanFromRemote?.date === todayStr
       ? todayMealPlanFromRemote
       : mealPlans.find(
-          (plan) => plan.phasePlanId === resolvedPhase.id && plan.date === currentDateStr
+          (plan) => plan.phasePlanId === resolvedPhase.id && plan.date === todayStr
         ));
   const meals = savedMealPlan?.meals ?? [];
   const hasMeals = meals.length > 0;
@@ -483,8 +395,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const progressPercent = progressEstimate?.progressPercent || 0;
   const weeksIntoPhase = Math.max(1, Math.floor((progressEstimate?.daysActive || 0) / 7) + 1);
   
-  const canLogWorkouts = !!phase && !!onToggleWorkoutExercise && isToday;
-  const canLogMeals = !!phase && !!onToggleMeal && isToday;
+  const canLogWorkouts = !!phase && !!onToggleWorkoutExercise;
+  const canLogMeals = !!phase && !!onToggleMeal;
 
   const enhancedExercises = displayExercises.map((exercise) => {
     const sets = exercise.sets || 4;
@@ -501,10 +413,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const pendingExercises = enhancedExercises.filter(e => !e.completed);
   const completedMeals = meals.filter(m => m.completed);
   const pendingMeals = meals.filter(m => !m.completed);
-  const visibleWorkoutCards =
-    isToday && canLogWorkouts ? pendingExercises : enhancedExercises;
-  const visibleMealCards =
-    isToday && canLogMeals ? pendingMeals : meals;
+  
+  // ✅ FIX: Only show pending items on dashboard for quick action
+  const visibleWorkoutCards = canLogWorkouts ? pendingExercises : enhancedExercises;
+  const visibleMealCards = canLogMeals ? pendingMeals : meals;
   
   const totalWorkoutCount = enhancedExercises.length;
   const completedWorkoutCount = completedExercises.length;
@@ -518,7 +430,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const hasPendingLogs = pendingExercises.length > 0 || pendingMeals.length > 0;
   const showCompletionSummary = (canLogWorkouts || canLogMeals) && !hasPendingLogs && (totalWorkoutCount || totalMealCount);
   
-  const completionDateLabel = currentDateObj.toLocaleDateString(undefined, {
+  const completionDateLabel = today.toLocaleDateString(undefined, {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
@@ -527,44 +439,34 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   useEffect(() => {
     if (showCompletionSummary && !celebrationVisible) {
       setCelebrationVisible(true);
-      setHasQueuedNextSession(false);
     }
   }, [showCompletionSummary]);
 
-  const queueNextSessionPlans = () => {
-    if (hasQueuedNextSession) return;
-    const seedDate = new Date(currentDateStr);
-    seedDate.setDate(seedDate.getDate() + 1);
-    const nextDateStr = seedDate.toISOString().split('T')[0];
-    setActiveDate(nextDateStr);
-    setHasQueuedNextSession(true);
-  };
-
+  // ✅ FIX: Removed auto-advance to next day
   const closeCelebration = () => {
-    queueNextSessionPlans();
     setCelebrationVisible(false);
   };
 
   const handleSwipeExercise = (exerciseName: string) => {
     if (canLogWorkouts && onToggleWorkoutExercise) {
-      onToggleWorkoutExercise(currentDateStr, exerciseName);
+      onToggleWorkoutExercise(todayStr, exerciseName);
     }
   };
 
   const handleSwipeMeal = (mealTitle: string) => {
     if (canLogMeals && onToggleMeal) {
-      onToggleMeal(currentDateStr, mealTitle);
+      onToggleMeal(todayStr, mealTitle);
     }
   };
 
   const handleCreateSession = () => {
-    onCreateSession?.(currentDateStr);
+    onCreateSession?.(todayStr);
   };
 
   const markEverythingDone = () => {
-    if (!hasPendingLogs || !isToday) return;
-    pendingExercises.forEach((ex) => onToggleWorkoutExercise?.(currentDateStr, ex.name));
-    pendingMeals.forEach((meal) => onToggleMeal?.(currentDateStr, meal.title));
+    if (!hasPendingLogs) return;
+    pendingExercises.forEach((ex) => onToggleWorkoutExercise?.(todayStr, ex.name));
+    pendingMeals.forEach((meal) => onToggleMeal?.(todayStr, meal.title));
   };
 
   const openExercisePreview = (
@@ -690,50 +592,64 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.dashboardHeader}>
             <View style={styles.headerLeft}>
               <Text style={styles.smallLabel}>
-                {phase ? 'Current Arc' : 'Preview your arc'}
+                {phase ? 'Current Arc' : 'Start Training'}
               </Text>
               <Text style={styles.dashboardTitle}>
                 {phase
                   ? `Level ${phase.currentLevelId} → ${phase.targetLevelId}`
-                  : 'Your program is ready'}
+                  : 'Welcome to FitArc'}
               </Text>
               <Text style={styles.dashboardSubtitle}>
                 {phase
                   ? `Week ${weeksIntoPhase} · ${progressPercent}% complete`
-                  : 'Start your profile to unlock tracking'}
+                  : 'Create your first session to begin'}
               </Text>
             </View>
             
-            {phase && isToday && (
+            {phase && (
               <View style={styles.headerRight}>
                 <ProgressRing progress={overallProgress} size={70} strokeWidth={6} />
               </View>
             )}
             
-            {phase && !isToday && onProfilePress && (
+            {phase && onProfilePress && (
               <TouchableOpacity style={styles.profileButton} onPress={onProfilePress}>
                 <Text style={styles.profileButtonText}>⚙️</Text>
               </TouchableOpacity>
             )}
           </View>
 
+          {/* ✅ FIX: Improved empty state for users without phase */}
           {!phase && onStartPhase && (
-            <TouchableOpacity style={styles.primaryButton} onPress={onStartPhase}>
-              <LinearGradient colors={['#6C63FF', '#5449CC']} style={styles.primaryButtonGradient}>
-                <Text style={styles.primaryButtonText}>Start your arc</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+            <View style={styles.emptyStateContainer}>
+              <Text style={styles.emptyStateEmoji}>🏋️</Text>
+              <Text style={styles.emptyStateTitle}>Ready to Start Training?</Text>
+              <Text style={styles.emptyStateSubtitle}>
+                Create your first session to begin tracking your fitness journey
+              </Text>
+              <TouchableOpacity style={styles.primaryButton} onPress={onStartPhase}>
+                <LinearGradient colors={['#6C63FF', '#5449CC']} style={styles.primaryButtonGradient}>
+                  <Text style={styles.primaryButtonText}>+ New Session</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
           )}
 
+          {/* ✅ FIX: Replaced DateNavigator with simple Today banner */}
           {phase && (
-            <DateNavigator
-              currentDate={currentDateStr}
-              onDateChange={setActiveDate}
-              todayDate={todayStr}
-            />
+            <View style={styles.todayBanner}>
+              <Text style={styles.todayBannerLabel}>TODAY</Text>
+              <Text style={styles.todayBannerDate}>
+                {today.toLocaleDateString(undefined, { 
+                  weekday: 'long', 
+                  month: 'short', 
+                  day: 'numeric' 
+                })}
+              </Text>
+            </View>
           )}
 
-          {isToday && (canLogWorkouts || canLogMeals) && (
+          {(canLogWorkouts || canLogMeals) && (
             <TouchableOpacity
               style={[styles.bulkButton, !hasPendingLogs && styles.bulkButtonDisabled]}
               onPress={markEverythingDone}
@@ -760,35 +676,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </TouchableOpacity>
           )}
 
-          {isPastDate && (
-            <View style={styles.pastSummaryCard}>
-              <Text style={styles.pastSummaryTitle}>📊 {completionDateLabel}</Text>
-              <View style={styles.pastSummaryStats}>
-                <Text style={styles.pastSummaryStat}>
-                  ✓ {completedWorkoutCount}/{totalWorkoutCount} Workouts
-                </Text>
-                <Text style={styles.pastSummaryStat}>
-                  ✓ {completedMealCount}/{totalMealCount} Meals
-                </Text>
-              </View>
-            </View>
-          )}
-
-          {!isToday && !isPastDate && (
-            <View style={styles.futureNotice}>
-              <Text style={styles.futureNoticeText}>
-                👀 Previewing upcoming session - logging unlocks on {weekdayLabel}
-              </Text>
-            </View>
-          )}
-
-          {/* ✨ FIXED: Workout Section - Proper spacing */}
+          {/* ✨ Workout Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionHeaderLeft}>
-                <Text style={styles.sectionEyebrow}>
-                  {isToday ? 'Today' : isPastDate ? 'Past' : 'Upcoming'} · {weekdayLabel}, {dateLabel}
-                </Text>
+                <Text style={styles.sectionEyebrow}>Today's Workouts</Text>
                 <Text style={styles.sectionTitle}>{workoutSummary}</Text>
                 <Text style={styles.sectionSubtitle}>{focusDescription}</Text>
               </View>
@@ -804,11 +696,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             {!hasSyncedWorkout ? (
               <View style={styles.emptyWorkoutCard}>
                 <Text style={styles.emptyWorkoutEmoji}>📭</Text>
-                <Text style={styles.emptyWorkoutTitle}>No workout logged</Text>
+                <Text style={styles.emptyWorkoutTitle}>No workout scheduled</Text>
                 <Text style={styles.emptyWorkoutText}>
                   Start a session when you're ready to train.
                 </Text>
-                {onCreateSession && !isPastDate && (
+                {onCreateSession && (
                   <TouchableOpacity style={styles.createSessionButton} onPress={handleCreateSession}>
                     <Text style={styles.createSessionButtonText}>Start Session</Text>
                   </TouchableOpacity>
@@ -836,7 +728,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   
                   return (
                     <SwipeableCard
-                      key={`${currentDateStr}-${exercise.name}-${index}`}
+                      key={`${todayStr}-${exercise.name}-${index}`}
                       enabled={canLogWorkouts && !isCompleted}
                       onSwipeRight={() => handleSwipeExercise(exercise.name)}
                       style={styles.exerciseCardWrapper}
@@ -894,11 +786,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                             ? '✓ Completed'
                             : canLogWorkouts
                             ? '→ Swipe right to complete'
-                            : isPastDate
-                            ? 'Past session'
-                            : isToday
-                            ? 'Tap to mark complete'
-                            : 'Preview · unlocks on ' + weekdayLabel}
+                            : 'Tap to mark complete'}
                         </Text>
                         
                         {canLogWorkouts && !isCompleted && (
@@ -918,16 +806,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             )}
           </View>
 
-          {/* ✨ FIXED: Meals Section - No checkbox, proper spacing */}
+          {/* ✨ Meals Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionHeaderLeft}>
-                <Text style={styles.sectionEyebrow}>Nutrition · {dietGuide.label}</Text>
+                <Text style={styles.sectionEyebrow}>Today's Nutrition · {dietGuide.label}</Text>
                 <Text style={styles.sectionTitle}>
-                  {hasMeals ? 'Meals for your goal' : 'No meals synced yet'}
+                  {hasMeals ? 'Meals for your goal' : 'No meals scheduled'}
                 </Text>
                 <Text style={styles.sectionSubtitle}>
-                  {hasMeals ? dietGuide.description : 'Generate a plan to see meals for this day.'}
+                  {hasMeals ? dietGuide.description : 'Add meals to track nutrition.'}
                 </Text>
               </View>
               {totalMealCount > 0 && (
@@ -942,11 +830,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             {!hasMeals ? (
               <View style={styles.emptyMealCard}>
                 <Text style={styles.emptyMealEmoji}>🍽️</Text>
-                <Text style={styles.emptyMealTitle}>Meals not available</Text>
+                <Text style={styles.emptyMealTitle}>No meals scheduled</Text>
                 <Text style={styles.emptyMealText}>
-                  {resolvedPhase
-                    ? 'No meals logged for this day yet.'
-                    : 'Start an arc to unlock nutrition tracking.'}
+                  Add meals in the Menu tab to start tracking nutrition.
                 </Text>
               </View>
             ) : canLogMeals && completedMeals.length === totalMealCount && totalMealCount > 0 ? (
@@ -970,7 +856,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   
                   return (
                     <SwipeableCard
-                      key={`${currentDateStr}-${meal.title}-${index}`}
+                      key={`${todayStr}-${meal.title}-${index}`}
                       enabled={canLogMeals && !isCompleted}
                       onSwipeRight={() => handleSwipeMeal(meal.title)}
                       style={styles.mealCardWrapper}
@@ -983,7 +869,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         }
                         style={[styles.mealCard, isCompleted && styles.mealCardCompleted]}
                       >
-                        {/* ✨ FIXED: No checkbox - just emoji and badge */}
                         <View style={styles.mealHeaderRow}>
                           <Text style={styles.mealEmoji}>{getMealEmoji(meal.title)}</Text>
                           {isCompleted && (
@@ -1005,11 +890,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                             ? '✓ Logged'
                             : canLogMeals
                             ? '→ Swipe right to log'
-                            : isPastDate
-                            ? 'Past meal'
-                            : isToday
-                            ? 'Tap to log'
-                            : 'Preview · unlocks on ' + weekdayLabel}
+                            : 'Tap to log'}
                         </Text>
                         
                         {canLogMeals && !isCompleted && (
@@ -1087,9 +968,38 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#FFFFFF',
   },
+  
+  // ✅ NEW: Empty state styles
+  emptyStateContainer: {
+    backgroundColor: 'rgba(108, 99, 255, 0.05)',
+    borderRadius: 20,
+    padding: 32,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.2)',
+    alignItems: 'center',
+    gap: 12,
+  },
+  emptyStateEmoji: {
+    fontSize: 64,
+    marginBottom: 8,
+  },
+  emptyStateTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  emptyStateSubtitle: {
+    fontSize: 15,
+    color: '#A0A3BD',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 8,
+  },
   primaryButton: {
     borderRadius: 12,
     overflow: 'hidden',
+    width: '100%',
   },
   primaryButtonGradient: {
     paddingVertical: 16,
@@ -1101,100 +1011,29 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   
-  dateNavigator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  // ✅ NEW: Today banner (replaces DateNavigator)
+  todayBanner: {
     backgroundColor: '#151932',
     borderRadius: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1,
     borderColor: '#2A2F4F',
-    gap: 12,
-  },
-  dateNavButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1E2340',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  dateNavButtonText: {
-    fontSize: 18,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  dateNavButtonDisabled: {
-    opacity: 0.3,
-  },
-  dateDisplay: {
-    flex: 1,
-    gap: 6,
-  },
-  dateLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dateText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  todayChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: 'rgba(0, 245, 160, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 245, 160, 0.4)',
-  },
-  todayChipText: {
-    fontSize: 12,
-    color: '#00F5A0',
-    fontWeight: '600',
-  },
-  dateStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  futureLabel: {
+  todayBannerLabel: {
     fontSize: 11,
-    color: '#6C63FF',
-    fontWeight: '600',
+    fontWeight: '700',
+    color: '#00F5A0',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    borderRadius: 6,
+    letterSpacing: 1,
   },
-  pastLabel: {
-    fontSize: 11,
-    color: '#A0A3BD',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    backgroundColor: 'rgba(160, 163, 189, 0.15)',
-    borderRadius: 6,
-  },
-  todayJumpButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-  },
-  todayJumpButtonText: {
-    fontSize: 11,
+  todayBannerDate: {
+    fontSize: 14,
     color: '#FFFFFF',
     fontWeight: '600',
-    letterSpacing: 0.3,
   },
   
   bulkButton: {
@@ -1233,39 +1072,6 @@ const styles = StyleSheet.create({
   bulkButtonMeta: {
     fontSize: 12,
     color: '#A0A3BD',
-  },
-  
-  pastSummaryCard: {
-    backgroundColor: 'rgba(160, 163, 189, 0.1)',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  pastSummaryTitle: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  pastSummaryStats: {
-    gap: 6,
-  },
-  pastSummaryStat: {
-    fontSize: 13,
-    color: '#A0A3BD',
-  },
-  futureNotice: {
-    backgroundColor: 'rgba(108, 99, 255, 0.1)',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.3)',
-  },
-  futureNoticeText: {
-    fontSize: 13,
-    color: '#6C63FF',
-    textAlign: 'center',
   },
   
   section: {
@@ -1392,7 +1198,6 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // ✨ FIXED: Workout cards with proper gap
   horizontalScroller: {
     paddingVertical: 4,
     paddingRight: 20,
@@ -1504,7 +1309,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   
-  // ✨ FIXED: Meal cards with proper gap and NO checkbox
   mealCarousel: {
     paddingVertical: 4,
     paddingRight: 20,
