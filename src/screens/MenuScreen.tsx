@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, Dimensions } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DailyMealPlan, PhasePlan, User } from '../types/domain';
 import { useMealPlans } from '../hooks/useMealPlans';
@@ -24,44 +24,66 @@ const MACRO_TARGETS: Record<User['eatingMode'], MacroTargets> = {
   maintenance: { calories: '2,500', protein: '185', carbs: '250', fats: '75' },
 };
 
-const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
-const CARD_GRADIENT = {
-  today: ['#2A2F5A', '#1D2245'] as const,
-  default: ['#1B233F', '#101529'] as const,
-} as const;
-const ACCENT_COLOR = '#6C63FF';
-const ACCENT_GLOW = 'rgba(108, 99, 255, 0.2)';
-const ACCENT_DARK = '#0A0E27';
+const SCREEN_GRADIENT = ['#0A0A0A', '#0E1014', '#14161C'] as const;
+const COLORS = {
+  bgPrimary: '#0A0A0A',
+  card: '#1A1C21',
+  elevated: '#1F2229',
+  surface: '#15171D',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#A3A7B7',
+  textTertiary: '#6B6F7B',
+  accent: '#6C63FF',
+  accentDim: 'rgba(108,99,255,0.15)',
+  accentGlow: 'rgba(108,99,255,0.2)',
+  success: '#00F5A0',
+  border: 'rgba(255,255,255,0.06)',
+  borderStrong: 'rgba(255,255,255,0.12)',
+};
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const SCREEN_HEIGHT = Dimensions.get('window').height;
-const CARD_WIDTH = SCREEN_WIDTH - 40;
+type WeeklyMenu = {
+  dateStr: string;
+  weekday: string;
+  displayDate: string;
+  isToday: boolean;
+  meals: DailyMealPlan['meals'];
+};
 
-export const MenuScreen: React.FC<MenuScreenProps> = ({
-  user,
-  phase,
-  mealPlans,
-}) => {
+const formatDayLabel = (dateStr: string) => {
+  const date = new Date(dateStr);
+  return {
+    weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
+    day: date.getDate(),
+  };
+};
+
+const getMealEmoji = (title: string): string => {
+  const normalized = title.toLowerCase();
+  if (normalized.includes('breakfast')) return '🌅';
+  if (normalized.includes('lunch')) return '🌞';
+  if (normalized.includes('dinner')) return '🌙';
+  if (normalized.includes('snack')) return '🥑';
+  return '🍽️';
+};
+
+export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }) => {
   const today = new Date();
   const todayKey = today.toISOString().split('T')[0];
   const endDate = new Date(today);
   endDate.setDate(today.getDate() + 6);
   const endKey = endDate.toISOString().split('T')[0];
+
   const { mealPlansByDate } = useMealPlans(user.id, todayKey, endKey);
+  const [selectedDate, setSelectedDate] = useState(todayKey);
 
   const getMealsForDate = (dateStr: string) => {
-    if (!phase) return null;
+    if (!phase) return [];
     const remotePlan = mealPlansByDate[dateStr];
-    const stored = remotePlan
-      ? remotePlan
-      : mealPlans.find((plan) => plan.phasePlanId === phase.id && plan.date === dateStr);
-    if (stored && stored.meals.length) {
-      return stored.meals;
-    }
-    return null;
+    const stored = remotePlan ?? mealPlans.find((plan) => plan.phasePlanId === phase.id && plan.date === dateStr);
+    return stored?.meals ?? [];
   };
 
-  const weeklyMenus = useMemo(() => {
+  const weeklyMenus: WeeklyMenu[] = useMemo(() => {
     const anchor = new Date(todayKey);
     return Array.from({ length: 7 }).map((_, idx) => {
       const date = new Date(anchor);
@@ -69,27 +91,37 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
       const dateStr = date.toISOString().split('T')[0];
       const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
       const displayDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      const isToday = dateStr === todayKey;
-      const meals = getMealsForDate(dateStr) ?? [];
       return {
         dateStr,
         weekday,
         displayDate,
-        label: `${weekday}, ${displayDate}`,
-        isToday,
-        meals,
+        isToday: dateStr === todayKey,
+        meals: getMealsForDate(dateStr),
       };
     });
   }, [todayKey, mealPlansByDate, mealPlans, phase?.id]);
 
+  useEffect(() => {
+    if (!weeklyMenus.find((plan) => plan.dateStr === selectedDate)) {
+      setSelectedDate(weeklyMenus[0]?.dateStr ?? todayKey);
+    }
+  }, [weeklyMenus, selectedDate, todayKey]);
+
+  const selectedPlan = weeklyMenus.find((plan) => plan.dateStr === selectedDate) ?? weeklyMenus[0];
   const macroTargets = MACRO_TARGETS[user.eatingMode];
 
-  // Calculate total meals and completed meals in week
   const totalMeals = weeklyMenus.reduce((sum, plan) => sum + plan.meals.length, 0);
   const completedMeals = weeklyMenus.reduce(
-    (sum, plan) => sum + plan.meals.filter(m => m.completed).length,
+    (sum, plan) => sum + plan.meals.filter((meal) => meal.completed).length,
     0
   );
+
+  const selectedProgress = useMemo(() => {
+    if (!selectedPlan) return { completed: 0, total: 0, ratio: 0 };
+    const total = selectedPlan.meals.length;
+    const completed = selectedPlan.meals.filter((meal) => meal.completed).length;
+    return { completed, total, ratio: total ? completed / total : 0 };
+  }, [selectedPlan]);
 
   if (!phase) {
     return (
@@ -98,452 +130,462 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>🍽️</Text>
             <Text style={styles.emptyTitle}>No Active Meal Plan</Text>
-            <Text style={styles.emptySubtitle}>
-              Complete onboarding to generate your personalized nutrition plan
-            </Text>
+            <Text style={styles.emptySubtitle}>Complete onboarding to generate your personalized nutrition plan.</Text>
           </View>
         </LinearGradient>
       </View>
     );
   }
 
+  const renderMeals = () => {
+    if (!selectedPlan || selectedPlan.meals.length === 0) {
+      return (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyCardIcon}>🥗</Text>
+          <Text style={styles.emptyCardTitle}>No meals logged</Text>
+          <Text style={styles.emptyCardSubtitle}>Use the Plans tab to set up your nutrition for this day.</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.mealsCard}>
+        <View style={styles.progressRow}>
+          <View style={styles.progressInfo}>
+            <Text style={styles.progressLabel}>Today's meals</Text>
+            <Text style={styles.progressValue}>
+              {selectedProgress.completed}/{selectedProgress.total} completed
+            </Text>
+          </View>
+          <View style={styles.progressChip}>
+            <Text style={styles.progressChipText}>{Math.round(selectedProgress.ratio * 100)}%</Text>
+          </View>
+        </View>
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${selectedProgress.ratio * 100}%` }]} />
+        </View>
+
+        <View style={styles.mealList}>
+          {selectedPlan.meals.map((meal, idx) => (
+            <View key={`${meal.title}-${idx}`} style={styles.mealRow}>
+              <View style={styles.mealIconBox}>
+                <Text style={styles.mealIcon}>{getMealEmoji(meal.title)}</Text>
+              </View>
+              <View style={styles.mealInfo}>
+                <Text style={styles.mealTitle}>{meal.title}</Text>
+                <Text style={styles.mealMeta}>{meal.items.length} items</Text>
+                <View style={styles.mealItems}>
+                  {meal.items.map((item, itemIdx) => (
+                    <Text key={`${item}-${itemIdx}`} style={styles.mealItemText}>
+                      • {item}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+              <View style={[styles.mealStatus, meal.completed && styles.mealStatusDone]}>
+                <Text style={[styles.mealStatusText, meal.completed && styles.mealStatusTextDone]}>
+                  {meal.completed ? 'Done' : 'Pending'}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-        {/* ✨ MINIMAL: Compact Header with Macros */}
-        <View style={styles.pageHeader}>
-          <View style={styles.headerRow}>
-            <View style={styles.headerLeft}>
-              <Text style={styles.pageTitle}>Menu</Text>
-            </View>
-            <View style={styles.headerRight}>
-              <Text style={styles.weekStatsValue}>{completedMeals}/{totalMeals}</Text>
-            </View>
-          </View>
-          
-          {/* ✨ MACROS IN HEADER */}
-          <View style={styles.macrosHeader}>
-            <View style={styles.macroHeaderItem}>
-              <Text style={styles.macroHeaderValue}>{macroTargets.calories}</Text>
-              <Text style={styles.macroHeaderLabel}>kcal</Text>
-            </View>
-            <View style={styles.macroHeaderDivider} />
-            <View style={styles.macroHeaderItem}>
-              <Text style={styles.macroHeaderValue}>{macroTargets.protein}g</Text>
-              <Text style={styles.macroHeaderLabel}>Protein</Text>
-            </View>
-            <View style={styles.macroHeaderDivider} />
-            <View style={styles.macroHeaderItem}>
-              <Text style={styles.macroHeaderValue}>{macroTargets.carbs}g</Text>
-              <Text style={styles.macroHeaderLabel}>Carbs</Text>
-            </View>
-            <View style={styles.macroHeaderDivider} />
-            <View style={styles.macroHeaderItem}>
-              <Text style={styles.macroHeaderValue}>{macroTargets.fats}g</Text>
-              <Text style={styles.macroHeaderLabel}>Fats</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* ✨ HORIZONTAL SCROLLING Meal Cards */}
         <ScrollView
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.horizontalScroller}
-          snapToInterval={CARD_WIDTH + 20}
-          decelerationRate="fast"
+          stickyHeaderIndices={[0]}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
         >
-          {weeklyMenus.map((plan) => {
-            const mealsDone = plan.meals.every((meal) => meal.completed);
-            const mealProgress = plan.meals.length > 0
-              ? plan.meals.filter(m => m.completed).length / plan.meals.length
-              : 0;
-            
-            return (
-              <LinearGradient
-                key={`menu-${plan.dateStr}`}
-                colors={plan.isToday ? CARD_GRADIENT.today : CARD_GRADIENT.default}
-                style={[
-                  styles.mealCard,
-                  plan.isToday && styles.mealCardToday,
-                ]}
-              >
-                {/* ✨ MINIMAL: Card Header (date + badge only) */}
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardDate}>{plan.label}</Text>
-                  {plan.isToday && (
-                    <View style={styles.todayBadge}>
-                      <View style={styles.todayDot} />
-                      <Text style={styles.todayBadgeText}>TODAY</Text>
-                    </View>
-                  )}
-                  {mealsDone && !plan.isToday && (
-                    <View style={styles.doneBadge}>
-                      <Text style={styles.doneBadgeText}>✓</Text>
-                    </View>
-                  )}
-                </View>
+          <View style={styles.stickyHeader}>
+            <View style={styles.headerTop}>
+              <Text style={styles.headerTitle}>Menu</Text>
+              <View style={styles.weekChip}>
+                <Text style={styles.weekChipText}>
+                  {completedMeals}/{totalMeals} meals this week
+                </Text>
+              </View>
+            </View>
+            <View style={styles.macroCard}>
+              <View style={styles.macroItem}>
+                <Text style={styles.macroValue}>{macroTargets.calories}</Text>
+                <Text style={styles.macroLabel}>Calories</Text>
+              </View>
+              <View style={styles.macroDivider} />
+              <View style={styles.macroItem}>
+                <Text style={styles.macroValue}>{macroTargets.protein}g</Text>
+                <Text style={styles.macroLabel}>Protein</Text>
+              </View>
+              <View style={styles.macroDivider} />
+              <View style={styles.macroItem}>
+                <Text style={styles.macroValue}>{macroTargets.carbs}g</Text>
+                <Text style={styles.macroLabel}>Carbs</Text>
+              </View>
+              <View style={styles.macroDivider} />
+              <View style={styles.macroItem}>
+                <Text style={styles.macroValue}>{macroTargets.fats}g</Text>
+                <Text style={styles.macroLabel}>Fats</Text>
+              </View>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.weekStrip}>
+              {weeklyMenus.map((plan) => {
+                const { weekday, day } = formatDayLabel(plan.dateStr);
+                const isActive = plan.dateStr === selectedDate;
+                const hasMeals = plan.meals.length > 0;
+                return (
+                  <TouchableOpacity
+                    key={plan.dateStr}
+                    style={[styles.dayChip, isActive && styles.dayChipActive]}
+                    onPress={() => setSelectedDate(plan.dateStr)}
+                  >
+                    <Text style={[styles.dayChipLabel, isActive && styles.dayChipLabelActive]}>{weekday}</Text>
+                    <Text style={[styles.dayChipNumber, isActive && styles.dayChipNumberActive]}>{day}</Text>
+                    <View style={[styles.dayStatusDot, hasMeals && styles.dayStatusDotVisible]} />
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
 
-                {/* Progress Bar */}
-                {mealProgress > 0 && (
-                  <View style={styles.progressBarContainer}>
-                    <View style={styles.progressBarTrack}>
-                      <View 
-                        style={[
-                          styles.progressBarFill,
-                          { width: `${mealProgress * 100}%` }
-                        ]} 
-                      />
-                    </View>
-                    <Text style={styles.progressBarText}>
-                      {Math.round(mealProgress * 100)}%
-                    </Text>
-                  </View>
-                )}
-
-                {/* ✨ DYNAMIC/FLEXIBLE: Scrollable Meal List */}
-                <ScrollView 
-                  style={styles.cardScrollContent}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.cardScrollContentInner}
-                >
-                  {/* Meal Details List */}
-                  <View style={styles.mealDetailsList}>
-                    {plan.meals.map((meal, idx) => (
-                      <View key={`${meal.title}-${idx}`} style={styles.mealDetailCard}>
-                        {/* Meal Header */}
-                        <View style={styles.mealDetailHeader}>
-                          <View style={styles.mealIconBox}>
-                            <Text style={styles.mealIcon}>{getMealEmoji(meal.title)}</Text>
-                          </View>
-                          <View style={styles.mealDetailHeaderText}>
-                            <Text style={styles.mealDetailTitle}>{meal.title}</Text>
-                            <Text style={styles.mealDetailMeta}>{meal.items.length} items</Text>
-                          </View>
-                          <View style={[
-                            styles.mealCheckbox,
-                            meal.completed && styles.mealCheckboxComplete
-                          ]}>
-                            {meal.completed && (
-                              <Text style={styles.mealCheckboxCheck}>✓</Text>
-                            )}
-                          </View>
-                        </View>
-                        
-                        {/* Meal Items */}
-                        <View style={styles.mealItemsList}>
-                          {meal.items.map((item, itemIdx) => (
-                            <View key={`${item}-${itemIdx}`} style={styles.mealItemRow}>
-                              <View style={styles.mealItemBullet} />
-                              <Text style={styles.mealItemText}>{item}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-
-                </ScrollView>
-              </LinearGradient>
-            );
-          })}
+          <View style={styles.content}>
+            <View style={styles.dayHeader}>
+              <View>
+                <Text style={styles.dayTitle}>
+                  {selectedPlan
+                    ? `${selectedPlan.weekday}, ${selectedPlan.displayDate}`
+                    : 'No date selected'}
+                </Text>
+                <Text style={styles.daySubtitle}>
+                  {selectedPlan?.meals.length ? `${selectedPlan.meals.length} planned meals` : 'No meals logged'}
+                </Text>
+              </View>
+              {selectedPlan?.isToday && <View style={styles.todayBadge}><Text style={styles.todayBadgeText}>Today</Text></View>}
+            </View>
+            {renderMeals()}
+          </View>
         </ScrollView>
       </LinearGradient>
     </View>
   );
 };
 
-const MEAL_EMOJIS: Record<string, string> = {
-  breakfast: '🌅',
-  lunch: '🌞',
-  dinner: '🌙',
-  snack: '🥑',
-};
-
-const getMealEmoji = (title: string): string => {
-  const key = title.toLowerCase();
-  return MEAL_EMOJIS[key] || '🍽️';
-};
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0E27',
+    backgroundColor: COLORS.bgPrimary,
   },
   gradient: {
     flex: 1,
   },
-  
-  // ✨ COMPACT: Minimal Header with Macros
-  pageHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 12,
-    gap: 12,
+  scrollContent: {
+    paddingBottom: 80,
   },
-  headerRow: {
+  stickyHeader: {
+    paddingTop: 60,
+    paddingBottom: 16,
+    paddingHorizontal: 24,
+    backgroundColor: COLORS.bgPrimary,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 16,
   },
-  headerLeft: {
-    flex: 1,
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    letterSpacing: -1,
   },
-  pageTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: -0.5,
+  weekChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: COLORS.elevated,
+    borderRadius: 20,
   },
-  headerRight: {
-    alignItems: 'flex-end',
+  weekChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
   },
-  weekStatsValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: ACCENT_COLOR,
-  },
-
-  // ✨ NEW: Macros in Header
-  macrosHeader: {
+  macroCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#151932',
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
     borderWidth: 1,
-    borderColor: '#2A2F4F',
+    borderColor: COLORS.border,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    marginBottom: 16,
   },
-  macroHeaderItem: {
+  macroItem: {
     flex: 1,
     alignItems: 'center',
   },
-  macroHeaderValue: {
-    fontSize: 16,
+  macroValue: {
+    fontSize: 18,
     fontWeight: '700',
-    color: ACCENT_COLOR,
-    marginBottom: 2,
+    color: COLORS.accent,
   },
-  macroHeaderLabel: {
-    fontSize: 10,
-    color: '#A0A3BD',
+  macroLabel: {
+    fontSize: 11,
+    color: COLORS.textTertiary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    marginTop: 2,
   },
-  macroHeaderDivider: {
+  macroDivider: {
     width: 1,
-    height: 30,
-    backgroundColor: '#2A2F4F',
+    height: 36,
+    backgroundColor: COLORS.border,
   },
-
-  // Horizontal Scroller
-  horizontalScroller: {
-    paddingHorizontal: 20,
-    gap: 20,
-    paddingBottom: 20,
-  },
-  
-  // ✨ IMPROVED: Full-Height Meal Cards
-  mealCard: {
-    width: CARD_WIDTH,
-    height: SCREEN_HEIGHT - 170, // ✨ MAXIMUM HEIGHT
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    gap: 12,
-  },
-  mealCardToday: {
-    borderColor: ACCENT_GLOW,
-    borderWidth: 2,
-  },
-  
-  // ✨ MINIMAL: Card Header (just date)
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardDate: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  todayBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: ACCENT_GLOW,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  todayDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: ACCENT_COLOR,
-  },
-  todayBadgeText: {
-    color: ACCENT_COLOR,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  doneBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: ACCENT_COLOR,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  doneBadgeText: {
-    color: ACCENT_DARK,
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  
-  // Progress Bar
-  progressBarContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  progressBarTrack: {
-    flex: 1,
-    height: 6,
-    backgroundColor: '#1E2340',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: ACCENT_COLOR,
-    borderRadius: 3,
-  },
-  progressBarText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: ACCENT_COLOR,
-    minWidth: 36,
-    textAlign: 'right',
-  },
-
-  // ✨ DYNAMIC: Flexible Scrollable Content
-  cardScrollContent: {
-    flex: 1, // ✨ Takes all remaining space
-  },
-  cardScrollContentInner: {
-    paddingBottom: 20,
-    gap: 12, // ✨ Flexible gap between meals
-  },
-  
-  // Meal Details List
-  mealDetailsList: {
-    gap: 12, // ✨ Dynamic spacing
-  },
-  mealDetailCard: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    padding: 14,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
-  mealDetailHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  mealIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#1E2340',
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mealIcon: {
-    fontSize: 20,
-  },
-  mealDetailHeaderText: {
-    flex: 1,
-  },
-  mealDetailTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  mealDetailMeta: {
-    fontSize: 12,
-    color: '#A0A3BD',
-  },
-  mealCheckbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#1E2340',
-    borderWidth: 2,
-    borderColor: '#2A2F4F',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mealCheckboxComplete: {
-    backgroundColor: ACCENT_COLOR,
-    borderColor: ACCENT_COLOR,
-  },
-  mealCheckboxCheck: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: ACCENT_DARK,
-  },
-  mealItemsList: {
-    gap: 6,
-  },
-  mealItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  weekStrip: {
+    paddingVertical: 12,
     gap: 8,
   },
-  mealItemBullet: {
+  dayChip: {
+    minWidth: 52,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+  },
+  dayChipActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  dayChipLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+  },
+  dayChipLabelActive: {
+    color: COLORS.textPrimary,
+  },
+  dayChipNumber: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  dayChipNumberActive: {
+    color: COLORS.textPrimary,
+  },
+  dayStatusDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: ACCENT_COLOR,
+    backgroundColor: COLORS.success,
+    marginTop: 4,
+    opacity: 0,
   },
-  mealItemText: {
-    color: '#E3E6FF',
+  dayStatusDotVisible: {
+    opacity: 1,
+  },
+  content: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+  },
+  dayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  dayTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  daySubtitle: {
     fontSize: 13,
-    flex: 1,
+    color: COLORS.textSecondary,
+    marginTop: 4,
   },
-  
-  // Empty State
-  emptyState: {
-    flex: 1,
+  todayBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: COLORS.accentDim,
+  },
+  todayBadgeText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  mealsCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 24,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  progressInfo: {
+    gap: 4,
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  progressValue: {
+    fontSize: 14,
+    color: COLORS.textPrimary,
+    fontWeight: '600',
+  },
+  progressChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  progressChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.accent,
+  },
+  progressTrack: {
+    marginTop: 12,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.surface,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: COLORS.accent,
+    borderRadius: 4,
+  },
+  mealList: {
+    marginTop: 16,
+    gap: 12,
+  },
+  mealRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    backgroundColor: COLORS.elevated,
+  },
+  mealIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  mealIcon: {
+    fontSize: 22,
+  },
+  mealInfo: {
+    flex: 1,
+    gap: 6,
+  },
+  mealTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  mealMeta: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+  },
+  mealItems: {
+    gap: 4,
+  },
+  mealItemText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  mealStatus: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignSelf: 'flex-start',
+  },
+  mealStatusDone: {
+    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.accent,
+  },
+  mealStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+  },
+  mealStatusTextDone: {
+    color: COLORS.accent,
+  },
+  emptyCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 32,
+    alignItems: 'center',
+    gap: 12,
+  },
+  emptyCardIcon: {
+    fontSize: 48,
+    color: COLORS.textPrimary,
+    opacity: 0.3,
+  },
+  emptyCardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  emptyCardSubtitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: 32,
     gap: 16,
   },
   emptyIcon: {
-    fontSize: 64,
+    fontSize: 56,
   },
   emptyTitle: {
-    color: '#FFFFFF',
     fontSize: 22,
     fontWeight: '700',
-    textAlign: 'center',
+    color: COLORS.textPrimary,
   },
   emptySubtitle: {
-    color: '#A0A3BD',
-    textAlign: 'center',
-    lineHeight: 22,
     fontSize: 15,
+    lineHeight: 22,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
   },
 });
 

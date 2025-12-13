@@ -24,17 +24,22 @@ type PlansScreenProps = {
   onDeleteSession?: (date: string) => void;
 };
 
-const SCREEN_GRADIENT = ['#080808', '#0F0F0F', '#151515'] as const;
-const ACCENT = '#6366F1';
-const ACCENT_BORDER = 'rgba(99, 102, 241, 0.25)';
-const ACCENT_DIM = 'rgba(99, 102, 241, 0.1)';
-const SUCCESS = '#10B981';
-const CARD_BG = '#1B1B1B';
-const SURFACE_BG = '#141414';
-const BORDER = '#262626';
-const TEXT_PRIMARY = '#FFFFFF';
-const TEXT_SECONDARY = '#A3A3A3';
-const TEXT_TERTIARY = '#737373';
+const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
+const COLORS = {
+  bgPrimary: '#0A0E27',
+  card: '#101427',
+  elevated: '#151A2E',
+  surface: '#0C1021',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#A0A3BD',
+  textTertiary: '#7B80A0',
+  accent: '#6C63FF',
+  accentDim: 'rgba(108,99,255,0.15)',
+  accentGlow: 'rgba(108,99,255,0.3)',
+  border: '#1E2340',
+  borderStrong: '#2A2F4F',
+  success: '#00F5A0',
+};
 const MAX_LIBRARY_ITEMS = 30;
 
 type WorkoutTemplate = {
@@ -95,15 +100,7 @@ const TEMPLATE_SEQUENCE: Record<User['trainingSplit'], WorkoutTemplate['id'][]> 
   custom: ['upper_push', 'upper_pull', 'lower_strength'],
 };
 
-const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = [
-  'All',
-  'chest',
-  'back',
-  'shoulders',
-  'arms',
-  'legs',
-  'core',
-];
+const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = ['All', 'chest', 'back', 'shoulders', 'arms', 'legs', 'core'];
 
 const formatDateLabel = (dateStr: string) => {
   const date = new Date(dateStr);
@@ -111,6 +108,24 @@ const formatDateLabel = (dateStr: string) => {
     weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
     day: date.getDate(),
   };
+};
+
+const capitalizeLabel = (value?: string) =>
+  value
+    ? value
+        .split(/_|\s/)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ')
+    : undefined;
+
+const getPhaseWeek = (phase: PhasePlan) => {
+  const start = new Date(phase.startDate);
+  const today = new Date();
+  const diffMs = Math.max(0, today.getTime() - start.getTime());
+  const diffWeeks = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 7));
+  const week = diffWeeks + 1;
+  return Math.max(1, Math.min(phase.expectedWeeks || week, week));
 };
 
 const createSessionExercises = (entries: WorkoutSessionExercise[]): WorkoutSessionExercise[] =>
@@ -146,21 +161,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [exerciseSearch, setExerciseSearch] = useState('');
   const [muscleFilter, setMuscleFilter] = useState<(typeof MUSCLE_FILTERS)[number]>('All');
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
+  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const seededDatesRef = useRef<Set<string>>(new Set());
-
-  if (!phase) {
-    return (
-      <View style={styles.container}>
-        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>🏋️‍♂️</Text>
-            <Text style={styles.emptyTitle}>No Active Phase</Text>
-            <Text style={styles.emptySubtitle}>Complete onboarding to unlock your workouts.</Text>
-          </View>
-        </LinearGradient>
-      </View>
-    );
-  }
 
   const resolvedSessions = remoteSessions.length ? remoteSessions : workoutSessions;
 
@@ -184,6 +186,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   );
 
   const weekPlans = useMemo(() => {
+    if (!phase) return [];
     const today = new Date();
     const anchor = new Date(today.toISOString().split('T')[0]);
     return Array.from({ length: 7 }).map((_, idx) => {
@@ -191,17 +194,16 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       date.setDate(anchor.getDate() + idx);
       const dateStr = date.toISOString().split('T')[0];
       const session =
-        resolvedSessions.find(
-          (entry) => entry.phasePlanId === phase.id && entry.date === dateStr
-        ) || null;
+        resolvedSessions.find((entry) => entry.phasePlanId === phase.id && entry.date === dateStr) || null;
       return {
         dateStr,
         session,
       };
     });
-  }, [resolvedSessions, phase.id]);
+  }, [resolvedSessions, phase?.id]);
 
   const weekPlansWithTemplates = useMemo(() => {
+    if (!phase) return [];
     const sequence = TEMPLATE_SEQUENCE[user.trainingSplit] || TEMPLATE_SEQUENCE.custom;
     return weekPlans.map((plan, idx) => {
       const templateId = sequence[idx % sequence.length];
@@ -218,10 +220,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         templateExercises,
       };
     });
-  }, [weekPlans, exerciseCatalog, convertCatalogExercise, user.trainingSplit]);
+  }, [weekPlans, exerciseCatalog, convertCatalogExercise, user.trainingSplit, phase]);
 
   const selectedPlan =
     weekPlansWithTemplates.find((plan) => plan.dateStr === selectedDate) || weekPlansWithTemplates[0];
+
   const [editingExercises, setEditingExercises] = useState<WorkoutSessionExercise[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const lastSyncedKeyRef = useRef<string | null>(null);
@@ -273,6 +276,51 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     };
     seedMissingSessions();
   }, [weekPlansWithTemplates, onSaveCustomSession]);
+
+  useEffect(() => {
+    if (!editingExercises.length) {
+      setOverflowMenuOpen(false);
+    }
+  }, [editingExercises.length]);
+
+  if (!phase) {
+    return (
+      <View style={styles.container}>
+        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyIcon}>🏋️‍♂️</Text>
+            <Text style={styles.emptyTitle}>No Active Phase</Text>
+            <Text style={styles.emptySubtitle}>Complete onboarding to unlock your workouts.</Text>
+          </View>
+        </LinearGradient>
+      </View>
+    );
+  }
+
+  const phaseChipText = useMemo(() => {
+    const goal = capitalizeLabel(phase.goalType) ?? phase.name ?? 'Active Arc';
+    const week = getPhaseWeek(phase);
+    return `${goal} · Week ${week}`;
+  }, [phase]);
+
+  const selectedDayInfo = useMemo(() => {
+    if (!selectedPlan) return null;
+    const date = new Date(selectedPlan.dateStr);
+    const fullDate = date.toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'short',
+      day: 'numeric',
+    });
+    const meta = editingExercises.length
+      ? `${editingExercises.length} exercise${editingExercises.length > 1 ? 's' : ''}`
+      : selectedPlan.template?.title ?? 'Rest day';
+    return { fullDate, meta };
+  }, [selectedPlan, editingExercises.length]);
+
+  const handleSelectDate = (dateStr: string) => {
+    setSelectedDate(dateStr);
+    setOverflowMenuOpen(false);
+  };
 
   const handleAddExercise = (entry: ExerciseCatalogEntry) => {
     if (!selectedPlan) return;
@@ -332,14 +380,15 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
     await persistSession(selectedPlan.dateStr, editingExercises);
     setIsDirty(false);
+    setOverflowMenuOpen(false);
   };
 
-  const handleClearSession = async () => {
+  const handleClearSession = useCallback(async () => {
     if (!selectedPlan) return;
     await onDeleteSession?.(selectedPlan.dateStr);
     setEditingExercises([]);
     setIsDirty(false);
-  };
+  }, [onDeleteSession, selectedPlan]);
 
   const filteredCatalog = useMemo(() => {
     const term = exerciseSearch.trim().toLowerCase();
@@ -351,7 +400,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
             .filter((part): part is MuscleGroup => !!part);
           if (!parts.includes(muscleFilter)) return false;
         }
-    return true;
+        return true;
       })
       .filter((entry) => {
         if (!term) return true;
@@ -367,53 +416,46 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const renderSession = () => {
     if (!selectedPlan) {
       return (
-        <View style={styles.emptySession}>
+        <View style={styles.emptyCard}>
           <Text style={styles.emptyIcon}>⚙️</Text>
-          <Text style={styles.emptyStateText}>No data for this date.</Text>
+          <Text style={styles.emptyTitle}>No data for this date.</Text>
+          <Text style={styles.emptySubtitle}>Pick a day from the strip above.</Text>
         </View>
       );
     }
 
     if (!editingExercises.length) {
       return (
-        <View style={styles.emptySession}>
+        <View style={styles.emptyCard}>
           <Text style={styles.emptyIcon}>💪</Text>
-          <Text style={styles.emptyStateText}>No workout scheduled.</Text>
-          {selectedPlan.templateExercises.length ? (
-            <TouchableOpacity style={styles.primaryButton} onPress={handleAddFromTemplate}>
-              <Text style={styles.primaryButtonText}>Load suggested workout</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setExerciseModalVisible(true)}>
-              <Text style={styles.secondaryButtonText}>Start from blank</Text>
-            </TouchableOpacity>
-          )}
+          <Text style={styles.emptyTitle}>No workout planned</Text>
+          <Text style={styles.emptySubtitle}>Load the suggested session or start from scratch.</Text>
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() =>
+              selectedPlan.templateExercises.length ? handleAddFromTemplate() : setExerciseModalVisible(true)
+            }
+          >
+            <Text style={styles.primaryButtonText}>
+              {selectedPlan.templateExercises.length ? 'Load suggested workout' : 'Create workout'}
+            </Text>
+          </TouchableOpacity>
         </View>
       );
     }
 
     return (
-      <View style={styles.sessionCard}>
-        <Text style={styles.sessionDate}>
-          {new Date(selectedPlan.dateStr).toLocaleDateString(undefined, {
-            weekday: 'long',
-            month: 'short',
-            day: 'numeric',
-          })}
-        </Text>
+      <View style={styles.workoutCard}>
         <View style={styles.exerciseList}>
           {editingExercises.map((exercise, idx) => (
-            <View key={`${exercise.name}-${idx}`} style={styles.exerciseRow}>
+            <View key={`${exercise.name}-${idx}`} style={styles.exerciseCard}>
               <View style={styles.exerciseInfo}>
-                <Text style={styles.exerciseTitle}>{exercise.name}</Text>
-                <View style={styles.exerciseMeta}>
-                  <Text style={styles.exerciseLabel}>
-                    {exercise.bodyParts.join(' • ') || 'Full body'}
-                  </Text>
-                  <Text style={styles.exerciseLabel}>•</Text>
-                  <Text style={styles.exerciseLabel}>
-                    {exercise.sets} sets × {exercise.reps}
-                  </Text>
+                <View style={styles.exerciseHeader}>
+                  <Text style={styles.exerciseName}>{exercise.name}</Text>
+                </View>
+                <View style={styles.exerciseTags}>
+                  <Text style={styles.exerciseTag}>{exercise.bodyParts.join(' • ') || 'Full body'}</Text>
+                  <Text style={styles.exerciseTag}>{`${exercise.sets} sets × ${exercise.reps}`}</Text>
                 </View>
                 <View style={styles.exerciseInputs}>
                   <View style={styles.inputGroup}>
@@ -435,11 +477,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                   </View>
                 </View>
               </View>
-              <View style={styles.exerciseActions}>
-                <TouchableOpacity style={styles.actionButton} onPress={() => handleRemoveExercise(idx)}>
-                  <Text style={styles.actionButtonText}>×</Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity style={[styles.iconButton, styles.iconButtonDanger]} onPress={() => handleRemoveExercise(idx)}>
+                <Text style={styles.iconButtonText}>×</Text>
+              </TouchableOpacity>
             </View>
           ))}
         </View>
@@ -447,28 +487,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           <Text style={styles.addExerciseText}>+ Add exercise</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.primaryButton, (!isDirty || !editingExercises.length) && styles.primaryButtonDisabled]}
+          style={[styles.saveButton, (!isDirty || !editingExercises.length) && styles.saveButtonDisabled]}
           disabled={!editingExercises.length || !isDirty}
           onPress={handleSaveEditedExercises}
         >
-          <Text style={styles.primaryButtonText}>
-            {isDirty ? 'Save session' : 'Saved'}
-          </Text>
+          <Text style={styles.saveButtonText}>{isDirty ? 'Save session' : 'Saved'}</Text>
         </TouchableOpacity>
-        <View style={styles.sessionActions}>
-          <TouchableOpacity
-            style={styles.sessionActionButton}
-            onPress={() => setDuplicateModalVisible(true)}
-          >
-            <Text style={styles.sessionActionText}>Duplicate</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.sessionActionButton, styles.sessionActionDanger]}
-            onPress={handleClearSession}
-          >
-            <Text style={[styles.sessionActionText, styles.sessionActionDangerText]}>Delete</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     );
   };
@@ -476,80 +500,133 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   return (
     <View style={styles.container}>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-        <ScrollView contentContainerStyle={styles.scrollContent} stickyHeaderIndices={[0]}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Workouts</Text>
-            <Text style={styles.subtitle}>
-              {phase.name || 'Current arc'} · Week {phase.expectedWeeks}
-            </Text>
+        {overflowMenuOpen && (
+          <Pressable style={styles.menuBackdrop} onPress={() => setOverflowMenuOpen(false)} />
+        )}
+        <ScrollView
+          stickyHeaderIndices={[0]}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.stickyHeader}>
+            <View style={styles.headerTop}>
+              <Text style={styles.headerTitle}>Workouts</Text>
+              <View style={styles.phaseChip}>
+                <Text style={styles.phaseChipText}>{phaseChipText}</Text>
+              </View>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.weekStrip}
+            >
+              {weekPlansWithTemplates.map((plan) => {
+                const { weekday, day } = formatDateLabel(plan.dateStr);
+                const isActive = plan.dateStr === selectedDate;
+                const hasWorkout = (plan.session && plan.session.exercises.length > 0) || plan.templateExercises.length > 0;
+                return (
+                  <TouchableOpacity
+                    key={plan.dateStr}
+                    style={[styles.dayChip, isActive && styles.dayChipActive]}
+                    onPress={() => handleSelectDate(plan.dateStr)}
+                  >
+                    <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>{weekday}</Text>
+                    <Text style={[styles.dayNumber, isActive && styles.dayNumberActive]}>{day}</Text>
+                    <View style={[styles.dayDot, hasWorkout && styles.dayDotVisible]} />
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.daySelector}
-          >
-            {weekPlansWithTemplates.map((plan) => {
-              const { weekday, day } = formatDateLabel(plan.dateStr);
-              const isActive = plan.dateStr === selectedDate;
-              return (
-                <TouchableOpacity
-                  key={plan.dateStr}
-                  style={[styles.dayButton, isActive && styles.dayButtonActive]}
-                  onPress={() => setSelectedDate(plan.dateStr)}
-                >
-                  <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>{weekday}</Text>
-                  <Text style={[styles.dayNumber, isActive && styles.dayNumberActive]}>{day}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-          <View style={styles.content}>{renderSession()}</View>
+
+          <View style={styles.content}>
+            <View style={styles.dayHeader}>
+              <View style={styles.dayInfo}>
+                <Text style={styles.dayTitle}>{selectedDayInfo?.fullDate ?? '—'}</Text>
+                <Text style={styles.dayMeta}>{selectedDayInfo?.meta ?? 'No workout logged'}</Text>
+              </View>
+              {editingExercises.length > 0 && (
+                <View style={styles.overflowWrapper}>
+                  <TouchableOpacity
+                    style={styles.overflowButton}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      setOverflowMenuOpen((prev) => !prev);
+                    }}
+                  >
+                    <Text style={styles.overflowButtonText}>⋯</Text>
+                  </TouchableOpacity>
+                  {overflowMenuOpen && (
+                    <View style={styles.overflowMenu}>
+                      <TouchableOpacity
+                        style={styles.overflowItem}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          setDuplicateTarget(null);
+                          setDuplicateModalVisible(true);
+                          setOverflowMenuOpen(false);
+                        }}
+                      >
+                        <Text style={styles.overflowItemText}>Duplicate workout</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.overflowItem, styles.overflowItemDanger]}
+                        onPress={async (event) => {
+                          event.stopPropagation();
+                          setOverflowMenuOpen(false);
+                          await handleClearSession();
+                        }}
+                      >
+                        <Text style={[styles.overflowItemText, styles.overflowItemDangerText]}>Delete workout</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+            {renderSession()}
+          </View>
         </ScrollView>
       </LinearGradient>
 
-      <Modal transparent animationType="fade" visible={exerciseModalVisible}>
-        <View style={styles.modalBackdrop}>
-          <Pressable style={styles.modalBackLayer} onPress={() => setExerciseModalVisible(false)} />
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Exercise</Text>
-              <TouchableOpacity onPress={() => setExerciseModalVisible(false)}>
-                <Text style={styles.closeText}>×</Text>
+      <Modal transparent animationType="fade" visible={exerciseModalVisible} onRequestClose={() => setExerciseModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdropPress} onPress={() => setExerciseModalVisible(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Add Exercise</Text>
+              <TouchableOpacity style={styles.closeButton} onPress={() => setExerciseModalVisible(false)}>
+                <Text style={styles.closeButtonText}>×</Text>
               </TouchableOpacity>
             </View>
             <TextInput
               style={styles.searchInput}
-              placeholder="Search movements"
-              placeholderTextColor={TEXT_TERTIARY}
+              placeholder="Search exercises..."
+              placeholderTextColor={COLORS.textTertiary}
               value={exerciseSearch}
               onChangeText={setExerciseSearch}
             />
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.muscleFilterRow}
-            >
-              {MUSCLE_FILTERS.map((filter) => (
-                <TouchableOpacity
-                  key={filter}
-                  style={[
-                    styles.filterChip,
-                    muscleFilter === filter && styles.filterChipActive,
-                  ]}
-                  onPress={() => setMuscleFilter(filter)}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      muscleFilter === filter && styles.filterChipTextActive,
-                    ]}
+            <View style={styles.filterContainer}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterRow}
+              >
+                {MUSCLE_FILTERS.map((filter) => (
+                  <TouchableOpacity
+                    key={filter}
+                    style={[styles.filterChip, muscleFilter === filter && styles.filterChipActive]}
+                    onPress={() => setMuscleFilter(filter)}
                   >
-                    {filter === 'All' ? 'All muscles' : filter.charAt(0).toUpperCase() + filter.slice(1)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <ScrollView style={styles.catalogList}>
+                    <Text style={[styles.filterText, muscleFilter === filter && styles.filterTextActive]}>
+                      {filter === 'All' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+            <ScrollView style={styles.catalogList} showsVerticalScrollIndicator={false}>
               {catalogLoading ? (
                 <Text style={styles.catalogEmpty}>Loading exercises…</Text>
               ) : filteredCatalog.length === 0 ? (
@@ -561,13 +638,15 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                     style={styles.catalogItem}
                     onPress={() => handleAddExercise(entry)}
                   >
-                    <View>
+                    <View style={styles.catalogInfo}>
                       <Text style={styles.catalogName}>{entry.name}</Text>
                       <Text style={styles.catalogMeta}>
-                        {(entry.primaryMuscles[0] || 'Full body')} · {entry.movementPattern || 'Strength'}
+                        {(entry.primaryMuscles[0] || 'Full body')} • {entry.movementPattern || 'Strength'}
                       </Text>
                     </View>
-                    <Text style={styles.catalogAdd}>＋</Text>
+                    <View style={styles.catalogAddBubble}>
+                      <Text style={styles.catalogAddText}>+</Text>
+                    </View>
                   </TouchableOpacity>
                 ))
               )}
@@ -576,14 +655,15 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         </View>
       </Modal>
 
-      <Modal transparent animationType="fade" visible={duplicateModalVisible}>
-        <View style={styles.modalBackdrop}>
-          <Pressable style={styles.modalBackLayer} onPress={() => setDuplicateModalVisible(false)} />
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Duplicate workout</Text>
-              <TouchableOpacity onPress={() => setDuplicateModalVisible(false)}>
-                <Text style={styles.closeText}>×</Text>
+      <Modal transparent animationType="fade" visible={duplicateModalVisible} onRequestClose={() => setDuplicateModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdropPress} onPress={() => setDuplicateModalVisible(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Duplicate to…</Text>
+              <TouchableOpacity style={styles.closeButton} onPress={() => setDuplicateModalVisible(false)}>
+                <Text style={styles.closeButtonText}>×</Text>
               </TouchableOpacity>
             </View>
             <View style={styles.duplicateGrid}>
@@ -593,41 +673,21 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                 return (
                   <TouchableOpacity
                     key={`duplicate-${plan.dateStr}`}
-                    style={[
-                      styles.duplicateButton,
-                      isSelected && styles.duplicateButtonActive,
-                    ]}
+                    style={[styles.duplicateDay, isSelected && styles.duplicateDaySelected]}
                     onPress={() => setDuplicateTarget(plan.dateStr)}
                   >
-                    <Text
-                      style={[
-                        styles.duplicateLabel,
-                        isSelected && styles.duplicateLabelActive,
-                      ]}
-                    >
-                      {weekday}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.duplicateValue,
-                        isSelected && styles.duplicateValueActive,
-                      ]}
-                    >
-                      {day}
-                    </Text>
+                    <Text style={[styles.duplicateLabel, isSelected && styles.duplicateLabelSelected]}>{weekday}</Text>
+                    <Text style={[styles.duplicateNumber, isSelected && styles.duplicateNumberSelected]}>{day}</Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
             <TouchableOpacity
-              style={[
-                styles.primaryButton,
-                !duplicateTarget && styles.primaryButtonDisabled,
-              ]}
+              style={[styles.saveButton, !duplicateTarget && styles.saveButtonDisabled]}
               disabled={!duplicateTarget}
               onPress={() => duplicateTarget && handleDuplicateTo(duplicateTarget)}
             >
-              <Text style={styles.primaryButtonText}>Duplicate here</Text>
+              <Text style={styles.saveButtonText}>Duplicate workout</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -639,381 +699,499 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: SURFACE_BG,
+    backgroundColor: COLORS.bgPrimary,
   },
   gradient: {
     flex: 1,
   },
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+    zIndex: 10,
+    position: 'absolute',
+  },
   scrollContent: {
-    paddingBottom: 32,
+    paddingBottom: 80,
   },
-  header: {
-    paddingHorizontal: 20,
+  stickyHeader: {
     paddingTop: 60,
-    paddingBottom: 12,
-    backgroundColor: SURFACE_BG,
+    paddingBottom: 16,
+    paddingHorizontal: 24,
+    backgroundColor: COLORS.bgPrimary,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: TEXT_PRIMARY,
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: TEXT_TERTIARY,
-    marginTop: 4,
-  },
-  daySelector: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: SURFACE_BG,
-    gap: 10,
-  },
-  dayButton: {
-    width: 56,
-    height: 70,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: CARD_BG,
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
+    marginBottom: 12,
   },
-  dayButtonActive: {
-    backgroundColor: ACCENT,
-    borderColor: ACCENT,
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    letterSpacing: -1,
+  },
+  phaseChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: COLORS.elevated,
+    borderRadius: 20,
+  },
+  phaseChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+  },
+  weekStrip: {
+    paddingVertical: 12,
+    gap: 8,
+  },
+  dayChip: {
+    minWidth: 52,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+  },
+  dayChipActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
   },
   dayLabel: {
     fontSize: 11,
-    color: TEXT_TERTIARY,
     fontWeight: '600',
+    color: COLORS.textTertiary,
   },
   dayLabelActive: {
-    color: TEXT_PRIMARY,
+    color: COLORS.textPrimary,
   },
   dayNumber: {
     fontSize: 18,
     fontWeight: '700',
-    color: TEXT_PRIMARY,
+    color: COLORS.textPrimary,
   },
   dayNumberActive: {
-    color: TEXT_PRIMARY,
+    color: COLORS.textPrimary,
+  },
+  dayDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.success,
+    marginTop: 4,
+    opacity: 0,
+  },
+  dayDotVisible: {
+    opacity: 1,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: 24,
+    paddingTop: 24,
   },
-  sessionCard: {
-    backgroundColor: CARD_BG,
-    borderRadius: 18,
+  dayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  dayInfo: {
+    flex: 1,
+  },
+  dayTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+    letterSpacing: -0.3,
+  },
+  dayMeta: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  overflowWrapper: {
+    position: 'relative',
+    zIndex: 20,
+  },
+  overflowButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.elevated,
+  },
+  overflowButtonText: {
+    fontSize: 20,
+    color: COLORS.textSecondary,
+  },
+  overflowMenu: {
+    position: 'absolute',
+    top: 48,
+    right: 0,
+    backgroundColor: COLORS.elevated,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+    minWidth: 180,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+    zIndex: 20,
+  },
+  overflowItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  overflowItemText: {
+    color: COLORS.textPrimary,
+    fontSize: 15,
+  },
+  overflowItemDanger: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderStrong,
+  },
+  overflowItemDangerText: {
+    color: '#EF4444',
+  },
+  workoutCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: BORDER,
-    gap: 14,
-  },
-  sessionDate: {
-    fontSize: 12,
-    color: TEXT_TERTIARY,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    borderColor: COLORS.border,
+    marginBottom: 24,
   },
   exerciseList: {
     gap: 12,
   },
-  exerciseRow: {
+  exerciseCard: {
     flexDirection: 'row',
     gap: 12,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: SURFACE_BG,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.elevated,
+    padding: 16,
+    alignItems: 'flex-start',
   },
   exerciseInfo: {
     flex: 1,
-    gap: 4,
+    gap: 10,
   },
-  exerciseTitle: {
+  exerciseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  exerciseName: {
     fontSize: 16,
     fontWeight: '600',
-    color: TEXT_PRIMARY,
+    color: COLORS.textPrimary,
   },
-  exerciseMeta: {
+  exerciseTags: {
     flexDirection: 'row',
-    gap: 8,
     flexWrap: 'wrap',
+    gap: 6,
   },
-  exerciseLabel: {
-    fontSize: 13,
-    color: TEXT_SECONDARY,
+  exerciseTag: {
+    backgroundColor: COLORS.surface,
+    color: COLORS.textTertiary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    fontSize: 11,
+    fontWeight: '500',
   },
   exerciseInputs: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 8,
   },
   inputGroup: {
     flex: 1,
-    gap: 4,
   },
   inputLabel: {
-    fontSize: 11,
-    color: TEXT_TERTIARY,
+    fontSize: 10,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
     textTransform: 'uppercase',
+    marginBottom: 6,
+    letterSpacing: 0.5,
   },
   inputField: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: SURFACE_BG,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    color: TEXT_PRIMARY,
-    fontSize: 13,
-  },
-  exerciseActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    width: 34,
-    height: 34,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    color: COLORS.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  iconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  actionButtonText: {
-    fontSize: 18,
-    color: TEXT_SECONDARY,
+  iconButtonDanger: {
+    backgroundColor: 'rgba(239,68,68,0.15)',
+  },
+  iconButtonText: {
+    fontSize: 20,
+    color: '#FF7B7B',
   },
   addExerciseButton: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER,
-    paddingVertical: 14,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    paddingVertical: 16,
     alignItems: 'center',
-    backgroundColor: SURFACE_BG,
+    marginTop: 16,
   },
   addExerciseText: {
-    color: TEXT_SECONDARY,
+    fontSize: 15,
     fontWeight: '600',
+    color: COLORS.textSecondary,
   },
-  sessionActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  sessionActionButton: {
-    flex: 1,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: BORDER,
-    paddingVertical: 12,
+  saveButton: {
+    marginTop: 16,
+    borderRadius: 14,
+    backgroundColor: COLORS.accent,
+    paddingVertical: 16,
     alignItems: 'center',
-    backgroundColor: SURFACE_BG,
+    shadowColor: COLORS.accent,
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
   },
-  sessionActionText: {
-    color: TEXT_SECONDARY,
-    fontWeight: '600',
+  saveButtonDisabled: {
+    opacity: 0.5,
   },
-  sessionActionDanger: {
-    borderColor: 'rgba(239,68,68,0.3)',
+  saveButtonText: {
+    color: COLORS.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
   },
-  sessionActionDangerText: {
-    color: '#EF4444',
-  },
-  emptySession: {
-    backgroundColor: CARD_BG,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.08)',
-    minHeight: 260,
+  emptyCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
-    gap: 16,
+    gap: 12,
+    marginBottom: 24,
   },
-  emptySessionText: {
-    fontSize: 16,
-    color: TEXT_SECONDARY,
+  emptyIcon: {
+    fontSize: 56,
+    opacity: 0.3,
+    color: COLORS.textPrimary,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
     textAlign: 'center',
   },
   primaryButton: {
-    borderRadius: 12,
     paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: ACCENT,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.4,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    backgroundColor: COLORS.accent,
+    shadowColor: COLORS.accent,
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
   },
   primaryButtonText: {
-    color: TEXT_PRIMARY,
-    fontWeight: '700',
+    color: COLORS.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
   },
-  secondaryButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: SURFACE_BG,
-  },
-  secondaryButtonText: {
-    color: TEXT_PRIMARY,
-  },
-  modalBackdrop: {
+  modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.85)',
     justifyContent: 'flex-end',
   },
-  modalBackLayer: {
-    flex: 1,
+  modalBackdropPress: {
+    ...StyleSheet.absoluteFillObject,
   },
-  modalContent: {
-    backgroundColor: CARD_BG,
+  sheet: {
+    backgroundColor: COLORS.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '80%',
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 32,
+    minHeight: '70%',
+    maxHeight: '90%',
   },
-  modalHeader: {
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 48,
+    height: 4,
+    backgroundColor: COLORS.borderStrong,
+    borderRadius: 2,
+    marginBottom: 20,
+  },
+  sheetHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 16,
   },
-  modalTitle: {
+  sheetTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: TEXT_PRIMARY,
+    color: COLORS.textPrimary,
   },
-  closeText: {
-    fontSize: 32,
-    color: TEXT_SECONDARY,
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.elevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeButtonText: {
+    fontSize: 26,
+    color: COLORS.textSecondary,
   },
   searchInput: {
-    backgroundColor: SURFACE_BG,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.elevated,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: TEXT_PRIMARY,
+    color: COLORS.textPrimary,
+    marginBottom: 12,
+    fontSize: 15,
+  },
+  filterContainer: {
+    height: 48,
     marginBottom: 12,
   },
-  muscleFilterRow: {
+  filterRow: {
     gap: 8,
-    paddingVertical: 6,
+    alignItems: 'center',
   },
   filterChip: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
+    paddingVertical: 10,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: SURFACE_BG,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   filterChipActive: {
-    borderColor: ACCENT,
-    backgroundColor: ACCENT_DIM,
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
   },
-  filterChipText: {
-    color: TEXT_SECONDARY,
+  filterText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
     fontWeight: '600',
   },
-  filterChipTextActive: {
-    color: ACCENT,
+  filterTextActive: {
+    color: COLORS.textPrimary,
   },
   catalogList: {
-    marginTop: 8,
+    flex: 1,
   },
   catalogItem: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: SURFACE_BG,
-    padding: 14,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  catalogInfo: {
+    flex: 1,
+    paddingRight: 12,
   },
   catalogName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: TEXT_PRIMARY,
+    color: COLORS.textPrimary,
   },
   catalogMeta: {
-    fontSize: 13,
-    color: TEXT_SECONDARY,
+    fontSize: 12,
+    color: COLORS.textSecondary,
   },
-  catalogAdd: {
-    color: ACCENT,
+  catalogAddBubble: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.accentDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  catalogAddText: {
+    color: COLORS.accent,
     fontSize: 20,
+    fontWeight: '600',
   },
   catalogEmpty: {
-    color: TEXT_SECONDARY,
     textAlign: 'center',
-    paddingVertical: 40,
+    color: COLORS.textSecondary,
+    paddingVertical: 32,
   },
   duplicateGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 16,
+    gap: 12,
+    marginBottom: 20,
   },
-  duplicateButton: {
+  duplicateDay: {
     width: '22%',
     aspectRatio: 1,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: SURFACE_BG,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.elevated,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 6,
   },
-  duplicateButtonActive: {
-    borderColor: ACCENT,
-    backgroundColor: ACCENT_DIM,
+  duplicateDaySelected: {
+    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.accent,
   },
   duplicateLabel: {
-    fontSize: 12,
-    color: TEXT_TERTIARY,
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
   },
-  duplicateLabelActive: {
-    color: ACCENT,
+  duplicateLabelSelected: {
+    color: COLORS.accent,
   },
-  duplicateValue: {
-    fontSize: 16,
+  duplicateNumber: {
+    fontSize: 18,
     fontWeight: '700',
-    color: TEXT_SECONDARY,
+    color: COLORS.textPrimary,
   },
-  duplicateValueActive: {
-    color: ACCENT,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-    gap: 12,
-  },
-  emptyIcon: {
-    fontSize: 48,
-  },
-  emptyTitle: {
-    color: TEXT_PRIMARY,
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  emptySubtitle: {
-    color: TEXT_SECONDARY,
-    textAlign: 'center',
+  duplicateNumberSelected: {
+    color: COLORS.accent,
   },
 });
 
