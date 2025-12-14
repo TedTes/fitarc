@@ -1,16 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  TouchableWithoutFeedback, 
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  TouchableWithoutFeedback,
   Modal,
   Animated,
   PanResponder,
   Dimensions,
   Pressable,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -23,19 +24,18 @@ import {
   WorkoutSessionExercise,
   DailyConsistencyLog,
   MuscleGroup,
-  DailyMealPlan,
 } from '../types/domain';
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
-import { dietTips } from '../data';
+import { useTodayMeals } from '../hooks/useTodayMeals';
+import { MealEntry } from '../services/supabaseMealService';
 import { getBodyPartLabel } from '../utils';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const MEAL_EMOJIS: Record<string, string> = {
-  breakfast: '🌅',
-  lunch: '🌞',
-  snack: '🍎',
-  dinner: '🌙',
+const MEAL_TYPE_EMOJI: Record<string, string> = {
+  Breakfast: '🌅',
+  Lunch: '🌞',
+  Dinner: '🌙',
 };
 
 const MUSCLE_TAG_COLORS: Record<string, string> = {
@@ -47,16 +47,23 @@ const MUSCLE_TAG_COLORS: Record<string, string> = {
   core: 'rgba(168, 230, 207, 0.2)',
 };
 
-const WORKOUT_CARD_WIDTH = 280;
-const MEAL_CARD_WIDTH = 220;
+const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner'];
+
+const getMealTypeEmoji = (mealType: string): string => {
+  const key = mealType.trim();
+  if (MEAL_TYPE_EMOJI[key]) return MEAL_TYPE_EMOJI[key];
+  const normalized = key.toLowerCase();
+  if (normalized.includes('snack')) return '🥗';
+  if (normalized.includes('pre')) return '⚡';
+  return '🍽️';
+};
+const CARD_GRADIENT_DEFAULT = ['#1C1F3F', '#101329'];
+const CARD_GRADIENT_COMPLETE = ['#0BA360', '#3CBA92'];
 const WORKOUT_BAR_TOTAL = 5;
 const REP_BAR_TOTAL = 6;
 const SWIPE_THRESHOLD = 80;
-
-const getMealEmoji = (title: string): string => {
-  const key = title.toLowerCase();
-  return MEAL_EMOJIS[key] || '🍽️';
-};
+const ACTIVITY_TOTAL_DAYS = 84; // 12 weeks
+const DAYS_PER_ACTIVITY_COLUMN = 7;
 
 const getMuscleTagColor = (muscles: MuscleGroup[]): string => {
   if (!muscles.length) return 'rgba(255, 255, 255, 0.05)';
@@ -73,17 +80,41 @@ const formatBodyPartList = (parts: MuscleGroup[]): string => {
     .join(' • ');
 };
 
-const getWorkoutDescriptor = (parts: MuscleGroup[]): string => {
-  if (!parts.length) return 'mobility reset';
-  const upper = ['chest', 'back', 'shoulders', 'arms'];
-  const lower = ['legs', 'core'];
-  const isUpper = parts.every((part) => upper.includes(part));
-  const isLower = parts.every((part) => lower.includes(part));
+const getGreetingMessage = () => {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+};
 
-  if (isUpper) return 'upper body workouts';
-  if (isLower) return 'lower body workouts';
-  if (parts.length > 3) return 'full body workouts';
-  return 'mixed focus workouts';
+type ActivityCell = {
+  date: Date;
+  iso: string;
+  count: number;
+  level: number;
+  isToday: boolean;
+};
+
+const parseISODateToLocal = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year || 0, (month || 1) - 1, day || 1);
+};
+
+const formatMealMacros = (entry: MealEntry): string => {
+  const parts: string[] = [];
+  if (typeof entry.calories === 'number') {
+    parts.push(`${entry.calories} kcal`);
+  }
+  if (typeof entry.protein === 'number') {
+    parts.push(`${entry.protein}g P`);
+  }
+  if (typeof entry.carbs === 'number') {
+    parts.push(`${entry.carbs}g C`);
+  }
+  if (typeof entry.fats === 'number') {
+    parts.push(`${entry.fats}g F`);
+  }
+  return parts.length ? parts.join(' · ') : 'Macros TBD';
 };
 
 const getRepFillCount = (range: string): number => {
@@ -320,12 +351,10 @@ type DashboardScreenProps = {
   workoutLogs: WorkoutLog[];
   strengthSnapshots: StrengthSnapshot[];
   workoutSessions: WorkoutSessionEntry[];
-  mealPlans: DailyMealPlan[];
   progressEstimate: ProgressEstimate | null;
   onProfilePress?: () => void;
   onStartPhase?: () => void;
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
-  onToggleMeal?: (date: string, mealTitle: string) => void;
   onMarkConsistent?: (log: DailyConsistencyLog) => void;
   onCreateSession?: (date: string) => void;
 };
@@ -335,23 +364,23 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   phase,
   workoutSessions,
   progressEstimate,
-  mealPlans,
   onProfilePress,
   onStartPhase,
   onToggleWorkoutExercise,
-  onToggleMeal,
   onCreateSession,
 }) => {
   const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const [exercisePreview, setExercisePreview] = useState<{
     exercises: WorkoutSessionExercise[];
     index: number;
   } | null>(null);
   
-  const resolvedPhase = homeData?.phase ?? phase;
-  const resolvedSessions = homeData?.recentSessions ?? workoutSessions;
-  const todayMealPlanFromRemote = homeData?.todayMealPlan;
+  const resolvedPhase = phase ?? homeData?.phase ?? null;
+  const resolvedSessions = workoutSessions.length
+    ? workoutSessions
+    : homeData?.recentSessions ?? [];
   
   // ✅ FIX: Dashboard always shows TODAY only
   const today = new Date();
@@ -366,37 +395,132 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     storedSession && storedSession.exercises.length ? storedSession : null;
   const displayExercises = todaySession?.exercises ?? [];
   
-  const focusAreas = Array.from(
-    new Set(displayExercises.flatMap((exercise) => exercise.bodyParts))
-  ) as MuscleGroup[];
   const hasSyncedWorkout = displayExercises.length > 0;
-  const workoutSummary = hasSyncedWorkout
-    ? `${displayExercises.length} ${getWorkoutDescriptor(focusAreas)}`
-    : isHomeLoading
-    ? 'Syncing workouts...'
-    : 'No synced workouts';
-  const focusDescription = hasSyncedWorkout
-    ? formatBodyPartList(focusAreas)
-    : isHomeLoading
-    ? 'Fetching recent sessions'
-    : 'Your synced workouts will appear here';
+  const greetingMessage = getGreetingMessage();
+  const displayName = user?.name || 'Athlete';
+  const dateLabel = today.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  const activityCells = useMemo<ActivityCell[]>(() => {
+    const counts: Record<string, number> = {};
+    resolvedSessions.forEach((session) => {
+      if (!session.date) return;
+      counts[session.date] = (counts[session.date] || 0) + 1;
+    });
+    const now = new Date();
+    const cells: ActivityCell[] = [];
+    for (let i = ACTIVITY_TOTAL_DAYS - 1; i >= 0; i -= 1) {
+      const cellDate = new Date(now);
+      cellDate.setDate(now.getDate() - i);
+      const iso = cellDate.toISOString().split('T')[0];
+      const count = counts[iso] || 0;
+      cells.push({
+        date: cellDate,
+        iso,
+        count,
+        level: Math.min(3, count),
+        isToday: i === 0,
+      });
+    }
+    return cells;
+  }, [resolvedSessions]);
+
+  const activityColumns = useMemo(() => {
+    const columns: ActivityCell[][] = [];
+    for (let i = 0; i < activityCells.length; i += DAYS_PER_ACTIVITY_COLUMN) {
+      columns.push(activityCells.slice(i, i + DAYS_PER_ACTIVITY_COLUMN));
+    }
+    return columns;
+  }, [activityCells]);
+
+  const getActivityLevelStyle = (level: number) => {
+    if (level >= 3) return styles.activityLevel3;
+    if (level === 2) return styles.activityLevel2;
+    if (level === 1) return styles.activityLevel1;
+    return styles.activityLevel0;
+  };
+
+  const {
+    dailyMeal,
+    mealsByType,
+    isLoading: isMealsLoading,
+    isMutating: isMealsMutating,
+    error: todayMealsError,
+    toggleDayCompleted,
+  } = useTodayMeals(phase ? user.id : undefined, today, Boolean(phase));
+  const hasDailyMeal = Boolean(dailyMeal);
+  const totalMealEntries = Object.values(mealsByType).reduce(
+    (sum, entries) => sum + entries.length,
+    0
+  );
+  const dayMealsCompleted = Boolean(dailyMeal?.completed);
+  const allMealTypes = useMemo(() => {
+    const dynamicTypes = Object.keys(mealsByType).filter((type) => !!type);
+    const ordered = [...DEFAULT_MEAL_TYPES];
+    dynamicTypes.forEach((type) => {
+      if (!ordered.includes(type)) {
+        ordered.push(type);
+      }
+    });
+    return ordered;
+  }, [mealsByType]);
+  const handleDayCompletionToggle = async () => {
+    try {
+      await toggleDayCompleted(!dayMealsCompleted);
+    } catch (err: any) {
+      Alert.alert('Meals', err?.message || 'Unable to update completion.');
+    }
+  };
+  const renderMealGroup = (mealType: string) => {
+    const entries = mealsByType[mealType] ?? [];
+    const isLastGroup = allMealTypes[allMealTypes.length - 1] === mealType;
+    return (
+      <LinearGradient
+        key={mealType}
+        colors={CARD_GRADIENT_DEFAULT}
+        style={[
+          styles.mealGroupCard,
+          isLastGroup && styles.mealGroupCardLast,
+        ]}
+      >
+        <View style={styles.mealGroupHeader}>
+          <View style={styles.mealGroupInfo}>
+            <View style={styles.mealGroupIcon}>
+              <Text style={styles.mealGroupEmoji}>{getMealTypeEmoji(mealType)}</Text>
+            </View>
+            <View>
+              <Text style={styles.mealGroupTitle}>{mealType}</Text>
+              <Text style={styles.mealGroupMeta}>
+                {entries.length ? `${entries.length} item${entries.length > 1 ? 's' : ''}` : 'No items yet'}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.mealGroupManageHint}>Edit via Menu tab</Text>
+        </View>
+        {entries.length === 0 ? (
+          <Text style={styles.mealEmptyEntryText}>
+            Add foods for {mealType.toLowerCase()} from the Menu screen to stay on track.
+          </Text>
+        ) : (
+          entries.map((entry) => (
+            <View key={entry.id} style={styles.mealEntryRow}>
+              <View style={styles.mealEntryInfoBlock}>
+                <Text style={styles.mealEntryName}>{entry.foodName}</Text>
+                <Text style={styles.mealEntryMacros}>{formatMealMacros(entry)}</Text>
+              </View>
+            </View>
+          ))
+        )}
+      </LinearGradient>
+    );
+  };
   
-  const dietGuide = dietTips[user.eatingMode];
-  const savedMealPlan =
-    resolvedPhase &&
-    (todayMealPlanFromRemote?.date === todayStr
-      ? todayMealPlanFromRemote
-      : mealPlans.find(
-          (plan) => plan.phasePlanId === resolvedPhase.id && plan.date === todayStr
-        ));
-  const meals = savedMealPlan?.meals ?? [];
-  const hasMeals = meals.length > 0;
-  
-  const progressPercent = progressEstimate?.progressPercent || 0;
   const weeksIntoPhase = Math.max(1, Math.floor((progressEstimate?.daysActive || 0) / 7) + 1);
   
   const canLogWorkouts = !!phase && !!onToggleWorkoutExercise;
-  const canLogMeals = !!phase && !!onToggleMeal;
 
   const enhancedExercises = displayExercises.map((exercise) => {
     const sets = exercise.sets || 4;
@@ -411,25 +535,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   
   const completedExercises = enhancedExercises.filter(e => e.completed);
   const pendingExercises = enhancedExercises.filter(e => !e.completed);
-  const completedMeals = meals.filter(m => m.completed);
-  const pendingMeals = meals.filter(m => !m.completed);
   
   // ✅ FIX: Only show pending items on dashboard for quick action
   const visibleWorkoutCards = canLogWorkouts ? pendingExercises : enhancedExercises;
-  const visibleMealCards = canLogMeals ? pendingMeals : meals;
   
   const totalWorkoutCount = enhancedExercises.length;
   const completedWorkoutCount = completedExercises.length;
-  const totalMealCount = meals.length;
-  const completedMealCount = completedMeals.length;
   
   const workoutProgress = totalWorkoutCount > 0 ? completedWorkoutCount / totalWorkoutCount : 0;
-  const mealProgress = totalMealCount > 0 ? completedMealCount / totalMealCount : 0;
-  const overallProgress = (workoutProgress + mealProgress) / 2;
-  
-  const hasPendingLogs = pendingExercises.length > 0 || pendingMeals.length > 0;
-  const showCompletionSummary = (canLogWorkouts || canLogMeals) && !hasPendingLogs && (totalWorkoutCount || totalMealCount);
-  
+  const hasPendingLogs = pendingExercises.length > 0;
+  const showCompletionSummary = canLogWorkouts && !hasPendingLogs && totalWorkoutCount > 0;
+  const totalMealCount = hasDailyMeal ? totalMealEntries : 0;
+  const completedMealCount = 0;
+
   const completionDateLabel = today.toLocaleDateString(undefined, {
     weekday: 'long',
     month: 'short',
@@ -453,23 +571,154 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
   };
 
-  const handleSwipeMeal = (mealTitle: string) => {
-    if (canLogMeals && onToggleMeal) {
-      onToggleMeal(todayStr, mealTitle);
-    }
-  };
-
   const handleCreateSession = () => {
     onCreateSession?.(todayStr);
   };
 
-  const markEverythingDone = () => {
-    if (!hasPendingLogs) return;
-    pendingExercises.forEach((ex) => onToggleWorkoutExercise?.(todayStr, ex.name));
-    pendingMeals.forEach((meal) => onToggleMeal?.(todayStr, meal.title));
-  };
+  const renderWorkoutsSection = () => (
+    <View style={styles.section}>
+      {!hasSyncedWorkout ? (
+        <View style={styles.emptyWorkoutCard}>
+          <Text style={styles.emptyWorkoutEmoji}>📭</Text>
+          <Text style={styles.emptyWorkoutTitle}>No workout scheduled</Text>
+          <Text style={styles.emptyWorkoutText}>Start a session when you're ready to train.</Text>
+          {onCreateSession && (
+            <TouchableOpacity style={styles.createSessionButton} onPress={handleCreateSession}>
+              <Text style={styles.createSessionButtonText}>Start Session</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : canLogWorkouts && completedExercises.length === totalWorkoutCount && totalWorkoutCount > 0 ? (
+        <View style={styles.allCompleteCard}>
+          <Text style={styles.allCompleteEmoji}>💪</Text>
+          <Text style={styles.allCompleteTitle}>Workout Complete!</Text>
+          <Text style={styles.allCompleteMeta}>
+            {totalWorkoutCount} exercises · {enhancedExercises.reduce((sum, ex) => sum + ex.setCount, 0)} total sets
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.verticalList}>
+          {visibleWorkoutCards.map((exercise, index) => {
+            const actualIndex = enhancedExercises.findIndex((e) => e.name === exercise.name);
+            const isCompleted = exercise.completed;
+            return (
+              <SwipeableCard
+                key={`${todayStr}-${exercise.name}-${index}`}
+                enabled={canLogWorkouts && !isCompleted}
+                onSwipeRight={() => handleSwipeExercise(exercise.name)}
+              >
+                <TouchableWithoutFeedback onPress={() => openExercisePreview(exercise, enhancedExercises)}>
+                  <LinearGradient
+                    colors={isCompleted ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
+                    style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
+                  >
+                    <View style={styles.exerciseCardHeader}>
+                      <Text style={styles.exerciseBadge}>#{actualIndex + 1}</Text>
+                      {isCompleted && (
+                        <View style={styles.completedBadge}>
+                          <Text style={styles.completedBadgeText}>✓</Text>
+                        </View>
+                      )}
+                    </View>
 
-  const openExercisePreview = (
+                    <Text style={styles.exerciseName}>{exercise.name}</Text>
+
+                    <View style={[styles.muscleTag, { backgroundColor: getMuscleTagColor(exercise.bodyParts) }]}>
+                      <Text style={styles.muscleTagText}>{formatBodyPartList(exercise.bodyParts)}</Text>
+                    </View>
+
+                    <View style={styles.exerciseMetricBlock}>
+                      <View style={styles.metricHeader}>
+                        <Text style={styles.metricLabel}>Sets</Text>
+                        <Text style={styles.metricValue}>{exercise.setCount} sets</Text>
+                      </View>
+                      {renderBarRow(Math.min(WORKOUT_BAR_TOTAL, exercise.setCount), WORKOUT_BAR_TOTAL)}
+                    </View>
+
+                    <View style={styles.exerciseMetricBlock}>
+                      <View style={styles.metricHeader}>
+                        <Text style={styles.metricLabel}>Reps</Text>
+                        <Text style={styles.metricValue}>{exercise.repRange}</Text>
+                      </View>
+                      {renderBarRow(exercise.repFillCount, REP_BAR_TOTAL)}
+                    </View>
+
+                    <Text style={styles.exerciseStatus}>
+                      {isCompleted
+                        ? '✓ Completed'
+                        : canLogWorkouts
+                        ? 'Swipe right to complete'
+                        : 'Tap to mark complete'}
+                    </Text>
+
+                    {canLogWorkouts && !isCompleted && (
+                      <TouchableOpacity
+                        style={styles.manualCompleteButton}
+                        onPress={() => handleSwipeExercise(exercise.name)}
+                      >
+                        <Text style={styles.manualCompleteButtonText}>Mark Complete</Text>
+                      </TouchableOpacity>
+                    )}
+                  </LinearGradient>
+                </TouchableWithoutFeedback>
+              </SwipeableCard>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+
+  const renderMealsSection = () => (
+    <View style={styles.section}>
+      {!resolvedPhase ? (
+        <View style={styles.emptyMealCard}>
+          <Text style={styles.emptyMealEmoji}>🍽️</Text>
+          <Text style={styles.emptyMealTitle}>Meals unlock soon</Text>
+          <Text style={styles.emptyMealText}>Finish onboarding to create your first nutrition plan.</Text>
+        </View>
+      ) : isMealsLoading && !hasDailyMeal ? (
+        <View style={styles.emptyMealCard}>
+          <Text style={styles.emptyMealEmoji}>⏳</Text>
+          <Text style={styles.emptyMealTitle}>Syncing meals</Text>
+          <Text style={styles.emptyMealText}>Pulling today’s plan from the cloud...</Text>
+        </View>
+      ) : !hasDailyMeal && totalMealEntries === 0 ? (
+        <View style={styles.emptyMealCard}>
+          <Text style={styles.emptyMealEmoji}>🍽️</Text>
+          <Text style={styles.emptyMealTitle}>No meals for today</Text>
+          <Text style={styles.emptyMealText}>Use the Menu tab to create meals for your current phase.</Text>
+        </View>
+      ) : (
+        <>
+          <TouchableOpacity
+            style={[
+              styles.mealCompletionChip,
+              dayMealsCompleted && styles.mealCompletionChipActive,
+            ]}
+            onPress={handleDayCompletionToggle}
+            disabled={isMealsMutating}
+          >
+            <Text
+              style={[
+                styles.mealCompletionChipText,
+                dayMealsCompleted && styles.mealCompletionChipTextActive,
+              ]}
+            >
+              {dayMealsCompleted ? 'Meals complete' : 'Mark meals complete'}
+            </Text>
+          </TouchableOpacity>
+          <View style={styles.verticalList}>
+            {allMealTypes.map((mealType) => renderMealGroup(mealType))}
+          </View>
+        </>
+      )}
+
+      {todayMealsError && <Text style={styles.errorText}>{todayMealsError}</Text>}
+    </View>
+  );
+
+const openExercisePreview = (
     exercise: WorkoutSessionExercise,
     collection: WorkoutSessionExercise[]
   ) => {
@@ -585,42 +834,41 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
         </Modal>
 
-        <ScrollView
-          contentContainerStyle={styles.dashboardContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.dashboardHeader}>
-            <View style={styles.headerLeft}>
-              <Text style={styles.smallLabel}>
-                {phase ? 'Current Arc' : 'Start Training'}
-              </Text>
-              <Text style={styles.dashboardTitle}>
-                {phase
-                  ? `Level ${phase.currentLevelId} → ${phase.targetLevelId}`
-                  : 'Welcome to FitArc'}
-              </Text>
-              <Text style={styles.dashboardSubtitle}>
-                {phase
-                  ? `Week ${weeksIntoPhase} · ${progressPercent}% complete`
-                  : 'Create your first session to begin'}
-              </Text>
-            </View>
-            
-            {phase && (
-              <View style={styles.headerRight}>
-                <ProgressRing progress={overallProgress} size={70} strokeWidth={6} />
-              </View>
-            )}
-            
-            {phase && onProfilePress && (
+        <View style={styles.dashboardContent}>
+          <View style={styles.headerSection}>
+            {onProfilePress && (
               <TouchableOpacity style={styles.profileButton} onPress={onProfilePress}>
                 <Text style={styles.profileButtonText}>⚙️</Text>
               </TouchableOpacity>
             )}
+            <Text style={styles.greetingText}>{greetingMessage},</Text>
+            <Text style={styles.userNameText}>{displayName}</Text>
+            <Text style={styles.dateInfoText}>
+              {dateLabel}
+              {resolvedPhase ? ` • Week ${weeksIntoPhase}` : ''}
+            </Text>
           </View>
 
-          {/* ✅ FIX: Improved empty state for users without phase */}
-          {!phase && onStartPhase && (
+          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.progressBox}>
+            <View style={styles.activityGridRow}>
+              {activityColumns.map((column, colIdx) => (
+                <View key={`col-${colIdx}`} style={styles.activityColumn}>
+                  {column.map((cell) => (
+                    <View
+                      key={cell.iso}
+                      style={[
+                        styles.activityCell,
+                        getActivityLevelStyle(cell.level),
+                        cell.isToday && styles.activityCellToday,
+                      ]}
+                    />
+                  ))}
+                </View>
+              ))}
+            </View>
+          </LinearGradient>
+
+          {!resolvedPhase && onStartPhase && (
             <View style={styles.emptyStateContainer}>
               <Text style={styles.emptyStateEmoji}>🏋️</Text>
               <Text style={styles.emptyStateTitle}>Ready to Start Training?</Text>
@@ -635,281 +883,45 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </View>
           )}
 
-          {/* ✅ FIX: Replaced DateNavigator with simple Today banner */}
-          {phase && (
-            <View style={styles.todayBanner}>
-              <Text style={styles.todayBannerLabel}>TODAY</Text>
-              <Text style={styles.todayBannerDate}>
-                {today.toLocaleDateString(undefined, { 
-                  weekday: 'long', 
-                  month: 'short', 
-                  day: 'numeric' 
-                })}
-              </Text>
-            </View>
-          )}
-
-          {(canLogWorkouts || canLogMeals) && (
+          <View style={styles.tabRow}>
             <TouchableOpacity
-              style={[styles.bulkButton, !hasPendingLogs && styles.bulkButtonDisabled]}
-              onPress={markEverythingDone}
-              disabled={!hasPendingLogs}
-              activeOpacity={0.85}
+              style={[styles.tabButton, activeTab === 'workouts' && styles.tabButtonActive]}
+              onPress={() => setActiveTab('workouts')}
             >
-              <View style={styles.bulkButtonHeader}>
-                <Text style={styles.bulkButtonText}>
-                  {hasPendingLogs ? '⚡ Quick Complete All' : '✓ All Complete'}
-                </Text>
-                {hasPendingLogs && (
-                  <View style={styles.bulkBadge}>
-                    <Text style={styles.bulkBadgeText}>
-                      {pendingExercises.length + pendingMeals.length}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.bulkButtonMeta}>
-                {hasPendingLogs
-                  ? `${pendingExercises.length} exercises · ${pendingMeals.length} meals remaining`
-                  : 'Great job! Everything is logged for today'}
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  activeTab === 'workouts' && styles.tabButtonTextActive,
+                ]}
+              >
+                Workouts
               </Text>
             </TouchableOpacity>
-          )}
-
-          {/* ✨ Workout Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionHeaderLeft}>
-                <Text style={styles.sectionEyebrow}>Today's Workouts</Text>
-                <Text style={styles.sectionTitle}>{workoutSummary}</Text>
-                <Text style={styles.sectionSubtitle}>{focusDescription}</Text>
-              </View>
-              {totalWorkoutCount > 0 && (
-                <View style={styles.sectionProgress}>
-                  <Text style={styles.sectionProgressText}>
-                    {completedWorkoutCount}/{totalWorkoutCount}
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {!hasSyncedWorkout ? (
-              <View style={styles.emptyWorkoutCard}>
-                <Text style={styles.emptyWorkoutEmoji}>📭</Text>
-                <Text style={styles.emptyWorkoutTitle}>No workout scheduled</Text>
-                <Text style={styles.emptyWorkoutText}>
-                  Start a session when you're ready to train.
-                </Text>
-                {onCreateSession && (
-                  <TouchableOpacity style={styles.createSessionButton} onPress={handleCreateSession}>
-                    <Text style={styles.createSessionButtonText}>Start Session</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ) : canLogWorkouts && completedExercises.length === totalWorkoutCount && totalWorkoutCount > 0 ? (
-              <View style={styles.allCompleteCard}>
-                <Text style={styles.allCompleteEmoji}>💪</Text>
-                <Text style={styles.allCompleteTitle}>Workout Complete!</Text>
-                <Text style={styles.allCompleteMeta}>
-                  {totalWorkoutCount} exercises · {enhancedExercises.reduce((sum, ex) => sum + ex.setCount, 0)} total sets
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={WORKOUT_CARD_WIDTH + 20}
-                decelerationRate="fast"
-                contentContainerStyle={styles.horizontalScroller}
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === 'meals' && styles.tabButtonActive]}
+              onPress={() => setActiveTab('meals')}
+            >
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  activeTab === 'meals' && styles.tabButtonTextActive,
+                ]}
               >
-                {visibleWorkoutCards.map((exercise, index) => {
-                  const actualIndex = enhancedExercises.findIndex(e => e.name === exercise.name);
-                  const isCompleted = exercise.completed;
-                  
-                  return (
-                    <SwipeableCard
-                      key={`${todayStr}-${exercise.name}-${index}`}
-                      enabled={canLogWorkouts && !isCompleted}
-                      onSwipeRight={() => handleSwipeExercise(exercise.name)}
-                      style={styles.exerciseCardWrapper}
-                    >
-                      <TouchableWithoutFeedback onPress={() => openExercisePreview(exercise, enhancedExercises)}>
-                        <LinearGradient
-                          colors={
-                            isCompleted
-                              ? ['#0BA360', '#3CBA92']
-                              : ['#1C1F3F', '#101329']
-                          }
-                          style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
-                        >
-                        <View style={styles.exerciseCardHeader}>
-                          <Text style={styles.exerciseBadge}>#{actualIndex + 1}</Text>
-                          {isCompleted && (
-                            <View style={styles.completedBadge}>
-                              <Text style={styles.completedBadgeText}>✓</Text>
-                            </View>
-                          )}
-                        </View>
-                        
-                        <Text style={styles.exerciseName}>{exercise.name}</Text>
-                        
-                        <View style={[
-                          styles.muscleTag,
-                          { backgroundColor: getMuscleTagColor(exercise.bodyParts) }
-                        ]}>
-                          <Text style={styles.muscleTagText}>
-                            {formatBodyPartList(exercise.bodyParts)}
-                          </Text>
-                        </View>
-                        
-                        <View style={styles.exerciseMetricBlock}>
-                          <View style={styles.metricHeader}>
-                            <Text style={styles.metricLabel}>Sets</Text>
-                            <Text style={styles.metricValue}>{exercise.setCount} sets</Text>
-                          </View>
-                          {renderBarRow(
-                            Math.min(WORKOUT_BAR_TOTAL, exercise.setCount),
-                            WORKOUT_BAR_TOTAL
-                          )}
-                        </View>
-                        
-                        <View style={styles.exerciseMetricBlock}>
-                          <View style={styles.metricHeader}>
-                            <Text style={styles.metricLabel}>Reps</Text>
-                            <Text style={styles.metricValue}>{exercise.repRange}</Text>
-                          </View>
-                          {renderBarRow(exercise.repFillCount, REP_BAR_TOTAL)}
-                        </View>
-                        
-                        <Text style={styles.exerciseStatus}>
-                          {isCompleted
-                            ? '✓ Completed'
-                            : canLogWorkouts
-                            ? '→ Swipe right to complete'
-                            : 'Tap to mark complete'}
-                        </Text>
-                        
-                        {canLogWorkouts && !isCompleted && (
-                          <TouchableOpacity
-                            style={styles.manualCompleteButton}
-                            onPress={() => handleSwipeExercise(exercise.name)}
-                          >
-                            <Text style={styles.manualCompleteButtonText}>Mark Complete</Text>
-                          </TouchableOpacity>
-                        )}
-                        </LinearGradient>
-                      </TouchableWithoutFeedback>
-                    </SwipeableCard>
-                  );
-                })}
-              </ScrollView>
-            )}
+                Meals
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {/* ✨ Meals Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionHeaderLeft}>
-                <Text style={styles.sectionEyebrow}>Today's Nutrition · {dietGuide.label}</Text>
-                <Text style={styles.sectionTitle}>
-                  {hasMeals ? 'Meals for your goal' : 'No meals scheduled'}
-                </Text>
-                <Text style={styles.sectionSubtitle}>
-                  {hasMeals ? dietGuide.description : 'Add meals to track nutrition.'}
-                </Text>
-              </View>
-              {totalMealCount > 0 && (
-                <View style={styles.sectionProgress}>
-                  <Text style={styles.sectionProgressText}>
-                    {completedMealCount}/{totalMealCount}
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {!hasMeals ? (
-              <View style={styles.emptyMealCard}>
-                <Text style={styles.emptyMealEmoji}>🍽️</Text>
-                <Text style={styles.emptyMealTitle}>No meals scheduled</Text>
-                <Text style={styles.emptyMealText}>
-                  Add meals in the Menu tab to start tracking nutrition.
-                </Text>
-              </View>
-            ) : canLogMeals && completedMeals.length === totalMealCount && totalMealCount > 0 ? (
-              <View style={styles.allCompleteCard}>
-                <Text style={styles.allCompleteEmoji}>🍽️</Text>
-                <Text style={styles.allCompleteTitle}>All Meals Logged!</Text>
-                <Text style={styles.allCompleteMeta}>
-                  {totalMealCount} meals · Great nutrition today
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={MEAL_CARD_WIDTH + 16}
-                decelerationRate="fast"
-                contentContainerStyle={styles.mealCarousel}
-              >
-                {visibleMealCards.map((meal, index) => {
-                  const isCompleted = meal.completed;
-                  
-                  return (
-                    <SwipeableCard
-                      key={`${todayStr}-${meal.title}-${index}`}
-                      enabled={canLogMeals && !isCompleted}
-                      onSwipeRight={() => handleSwipeMeal(meal.title)}
-                      style={styles.mealCardWrapper}
-                    >
-                      <LinearGradient
-                        colors={
-                          isCompleted
-                            ? ['#16302F', '#10201F']
-                            : ['#1F2A44', '#11152A']
-                        }
-                        style={[styles.mealCard, isCompleted && styles.mealCardCompleted]}
-                      >
-                        <View style={styles.mealHeaderRow}>
-                          <Text style={styles.mealEmoji}>{getMealEmoji(meal.title)}</Text>
-                          {isCompleted && (
-                            <View style={styles.completedBadge}>
-                              <Text style={styles.completedBadgeText}>✓</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={styles.mealTitle}>{meal.title}</Text>
-                        {meal.items.map((item) => (
-                          <View key={item} style={styles.mealItemRow}>
-                            <View style={styles.mealBullet} />
-                            <Text style={styles.mealItemText}>{item}</Text>
-                          </View>
-                        ))}
-                        
-                        <Text style={styles.mealStatusText}>
-                          {isCompleted
-                            ? '✓ Logged'
-                            : canLogMeals
-                            ? '→ Swipe right to log'
-                            : 'Tap to log'}
-                        </Text>
-                        
-                        {canLogMeals && !isCompleted && (
-                          <TouchableOpacity
-                            style={styles.manualCompleteButton}
-                            onPress={() => handleSwipeMeal(meal.title)}
-                          >
-                            <Text style={styles.manualCompleteButtonText}>Log Meal</Text>
-                          </TouchableOpacity>
-                        )}
-                      </LinearGradient>
-                    </SwipeableCard>
-                  );
-                })}
-              </ScrollView>
-            )}
-          </View>
-        </ScrollView>
+          <ScrollView
+            style={styles.tabScroll}
+            contentContainerStyle={styles.tabScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {activeTab === 'workouts' ? renderWorkoutsSection() : renderMealsSection()}
+          </ScrollView>
+        </View>
       </LinearGradient>
+
     </View>
   );
 };
@@ -924,49 +936,136 @@ const styles = StyleSheet.create({
   },
   dashboardContent: {
     flexGrow: 1,
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 50,
+    paddingBottom: 20,
+  },
+  headerSection: {
     paddingTop: 60,
-    gap: 16,
+    paddingBottom: 12,
+    paddingRight: 60,
   },
-  dashboardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  headerLeft: {
-    flex: 1,
-  },
-  headerRight: {
-    marginLeft: 16,
-  },
-  smallLabel: {
-    fontSize: 12,
-    color: '#A0A3BD',
-    marginBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  dashboardTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  dashboardSubtitle: {
+  greetingText: {
     fontSize: 14,
     color: '#A0A3BD',
+    marginBottom: 4,
+  },
+  userNameText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -1,
+  },
+  dateInfoText: {
+    fontSize: 14,
+    color: '#6C7CFF',
+    fontWeight: '600',
+    marginTop: 6,
   },
   profileButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#1E2340',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    zIndex: 2,
   },
   profileButtonText: {
     fontSize: 20,
     color: '#FFFFFF',
+  },
+  progressBox: {
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    gap: 10,
+    marginBottom: 12,
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  progressInfo: {
+    flex: 1,
+    marginRight: 16,
+  },
+  progressLabel: {
+    fontSize: 11,
+    color: '#6C7CFF',
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  progressStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    marginBottom: 4,
+  },
+  progressValue: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -1,
+  },
+  streakCount: {
+    fontSize: 14,
+    color: '#A0A3BD',
+    fontWeight: '600',
+  },
+  streakFire: {
+    color: '#FF6B6B',
+  },
+  progressSubtitle: {
+    fontSize: 13,
+    color: '#A0A3BD',
+  },
+  progressRingWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activityGridRow: {
+    flexDirection: 'row',
+    gap: 4,
+    width: '100%',
+    height: 90,
+  },
+  activityColumn: {
+    flex: 1,
+    gap: 3,
+    alignItems: 'center',
+  },
+  activityCell: {
+    width: '75%',
+    height: 10,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  activityLevel0: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  activityLevel1: {
+    backgroundColor: 'rgba(0,245,160,0.3)',
+  },
+  activityLevel2: {
+    backgroundColor: 'rgba(0,245,160,0.6)',
+  },
+  activityLevel3: {
+    backgroundColor: '#00F5A0',
+  },
+  activityCellToday: {
+    borderWidth: 2,
+    borderColor: '#6C63FF',
   },
   
   // ✅ NEW: Empty state styles
@@ -1011,110 +1110,40 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   
-  // ✅ NEW: Today banner (replaces DateNavigator)
-  todayBanner: {
-    backgroundColor: '#151932',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
+  tabRow: {
     flexDirection: 'row',
+    backgroundColor: '#111638',
+    borderRadius: 16,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    gap: 8,
+    marginTop: 8,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  todayBannerLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#00F5A0',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+  tabButtonActive: {
+    backgroundColor: '#1E2340',
   },
-  todayBannerDate: {
+  tabButtonText: {
+    color: '#A0A3BD',
     fontSize: 14,
-    color: '#FFFFFF',
     fontWeight: '600',
   },
-  
-  bulkButton: {
-    backgroundColor: '#111638',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  bulkButtonDisabled: {
-    opacity: 0.5,
-  },
-  bulkButtonHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 2,
-  },
-  bulkButtonText: {
-    fontSize: 15,
+  tabButtonTextActive: {
     color: '#FFFFFF',
-    fontWeight: '700',
   },
-  bulkBadge: {
-    backgroundColor: '#FF6B6B',
-    borderRadius: 10,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  bulkBadgeText: {
-    fontSize: 11,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  bulkButtonMeta: {
-    fontSize: 12,
-    color: '#A0A3BD',
+  verticalList: {
+    gap: 14,
   },
   
   section: {
-    gap: 12,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  sectionHeaderLeft: {
-    flex: 1,
-  },
-  sectionEyebrow: {
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: '#6C7CFF',
-    marginBottom: 4,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  sectionSubtitle: {
-    fontSize: 13,
-    color: '#A0A3BD',
-  },
-  sectionProgress: {
-    backgroundColor: '#1E2340',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    minWidth: 50,
-    alignItems: 'center',
-  },
-  sectionProgressText: {
-    fontSize: 14,
-    color: '#00F5A0',
-    fontWeight: 'bold',
+    gap: 16,
+    marginTop: 16,
   },
   emptyWorkoutCard: {
     borderRadius: 20,
@@ -1198,14 +1227,6 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  horizontalScroller: {
-    paddingVertical: 4,
-    paddingRight: 20,
-    gap: 16,
-  },
-  exerciseCardWrapper: {
-    width: WORKOUT_CARD_WIDTH,
-  },
   exerciseCard: {
     borderRadius: 20,
     padding: 20,
@@ -1309,57 +1330,235 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   
-  mealCarousel: {
-    paddingVertical: 4,
-    paddingRight: 20,
-    gap: 16,
-  },
-  mealCardWrapper: {
-    width: MEAL_CARD_WIDTH,
-  },
-  mealCard: {
-    borderRadius: 20,
-    padding: 18,
+  addMealTypeButton: {
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.04)',
-    gap: 10,
+    borderColor: '#2A2F4F',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    marginBottom: 12,
+    backgroundColor: '#111638',
   },
-  mealCardCompleted: {
-    opacity: 0.8,
+  addMealTypeText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
-  mealHeaderRow: {
+  mealGroupCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    padding: 16,
+    width: '100%',
+    marginBottom: 12,
+  },
+  mealGroupCardLast: {
+    marginBottom: 0,
+  },
+  mealGroupHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 8,
   },
-  mealEmoji: {
-    fontSize: 28,
-  },
-  mealTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  mealItemRow: {
+  mealGroupInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
-  mealBullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#00F5A0',
+  mealGroupIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#111638',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  mealItemText: {
-    color: '#E3E5FF',
-    fontSize: 14,
+  mealGroupEmoji: {
+    fontSize: 18,
+  },
+  mealGroupTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  mealGroupMeta: {
+    color: '#A0A3BD',
+    fontSize: 12,
+  },
+  mealGroupManageHint: {
+    color: '#6B6F7B',
+    fontSize: 11,
+  },
+  mealGroupAddButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  mealGroupAddText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mealEntryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.04)',
+    gap: 12,
+  },
+  mealEntryInfoBlock: {
     flex: 1,
   },
-  mealStatusText: {
-    marginTop: 6,
+  mealEntryName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  mealEntryMacros: {
+    color: '#A0A3BD',
     fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
+    marginTop: 2,
+  },
+  mealEntryActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  mealEntryActionButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  mealEntryActionText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mealEntryDeleteButton: {
+    borderColor: 'rgba(255,107,107,0.5)',
+    backgroundColor: 'rgba(255,107,107,0.12)',
+  },
+  mealEntryDeleteText: {
+    color: '#FF6B6B',
+  },
+  mealCompletionChip: {
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+  },
+  mealCompletionChipActive: {
+    borderColor: '#00F5A0',
+    backgroundColor: 'rgba(0,245,160,0.12)',
+  },
+  mealCompletionChipText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  mealCompletionChipTextActive: {
+    color: '#00F5A0',
+  },
+  mealEmptyEntryText: {
+    color: '#A0A3BD',
+    fontSize: 13,
+    marginTop: 6,
+  },
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  mealModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(5,8,20,0.85)',
+    justifyContent: 'flex-end',
+  },
+  mealModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  mealModalContent: {
+    backgroundColor: '#0B0F24',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 30,
+  },
+  mealModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  mealModalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  mealModalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#151932',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mealModalCloseText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  mealModalForm: {
+    gap: 14,
+  },
+  mealModalField: {
+    gap: 6,
+  },
+  mealModalLabel: {
+    color: '#A0A3BD',
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  mealModalInput: {
+    backgroundColor: '#111638',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    color: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  mealModalInputDisabled: {
+    opacity: 0.6,
+  },
+  mealMacrosRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  mealModalActions: {
+    marginTop: 8,
+  },
+  mealModalSaveButton: {
+    borderRadius: 12,
+    backgroundColor: '#6C63FF',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  mealModalSaveText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
   
   swipeIndicator: {
@@ -1569,6 +1768,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
     borderRadius: 2,
   },
+  tabScroll: {
+    flex: 1,
+    marginTop: 16,
+  },
+  tabScrollContent: {
+    paddingBottom: 40,
+    gap: 16,
+  },
 });
-
-export default DashboardScreen;

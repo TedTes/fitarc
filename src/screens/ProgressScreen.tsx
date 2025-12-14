@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -7,7 +7,6 @@ import {
   User,
   WorkoutSessionEntry,
   DailyMealPlan,
-  PhotoCheckin,
   WorkoutLog,
   StrengthSnapshot,
 } from '../types/domain';
@@ -27,10 +26,8 @@ type ProgressScreenProps = {
   workoutDataVersion: number;
   workoutSessions: WorkoutSessionEntry[];
   mealPlans: DailyMealPlan[];
-  photoCheckins: PhotoCheckin[];
   workoutLogs: WorkoutLog[];
   strengthSnapshots: StrengthSnapshot[];
-  onTakePhoto: () => void;
 };
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
@@ -39,10 +36,8 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   workoutDataVersion,
   workoutSessions: sessionFallback,
   mealPlans: mealPlanFallback,
-  photoCheckins: photoFallback,
   workoutLogs: workoutLogFallback,
   strengthSnapshots: snapshotFallback,
-  onTakePhoto,
 }) => {
   const { data, isLoading, refresh } = useProgressData(
     user.id,
@@ -94,17 +89,8 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     return Array.from(map.values());
   }, [snapshotFallback, data?.strengthSnapshots]);
 
-  const mergedPhotos = useMemo(() => {
-    const map = new Map(photoFallback.map((photo) => [photo.id, photo]));
-    (data?.photos || []).forEach((photo) => {
-      map.set(photo.id, photo);
-    });
-    return Array.from(map.values());
-  }, [photoFallback, data?.photos]);
-
   const sessions = mergedSessions;
   const mealPlans = mergedMeals;
-  const photos = mergedPhotos;
   const workoutLogs = mergedWorkoutLogs;
   const strengthSnapshots = mergedSnapshots;
 
@@ -157,18 +143,32 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     0
   );
   const mealCompliance = totalMeals ? Math.round((completedMeals / totalMeals) * 100) : 0;
-  const sortedPhotos = [...photos].sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-  );
-  const phasePhotos = sortedPhotos.filter((p) => p.phasePlanId === resolvedPhase.id);
-  const baselinePhoto = sortedPhotos[0];
-  const latestPhoto = phasePhotos.length > 0 ? phasePhotos[phasePhotos.length - 1] : baselinePhoto;
+  const mealTrackingRows = useMemo(() => {
+    return [...recentMealPlans]
+      .sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+      )
+      .map((plan) => {
+        const completed = plan.meals.filter((meal) => meal.completed).length;
+        const label = new Date(plan.date).toLocaleDateString(undefined, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        });
+        return {
+          date: plan.date,
+          label,
+          completed,
+          total: plan.meals.length,
+        };
+      });
+  }, [recentMealPlans]);
   const showSyncNotice = isLoading && sessions.length === 0;
   
-  const [activeTab, setActiveTab] = useState<'stats' | 'comparison'>('stats');
-  const tabOptions: { key: 'stats' | 'comparison'; label: string }[] = [
-    { key: 'stats', label: 'Stats' },
-    { key: 'comparison', label: 'Photos' },
+  const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
+  const tabOptions: { key: 'workouts' | 'meals'; label: string }[] = [
+    { key: 'workouts', label: 'Workouts' },
+    { key: 'meals', label: 'Meals' },
   ];
 
   // ✨ Render mini sparkline for strength trends
@@ -295,38 +295,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         )}
       </View>
 
-      {/* ✨  Nutrition Compliance - Visual Circle */}
-      <View style={styles.compactCard}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Nutrition</Text>
-          <Text style={styles.cardSubtitle}>Last 7 days</Text>
-        </View>
-        
-        <View style={styles.nutritionContent}>
-          <View style={styles.nutritionCircle}>
-            <Text style={styles.nutritionPercent}>{mealCompliance}%</Text>
-            <Text style={styles.nutritionLabel}>Compliance</Text>
-          </View>
-          <View style={styles.nutritionStats}>
-            <View style={styles.nutritionStat}>
-              <Text style={styles.nutritionStatValue}>{completedMeals}</Text>
-              <Text style={styles.nutritionStatLabel}>Logged</Text>
-            </View>
-            <View style={styles.nutritionStat}>
-              <Text style={styles.nutritionStatValue}>{totalMeals}</Text>
-              <Text style={styles.nutritionStatLabel}>Total</Text>
-            </View>
-          </View>
-        </View>
-        
-        {mealCompliance >= 80 && (
-          <View style={styles.insightBanner}>
-            <Text style={styles.insightEmoji}>🎯</Text>
-            <Text style={styles.insightText}>Excellent nutrition adherence!</Text>
-          </View>
-        )}
-      </View>
-
       {/* ✨Top Lifts Compact View */}
       {bestLiftRows.length > 0 && (
         <View style={styles.compactCard}>
@@ -356,107 +324,60 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     </>
   );
 
-  const renderComparisonContent = () => (
+  const renderMealsDetailContent = () => (
     <>
-      {/* ✨Photo Comparison - Side by side */}
-      {baselinePhoto && latestPhoto ? (
-        <View style={styles.compactCard}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Transformation</Text>
-            <Text style={styles.cardSubtitle}>
-              {Math.floor(daysActive / 7)} weeks progress
-            </Text>
-          </View>
-          
-          <View style={styles.photoComparison}>
-            <View style={styles.photoBox}>
-              <Image source={{ uri: baselinePhoto.frontUri }} style={styles.photoLarge} />
-              <View style={styles.photoOverlay}>
-                <Text style={styles.photoOverlayText}>Start</Text>
+      <View style={styles.compactCard}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Meal Tracking</Text>
+          <Text style={styles.cardSubtitle}>Last 7 days</Text>
+        </View>
+
+        {mealTrackingRows.length > 0 ? (
+          <>
+            <View style={styles.mealSummaryRow}>
+              <View style={styles.mealSummaryStat}>
+                <Text style={styles.mealSummaryValue}>{mealCompliance}%</Text>
+                <Text style={styles.mealSummaryLabel}>Compliance</Text>
+              </View>
+              <View style={styles.mealSummaryDivider} />
+              <View style={styles.mealSummaryStat}>
+                <Text style={styles.mealSummaryValue}>{completedMeals}</Text>
+                <Text style={styles.mealSummaryLabel}>Meals complete</Text>
+              </View>
+              <View style={styles.mealSummaryDivider} />
+              <View style={styles.mealSummaryStat}>
+                <Text style={styles.mealSummaryValue}>{totalMeals}</Text>
+                <Text style={styles.mealSummaryLabel}>Meals logged</Text>
               </View>
             </View>
-            
-            <View style={styles.photoArrow}>
-              <Text style={styles.photoArrowText}>→</Text>
-            </View>
-            
-            <View style={styles.photoBox}>
-              <Image source={{ uri: latestPhoto.frontUri }} style={styles.photoLarge} />
-              <View style={styles.photoOverlay}>
-                <Text style={styles.photoOverlayText}>Now</Text>
-              </View>
-            </View>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.emptyPhotoCard}>
-          <Text style={styles.emptyPhotoEmoji}>📸</Text>
-          <Text style={styles.emptyPhotoTitle}>No Progress Photos Yet</Text>
-          <Text style={styles.emptyPhotoText}>
-            Take your first photo to start tracking visual progress
-          </Text>
-        </View>
-      )}
 
-      {/* ✨ Photo Action Button */}
-      <TouchableOpacity style={styles.photoActionButton} onPress={onTakePhoto}>
-        <LinearGradient
-          colors={['#6C63FF', '#5449CC']}
-          style={styles.photoActionGradient}
-        >
-          <Text style={styles.photoActionText}>
-            {phasePhotos.length > 0 ? '📸 Take New Progress Photo' : '📸 Take First Photo'}
-          </Text>
-        </LinearGradient>
-      </TouchableOpacity>
-
-      {/* ✨ Photo Timeline - Horizontal Scroll */}
-      {phasePhotos.length > 0 && (
-        <View style={styles.compactCard}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Photo Timeline</Text>
-            <Text style={styles.cardSubtitle}>
-              {phasePhotos.length + (baselinePhoto ? 1 : 0)} check-ins
-            </Text>
-          </View>
-          
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.timelineScroll}
-          >
-            {baselinePhoto && (
-              <View style={styles.timelineCard}>
-                <Image source={{ uri: baselinePhoto.frontUri }} style={styles.timelineImage} />
-                <Text style={styles.timelineDate}>
-                  {new Date(baselinePhoto.date).toLocaleDateString(undefined, { 
-                    month: 'short', 
-                    day: 'numeric' 
-                  })}
-                </Text>
-                <View style={styles.timelineBadge}>
-                  <Text style={styles.timelineBadgeText}>Start</Text>
+            {mealTrackingRows.map((row) => {
+              const percent = row.total ? Math.round((row.completed / row.total) * 100) : 0;
+              return (
+                <View key={row.date} style={styles.mealTrackingRow}>
+                  <View style={styles.mealTrackingInfo}>
+                    <Text style={styles.mealTrackingDay}>{row.label}</Text>
+                    <Text style={styles.mealTrackingMeta}>
+                      {row.completed}/{row.total} meals
+                    </Text>
+                  </View>
+                  <View style={styles.mealTrackingBar}>
+                    <View
+                      style={[
+                        styles.mealTrackingFill,
+                        { width: `${Math.min(100, percent)}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.mealTrackingPercent}>{percent}%</Text>
                 </View>
-              </View>
-            )}
-
-            {phasePhotos.map((photo, index) => (
-              <View key={photo.id} style={styles.timelineCard}>
-                <Image source={{ uri: photo.frontUri }} style={styles.timelineImage} />
-                <Text style={styles.timelineDate}>
-                  {new Date(photo.date).toLocaleDateString(undefined, { 
-                    month: 'short', 
-                    day: 'numeric' 
-                  })}
-                </Text>
-                <View style={styles.timelineBadge}>
-                  <Text style={styles.timelineBadgeText}>Week {index + 1}</Text>
-                </View>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+              );
+            })}
+          </>
+        ) : (
+          <Text style={styles.emptyText}>Log meals to see daily adherence</Text>
+        )}
+      </View>
     </>
   );
 
@@ -504,7 +425,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             ))}
           </View>
 
-          {activeTab === 'stats' ? renderStatsContent() : renderComparisonContent()}
+          {activeTab === 'workouts' ? renderStatsContent() : renderMealsDetailContent()}
         </ScrollView>
       </LinearGradient>
     </View>
@@ -740,72 +661,6 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // ✨ IMPROVED: Nutrition Visual
-  nutritionContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 24,
-  },
-  nutritionCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#1E2340',
-    borderWidth: 6,
-    borderColor: '#00F5A0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  nutritionPercent: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#00F5A0',
-  },
-  nutritionLabel: {
-    fontSize: 11,
-    color: '#A0A3BD',
-    marginTop: 2,
-  },
-  nutritionStats: {
-    flex: 1,
-    gap: 12,
-  },
-  nutritionStat: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  nutritionStatValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  nutritionStatLabel: {
-    fontSize: 13,
-    color: '#A0A3BD',
-  },
-  
-  // ✨ NEW: Insight Banner
-  insightBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: 'rgba(0, 245, 160, 0.1)',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 245, 160, 0.2)',
-  },
-  insightEmoji: {
-    fontSize: 20,
-  },
-  insightText: {
-    fontSize: 13,
-    color: '#00F5A0',
-    fontWeight: '600',
-  },
-  
   // ✨ NEW: PR (Personal Records) Rows
   prRow: {
     flexDirection: 'row',
@@ -853,125 +708,81 @@ const styles = StyleSheet.create({
     color: '#00F5A0',
   },
   
-  // ✨ IMPROVED: Photo Comparison
-  photoComparison: {
+  // ✨ Meal Tracking Rows
+  mealTrackingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    paddingVertical: 10,
   },
-  photoBox: {
-    flex: 1,
-    position: 'relative',
+  mealTrackingInfo: {
+    width: 110,
+    gap: 2,
   },
-  photoLarge: {
-    width: '100%',
-    aspectRatio: 3 / 4,
-    borderRadius: 12,
-    backgroundColor: '#1E2340',
-  },
-  photoOverlay: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    right: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-  },
-  photoOverlayText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    textAlign: 'center',
-  },
-  photoArrow: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#6C63FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  photoArrowText: {
-    fontSize: 18,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  
-  // ✨ IMPROVED: Empty Photo State
-  emptyPhotoCard: {
-    backgroundColor: '#151932',
-    borderRadius: 16,
-    padding: 40,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    alignItems: 'center',
-  },
-  emptyPhotoEmoji: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  emptyPhotoTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 8,
-  },
-  emptyPhotoText: {
+  mealTrackingDay: {
     fontSize: 14,
-    color: '#A0A3BD',
-    textAlign: 'center',
-    lineHeight: 20,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
-  
-  // ✨ Photo Action Button
-  photoActionButton: {
-    borderRadius: 12,
+  mealTrackingMeta: {
+    fontSize: 12,
+    color: '#A0A3BD',
+  },
+  mealTrackingBar: {
+    flex: 1,
+    height: 10,
+    borderRadius: 6,
+    backgroundColor: '#10142A',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
     overflow: 'hidden',
   },
-  photoActionGradient: {
-    paddingVertical: 14,
-    alignItems: 'center',
+  mealTrackingFill: {
+    height: '100%',
+    borderRadius: 6,
+    backgroundColor: '#6C63FF',
   },
-  photoActionText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-  
-  // ✨ IMPROVED: Timeline Scroll
-  timelineScroll: {
-    paddingVertical: 4,
-    gap: 12,
-  },
-  timelineCard: {
-    width: 120,
-    alignItems: 'center',
-  },
-  timelineImage: {
-    width: 120,
-    height: 160,
-    borderRadius: 12,
-    backgroundColor: '#1E2340',
-    marginBottom: 8,
-  },
-  timelineDate: {
-    fontSize: 12,
+  mealTrackingPercent: {
+    width: 50,
+    textAlign: 'right',
+    fontSize: 13,
     color: '#FFFFFF',
     fontWeight: '600',
-    marginBottom: 6,
   },
-  timelineBadge: {
-    backgroundColor: '#6C63FF',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  mealSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#10142A',
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1E2340',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 12,
   },
-  timelineBadgeText: {
-    fontSize: 11,
-    fontWeight: 'bold',
+  mealSummaryStat: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+  },
+  mealSummaryValue: {
+    fontSize: 20,
+    fontWeight: '700',
     color: '#FFFFFF',
+  },
+  mealSummaryLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#A0A3BD',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  mealSummaryDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: '#1E2340',
+    marginHorizontal: 10,
   },
   
   // Empty States

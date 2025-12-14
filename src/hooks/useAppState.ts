@@ -371,11 +371,13 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         state.currentPhase.id,
         date
       );
+      const updatedMeals = plan.meals.map((meal) =>
+        meal.title === mealTitle ? { ...meal, completed: !meal.completed } : meal
+      );
       const updatedPlan: DailyMealPlan = {
         ...plan,
-        meals: plan.meals.map((meal) =>
-          meal.title === mealTitle ? { ...meal, completed: !meal.completed } : meal
-        ),
+        meals: updatedMeals,
+        completed: updatedMeals.every((meal) => meal.completed),
       };
       const updatedPlans = upsertMealPlan(state.mealPlans, updatedPlan);
       await persistState({

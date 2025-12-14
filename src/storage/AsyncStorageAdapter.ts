@@ -145,11 +145,13 @@ const sanitizeMealPlan = (plan: any): DailyMealPlan => ({
   id: plan.id || `meal_${Date.now()}`,
   date: plan.date || new Date().toISOString(),
   phasePlanId: plan.phasePlanId || 'unknown',
+  completed: !!plan.completed,
   meals: Array.isArray(plan.meals)
     ? plan.meals.map((meal: any) => ({
         title: meal.title || 'Meal',
         items: Array.isArray(meal.items) ? meal.items.map((item: any) => String(item)) : [],
-        completed: !!meal.completed,
+        completed:
+          typeof meal.completed === 'boolean' ? meal.completed : !!plan.completed,
       }))
     : [],
 });

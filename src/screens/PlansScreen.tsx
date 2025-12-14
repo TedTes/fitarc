@@ -15,6 +15,7 @@ import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { ExerciseCatalogEntry } from '../services/exerciseCatalogService';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
+import { formatLocalDateYMD } from '../utils/date';
 
 type PlansScreenProps = {
   user: User;
@@ -22,6 +23,7 @@ type PlansScreenProps = {
   workoutSessions: WorkoutSessionEntry[];
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
   onDeleteSession?: (date: string) => void;
+  onToggleExercise?: (date: string, exerciseName: string) => void;
 };
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
@@ -102,8 +104,16 @@ const TEMPLATE_SEQUENCE: Record<User['trainingSplit'], WorkoutTemplate['id'][]> 
 
 const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = ['All', 'chest', 'back', 'shoulders', 'arms', 'legs', 'core'];
 
+const parseLocalDateFromYMD = (dateStr: string) => {
+  const [yearStr, monthStr, dayStr] = dateStr.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr) - 1;
+  const day = Number(dayStr);
+  return new Date(year, month, day);
+};
+
 const formatDateLabel = (dateStr: string) => {
-  const date = new Date(dateStr);
+  const date = parseLocalDateFromYMD(dateStr);
   return {
     weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
     day: date.getDate(),
@@ -152,10 +162,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   workoutSessions,
   onSaveCustomSession,
   onDeleteSession,
+  onToggleExercise,
 }) => {
   const { sessions: remoteSessions } = useWorkoutSessions(user.id, phase?.id ?? undefined);
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
   const [exerciseModalVisible, setExerciseModalVisible] = useState(false);
   const [duplicateModalVisible, setDuplicateModalVisible] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState('');
@@ -164,7 +175,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const seededDatesRef = useRef<Set<string>>(new Set());
 
-  const resolvedSessions = remoteSessions.length ? remoteSessions : workoutSessions;
+  const resolvedSessions = workoutSessions.length ? workoutSessions : remoteSessions;
 
   const convertCatalogExercise = useCallback(
     (entry: ExerciseCatalogEntry): WorkoutSessionExercise => {
@@ -187,12 +198,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const weekPlans = useMemo(() => {
     if (!phase) return [];
-    const today = new Date();
-    const anchor = new Date(today.toISOString().split('T')[0]);
+    const anchor = new Date();
+    anchor.setHours(0, 0, 0, 0);
     return Array.from({ length: 7 }).map((_, idx) => {
       const date = new Date(anchor);
       date.setDate(anchor.getDate() + idx);
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = formatLocalDateYMD(date);
       const session =
         resolvedSessions.find((entry) => entry.phasePlanId === phase.id && entry.date === dateStr) || null;
       return {
@@ -228,9 +239,17 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [editingExercises, setEditingExercises] = useState<WorkoutSessionExercise[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const lastSyncedKeyRef = useRef<string | null>(null);
+  const sessionFingerprint =
+    selectedPlan?.session?.exercises
+      ?.map(
+        (exercise) =>
+          `${exercise.name}:${exercise.completed ? '1' : '0'}:${exercise.sets ?? ''}:${exercise.reps ?? ''}`
+      )
+      .join('|') ?? '';
+
   const planSyncKey = selectedPlan
     ? selectedPlan.session
-      ? `session-${selectedPlan.session.id}`
+      ? `session-${selectedPlan.session.id}-${sessionFingerprint}`
       : `template-${selectedPlan.dateStr}-${selectedPlan.templateExercises
           .map((exercise) => exercise.exerciseId ?? exercise.name)
           .join(',')}`
@@ -305,17 +324,19 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const selectedDayInfo = useMemo(() => {
     if (!selectedPlan) return null;
-    const date = new Date(selectedPlan.dateStr);
+    const date = parseLocalDateFromYMD(selectedPlan.dateStr);
     const fullDate = date.toLocaleDateString(undefined, {
       weekday: 'long',
       month: 'short',
       day: 'numeric',
     });
-    const meta = editingExercises.length
-      ? `${editingExercises.length} exercise${editingExercises.length > 1 ? 's' : ''}`
+    const totalExercises = editingExercises.length;
+    const completedCount = editingExercises.filter((exercise) => exercise.completed).length;
+    const meta = totalExercises
+      ? `${completedCount}/${totalExercises} complete`
       : selectedPlan.template?.title ?? 'Rest day';
     return { fullDate, meta };
-  }, [selectedPlan, editingExercises.length]);
+  }, [selectedPlan, editingExercises]);
 
   const handleSelectDate = (dateStr: string) => {
     setSelectedDate(dateStr);
@@ -351,6 +372,23 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setEditingExercises(createSessionExercises(selectedPlan.templateExercises));
     setIsDirty(true);
   };
+
+  const canToggleCompletion = Boolean(onToggleExercise && selectedPlan?.session);
+
+  const handleToggleExerciseCompletion = useCallback(
+    (index: number) => {
+      if (!canToggleCompletion || !selectedPlan) return;
+      setEditingExercises((prev) => {
+        const target = prev[index];
+        if (!target) return prev;
+        onToggleExercise?.(selectedPlan.dateStr, target.name);
+        return prev.map((exercise, idx) =>
+          idx === index ? { ...exercise, completed: !exercise.completed } : exercise
+        );
+      });
+    },
+    [canToggleCompletion, onToggleExercise, selectedPlan]
+  );
 
   const handleChangeSets = (index: number, value: string) => {
     const numeric = parseInt(value, 10);
@@ -449,37 +487,60 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         <View style={styles.exerciseList}>
           {editingExercises.map((exercise, idx) => (
             <View key={`${exercise.name}-${idx}`} style={styles.exerciseCard}>
-              <View style={styles.exerciseInfo}>
-                <View style={styles.exerciseHeader}>
+              <View style={styles.exerciseHeaderRow}>
+                <View style={styles.exerciseHeaderInfo}>
                   <Text style={styles.exerciseName}>{exercise.name}</Text>
                 </View>
-                <View style={styles.exerciseTags}>
-                  <Text style={styles.exerciseTag}>{exercise.bodyParts.join(' • ') || 'Full body'}</Text>
-                  <Text style={styles.exerciseTag}>{`${exercise.sets} sets × ${exercise.reps}`}</Text>
-                </View>
-                <View style={styles.exerciseInputs}>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Sets</Text>
-                    <TextInput
-                      style={styles.inputField}
-                      keyboardType="number-pad"
-                      value={String(exercise.sets ?? '')}
-                      onChangeText={(value) => handleChangeSets(idx, value)}
-                    />
-                  </View>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Reps</Text>
-                    <TextInput
-                      style={styles.inputField}
-                      value={exercise.reps}
-                      onChangeText={(value) => handleChangeReps(idx, value)}
-                    />
-                  </View>
+                <View style={styles.exerciseHeaderActions}>
+                  {canToggleCompletion && (
+                    <TouchableOpacity
+                      style={[
+                        styles.completeToggle,
+                        exercise.completed && styles.completeToggleActive,
+                      ]}
+                      onPress={() => handleToggleExerciseCompletion(idx)}
+                    >
+                      <Text
+                        style={[
+                          styles.completeToggleText,
+                          exercise.completed && styles.completeToggleTextActive,
+                        ]}
+                      >
+                        {exercise.completed ? '✓ Done' : 'Mark'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={[styles.iconButton, styles.iconButtonDanger]}
+                    onPress={() => handleRemoveExercise(idx)}
+                  >
+                    <Text style={styles.iconButtonText}>×</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-              <TouchableOpacity style={[styles.iconButton, styles.iconButtonDanger]} onPress={() => handleRemoveExercise(idx)}>
-                <Text style={styles.iconButtonText}>×</Text>
-              </TouchableOpacity>
+              <View style={styles.exerciseTags}>
+                <Text style={styles.exerciseTag}>{exercise.bodyParts.join(' • ') || 'Full body'}</Text>
+                <Text style={styles.exerciseTag}>{`${exercise.sets} sets × ${exercise.reps}`}</Text>
+              </View>
+              <View style={styles.exerciseInputs}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Sets</Text>
+                  <TextInput
+                    style={styles.inputField}
+                    keyboardType="number-pad"
+                    value={String(exercise.sets ?? '')}
+                    onChangeText={(value) => handleChangeSets(idx, value)}
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Reps</Text>
+                  <TextInput
+                    style={styles.inputField}
+                    value={exercise.reps}
+                    onChangeText={(value) => handleChangeReps(idx, value)}
+                  />
+                </View>
+              </View>
             </View>
           ))}
         </View>
@@ -523,16 +584,33 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               {weekPlansWithTemplates.map((plan) => {
                 const { weekday, day } = formatDateLabel(plan.dateStr);
                 const isActive = plan.dateStr === selectedDate;
-                const hasWorkout = (plan.session && plan.session.exercises.length > 0) || plan.templateExercises.length > 0;
+                const hasWorkout =
+                  (plan.session && plan.session.exercises.length > 0) ||
+                  plan.templateExercises.length > 0;
+                const isCompletedDay =
+                  plan.session?.exercises?.length
+                    ? plan.session.exercises.every((exercise) => exercise.completed)
+                    : false;
                 return (
                   <TouchableOpacity
                     key={plan.dateStr}
-                    style={[styles.dayChip, isActive && styles.dayChipActive]}
+                    style={[
+                      styles.dayChip,
+                      isActive && styles.dayChipActive,
+                      isCompletedDay && styles.dayChipCompleted,
+                    ]}
                     onPress={() => handleSelectDate(plan.dateStr)}
                   >
                     <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>{weekday}</Text>
                     <Text style={[styles.dayNumber, isActive && styles.dayNumberActive]}>{day}</Text>
-                    <View style={[styles.dayDot, hasWorkout && styles.dayDotVisible]} />
+                    <View
+                      style={[
+                        styles.dayDot,
+                        hasWorkout && styles.dayDotVisible,
+                        isCompletedDay && styles.dayDotComplete,
+                      ]}
+                    />
+                    {isCompletedDay && <Text style={styles.dayCheckMark}>✓</Text>}
                   </TouchableOpacity>
                 );
               })}
@@ -756,10 +834,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'transparent',
     backgroundColor: 'transparent',
+    position: 'relative',
   },
   dayChipActive: {
     backgroundColor: COLORS.accent,
     borderColor: COLORS.accent,
+  },
+  dayChipCompleted: {
+    borderColor: COLORS.success,
   },
   dayLabel: {
     fontSize: 11,
@@ -778,15 +860,27 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   dayDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: COLORS.success,
-    marginTop: 4,
+    marginTop: 6,
     opacity: 0,
   },
   dayDotVisible: {
     opacity: 1,
+  },
+  dayDotComplete: {
+    backgroundColor: COLORS.success,
+    opacity: 1,
+  },
+  dayCheckMark: {
+    position: 'absolute',
+    top: 4,
+    right: 6,
+    color: COLORS.success,
+    fontSize: 12,
+    fontWeight: '700',
   },
   content: {
     paddingHorizontal: 24,
@@ -871,33 +965,58 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   exerciseCard: {
-    flexDirection: 'row',
-    gap: 12,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.elevated,
     padding: 16,
-    alignItems: 'flex-start',
-  },
-  exerciseInfo: {
-    flex: 1,
     gap: 10,
   },
-  exerciseHeader: {
+  exerciseHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 12,
+  },
+  exerciseHeaderInfo: {
+    flex: 1,
   },
   exerciseName: {
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.textPrimary,
   },
+  exerciseHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  completeToggle: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  completeToggleActive: {
+    borderColor: COLORS.success,
+    backgroundColor: 'rgba(0,245,160,0.12)',
+  },
+  completeToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  completeToggleTextActive: {
+    color: COLORS.success,
+  },
   exerciseTags: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+    marginBottom: 12,
   },
   exerciseTag: {
     backgroundColor: COLORS.surface,
@@ -940,6 +1059,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: COLORS.surface,
   },
   iconButtonDanger: {
     backgroundColor: 'rgba(239,68,68,0.15)',

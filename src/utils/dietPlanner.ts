@@ -18,5 +18,6 @@ export const createMealPlanForDate = (
     date,
     phasePlanId,
     meals,
+    completed: false,
   };
 };

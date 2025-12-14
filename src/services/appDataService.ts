@@ -100,6 +100,7 @@ const formatMealTypeLabel = (raw?: string | null) => {
 
 const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
   if (row.meal_date) {
+    const dayCompleted = Boolean(row.completed);
     const grouped: Record<string, MealPlanMeal> = {};
     (row.meal_entries || []).forEach((entry: any) => {
       const key = entry.meal_type || 'meal';
@@ -107,7 +108,7 @@ const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
         grouped[key] = {
           title: formatMealTypeLabel(entry.meal_type),
           items: [],
-          completed: row.completed ?? false,
+          completed: dayCompleted,
         };
       }
       const macros: string[] = [];
@@ -124,19 +125,25 @@ const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
       date: row.meal_date,
       phasePlanId: phasePlanId || row.phase_id || 'phase',
       meals,
+      completed: dayCompleted,
     };
   }
 
+  const fallbackCompleted = typeof row.completed === 'boolean' ? row.completed : false;
   const meals: MealPlanMeal[] = (row.meals || []).map((meal: any) => ({
     title: meal.title,
     items: meal.items || [],
-    completed: meal.completed ?? false,
+    completed: typeof meal.completed === 'boolean' ? meal.completed : fallbackCompleted,
   }));
   return {
     id: row.id,
     date: row.date,
     phasePlanId: phasePlanId || row.phase_id || 'phase',
     meals,
+    completed:
+      typeof row.completed === 'boolean'
+        ? row.completed
+        : meals.every((meal) => meal.completed),
   };
 };
 
@@ -333,6 +340,7 @@ export const fetchMealPlansForRange = async (
       phase_id,
       meal_date,
       completed,
+      notes,
       meal_entries:fitarc_meal_entries (
         id,
         meal_type,

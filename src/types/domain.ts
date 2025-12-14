@@ -60,6 +60,7 @@ export type DailyMealPlan = {
   date: string;
   phasePlanId: string;
   meals: MealPlanMeal[];
+  completed: boolean;
 };
 
 export type User = {

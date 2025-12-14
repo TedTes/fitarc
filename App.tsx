@@ -73,7 +73,6 @@ function AppContent() {
     recalculateProgress,
     seedPerformanceData,
     toggleWorkoutExercise,
-    toggleMealCompletion,
     createWorkoutSession,
     saveCustomWorkoutSession,
     deleteWorkoutSession,
@@ -418,13 +417,11 @@ function AppContent() {
                   onMarkConsistent={markDayConsistent}
                   workoutLogs={state.workoutLogs}
                   workoutSessions={state.workoutSessions}
-                  mealPlans={state.mealPlans}
                   strengthSnapshots={state.strengthSnapshots}
                   progressEstimate={state.progressEstimate}
                   onProfilePress={() => setProfileVisible(true)}
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
-                  onToggleMeal={toggleMealCompletion}
                   onCreateSession={createWorkoutSession}
                 />
               ) : (
@@ -451,6 +448,7 @@ function AppContent() {
                   onCreateSession={createWorkoutSession}
                   onSaveCustomSession={saveCustomWorkoutSession}
                   onDeleteSession={deleteWorkoutSession}
+                  onToggleExercise={toggleWorkoutExercise}
                 />
               ) : (
                 <TabPlaceholder
@@ -497,12 +495,8 @@ function AppContent() {
                   workoutDataVersion={state.workoutDataVersion}
                   workoutSessions={state.workoutSessions}
                   mealPlans={state.mealPlans}
-                  photoCheckins={state.photoCheckins}
                   workoutLogs={state.workoutLogs}
                   strengthSnapshots={state.strengthSnapshots}
-                  onTakePhoto={() =>
-                    state.currentPhase && openPhotoCapture(state.currentPhase.id, { optional: true })
-                  }
                 />
               ) : (
                 <TabPlaceholder
