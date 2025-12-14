@@ -10,19 +10,6 @@ type MenuScreenProps = {
   mealPlans: DailyMealPlan[];
 };
 
-type MacroTargets = {
-  calories: string;
-  protein: string;
-  carbs: string;
-  fats: string;
-};
-
-const MACRO_TARGETS: Record<User['eatingMode'], MacroTargets> = {
-  mild_deficit: { calories: '2,200', protein: '185', carbs: '210', fats: '65' },
-  recomp: { calories: '2,450', protein: '190', carbs: '240', fats: '70' },
-  lean_bulk: { calories: '2,800', protein: '200', carbs: '280', fats: '80' },
-  maintenance: { calories: '2,500', protein: '185', carbs: '250', fats: '75' },
-};
 
 const SCREEN_GRADIENT = ['#0A0A0A', '#0E1014', '#14161C'] as const;
 const COLORS = {
@@ -108,8 +95,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
   }, [weeklyMenus, selectedDate, todayKey]);
 
   const selectedPlan = weeklyMenus.find((plan) => plan.dateStr === selectedDate) ?? weeklyMenus[0];
-  const macroTargets = MACRO_TARGETS[user.eatingMode];
-
   const totalMeals = weeklyMenus.reduce((sum, plan) => sum + plan.meals.length, 0);
   const completedMeals = weeklyMenus.reduce(
     (sum, plan) => sum + plan.meals.filter((meal) => meal.completed).length,
@@ -211,27 +196,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
                 </Text>
               </View>
             </View>
-            <View style={styles.macroCard}>
-              <View style={styles.macroItem}>
-                <Text style={styles.macroValue}>{macroTargets.calories}</Text>
-                <Text style={styles.macroLabel}>Calories</Text>
-              </View>
-              <View style={styles.macroDivider} />
-              <View style={styles.macroItem}>
-                <Text style={styles.macroValue}>{macroTargets.protein}g</Text>
-                <Text style={styles.macroLabel}>Protein</Text>
-              </View>
-              <View style={styles.macroDivider} />
-              <View style={styles.macroItem}>
-                <Text style={styles.macroValue}>{macroTargets.carbs}g</Text>
-                <Text style={styles.macroLabel}>Carbs</Text>
-              </View>
-              <View style={styles.macroDivider} />
-              <View style={styles.macroItem}>
-                <Text style={styles.macroValue}>{macroTargets.fats}g</Text>
-                <Text style={styles.macroLabel}>Fats</Text>
-              </View>
-            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.weekStrip}>
               {weeklyMenus.map((plan) => {
                 const { weekday, day } = formatDayLabel(plan.dateStr);
@@ -315,38 +279,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: COLORS.textTertiary,
-  },
-  macroCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 16,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    marginBottom: 16,
-  },
-  macroItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  macroValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.accent,
-  },
-  macroLabel: {
-    fontSize: 11,
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: 2,
-  },
-  macroDivider: {
-    width: 1,
-    height: 36,
-    backgroundColor: COLORS.border,
   },
   weekStrip: {
     paddingVertical: 12,

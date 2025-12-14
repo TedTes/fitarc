@@ -92,7 +92,41 @@ export const mapSessionRow = (row: any, fallbackPhaseId?: string): WorkoutSessio
   };
 };
 
+const formatMealTypeLabel = (raw?: string | null) => {
+  if (!raw) return 'Meal';
+  const normalized = raw.replace(/_/g, ' ').trim();
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+
 const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
+  if (row.meal_date) {
+    const grouped: Record<string, MealPlanMeal> = {};
+    (row.meal_entries || []).forEach((entry: any) => {
+      const key = entry.meal_type || 'meal';
+      if (!grouped[key]) {
+        grouped[key] = {
+          title: formatMealTypeLabel(entry.meal_type),
+          items: [],
+          completed: row.completed ?? false,
+        };
+      }
+      const macros: string[] = [];
+      if (typeof entry.calories === 'number') macros.push(`${entry.calories} kcal`);
+      if (typeof entry.protein_g === 'number') macros.push(`P${entry.protein_g}g`);
+      if (typeof entry.carbs_g === 'number') macros.push(`C${entry.carbs_g}g`);
+      if (typeof entry.fat_g === 'number') macros.push(`F${entry.fat_g}g`);
+      const detail = macros.length ? ` (${macros.join(' • ')})` : '';
+      grouped[key].items.push(`${entry.food_name || 'Food'}${detail}`);
+    });
+    const meals = Object.values(grouped);
+    return {
+      id: row.id,
+      date: row.meal_date,
+      phasePlanId: phasePlanId || row.phase_id || 'phase',
+      meals,
+    };
+  }
+
   const meals: MealPlanMeal[] = (row.meals || []).map((meal: any) => ({
     title: meal.title,
     items: meal.items || [],
@@ -291,24 +325,29 @@ export const fetchMealPlansForRange = async (
   toDate: string
 ): Promise<DailyMealPlan[]> => {
   const { data, error } = await supabase
-    .from('fitarc_meal_plans')
+    .from('fitarc_daily_meals')
     .select(
       `
       id,
-      date,
+      user_id,
       phase_id,
-      meals:fitarc_meals (
+      meal_date,
+      completed,
+      meal_entries:fitarc_meal_entries (
         id,
-        title,
-        items,
-        completed
+        meal_type,
+        food_name,
+        calories,
+        protein_g,
+        carbs_g,
+        fat_g
       )
     `
     )
     .eq('user_id', userId)
-    .gte('date', fromDate)
-    .lte('date', toDate)
-    .order('date', { ascending: true });
+    .gte('meal_date', fromDate)
+    .lte('meal_date', toDate)
+    .order('meal_date', { ascending: true });
 
   if (error) throw error;
   return (data || []).map((row: any) => mapMealPlanRow(row));
