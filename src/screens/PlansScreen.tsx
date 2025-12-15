@@ -16,6 +16,7 @@ import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { ExerciseCatalogEntry } from '../services/exerciseCatalogService';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
 import { formatLocalDateYMD } from '../utils/date';
+import { fetchWorkoutCompletionMap } from '../services/supabaseWorkoutService';
 
 type PlansScreenProps = {
   user: User;
@@ -173,6 +174,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [muscleFilter, setMuscleFilter] = useState<(typeof MUSCLE_FILTERS)[number]>('All');
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
+  const [completionMap, setCompletionMap] = useState<Record<string, boolean>>({});
   const seededDatesRef = useRef<Set<string>>(new Set());
 
   const resolvedSessions = workoutSessions.length ? workoutSessions : remoteSessions;
@@ -235,6 +237,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const selectedPlan =
     weekPlansWithTemplates.find((plan) => plan.dateStr === selectedDate) || weekPlansWithTemplates[0];
+  const weekStart = weekPlansWithTemplates[0]?.dateStr;
+  const weekEnd = weekPlansWithTemplates[weekPlansWithTemplates.length - 1]?.dateStr;
+  const todayKey = formatLocalDateYMD(new Date());
 
   const [editingExercises, setEditingExercises] = useState<WorkoutSessionExercise[]>([]);
   const [isDirty, setIsDirty] = useState(false);
@@ -302,6 +307,26 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
   }, [editingExercises.length]);
 
+  useEffect(() => {
+    if (!user.id || !weekStart || !weekEnd) return;
+    let isActive = true;
+    fetchWorkoutCompletionMap(user.id, weekStart, weekEnd)
+      .then((map) => {
+        if (isActive) {
+          setCompletionMap(map);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load workout completion map:', err);
+        if (isActive) {
+          setCompletionMap({});
+        }
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [user.id, weekStart, weekEnd]);
+
   if (!phase) {
     return (
       <View style={styles.container}>
@@ -332,11 +357,18 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     });
     const totalExercises = editingExercises.length;
     const completedCount = editingExercises.filter((exercise) => exercise.completed).length;
-    const meta = totalExercises
-      ? `${completedCount}/${totalExercises} complete`
-      : selectedPlan.template?.title ?? 'Rest day';
+    const isFuture = selectedPlan.dateStr > todayKey;
+    const meta = !totalExercises
+      ? selectedPlan.template?.title ?? 'Rest day'
+      : isFuture
+      ? selectedPlan.template?.title
+        ? `${selectedPlan.template.title} • Scheduled`
+        : 'Scheduled workout'
+      : completionMap[selectedPlan.dateStr]
+      ? 'Completed'
+      : `${completedCount}/${totalExercises} complete`;
     return { fullDate, meta };
-  }, [selectedPlan, editingExercises]);
+  }, [selectedPlan, editingExercises, completionMap, todayKey]);
 
   const handleSelectDate = (dateStr: string) => {
     setSelectedDate(dateStr);
@@ -373,7 +405,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setIsDirty(true);
   };
 
-  const canToggleCompletion = Boolean(onToggleExercise && selectedPlan?.session);
+  const isFutureSelected = selectedPlan ? selectedPlan.dateStr > todayKey : false;
+  const canToggleCompletion = Boolean(onToggleExercise && selectedPlan?.session && !isFutureSelected);
 
   const handleToggleExerciseCompletion = useCallback(
     (index: number) => {
@@ -582,19 +615,17 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               contentContainerStyle={styles.weekStrip}
             >
               {weekPlansWithTemplates.map((plan) => {
-                const { weekday, day } = formatDateLabel(plan.dateStr);
-                const isActive = plan.dateStr === selectedDate;
-                const hasWorkout =
-                  (plan.session && plan.session.exercises.length > 0) ||
-                  plan.templateExercises.length > 0;
-                const isCompletedDay =
-                  plan.session?.exercises?.length
-                    ? plan.session.exercises.every((exercise) => exercise.completed)
-                    : false;
-                return (
-                  <TouchableOpacity
-                    key={plan.dateStr}
-                    style={[
+              const { weekday, day } = formatDateLabel(plan.dateStr);
+              const isActive = plan.dateStr === selectedDate;
+              const hasWorkout =
+                (plan.session && plan.session.exercises.length > 0) ||
+                plan.templateExercises.length > 0;
+              const isFutureDay = plan.dateStr > todayKey;
+              const isCompletedDay = !isFutureDay && Boolean(completionMap[plan.dateStr]);
+              return (
+                <TouchableOpacity
+                  key={plan.dateStr}
+                  style={[
                       styles.dayChip,
                       isActive && styles.dayChipActive,
                       isCompletedDay && styles.dayChipCompleted,

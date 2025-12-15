@@ -27,6 +27,7 @@ import {
   upsertWorkoutSessionWithExercises,
   deleteWorkoutSessionRemote,
 } from '../services/supabaseWorkoutService';
+import { getAppTimeZone } from '../utils/time';
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
@@ -393,7 +394,11 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       const currentState = stateRef.current;
       if (!currentState) return;
       try {
-        const remoteSessions = await fetchWorkoutSessionEntries(userId, phaseId);
+        const remoteSessions = await fetchWorkoutSessionEntries(
+          userId,
+          phaseId,
+          getAppTimeZone()
+        );
         await persistState({
           ...currentState,
           workoutSessions: remoteSessions,

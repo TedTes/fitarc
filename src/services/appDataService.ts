@@ -16,6 +16,12 @@ import {
   mapMuscleNameToGroup,
 } from '../utils/workoutAnalytics';
 import { mapPhaseRow } from './phaseService';
+import {
+  formatDateInTimeZone,
+  getAppTimeZone,
+  startOfDayISO,
+  startOfNextDayISO,
+} from '../utils/time';
 
 const WORKOUT_LOOKBACK_DAYS = 14;
 const PROGRESS_DEFAULT_WINDOW_DAYS = 90;
@@ -29,7 +35,11 @@ const extractBodyParts = (exerciseRow: any): MuscleGroup[] =>
     )
   );
 
-export const mapSessionRow = (row: any, fallbackPhaseId?: string): WorkoutSessionEntry => {
+export const mapSessionRow = (
+  row: any,
+  fallbackPhaseId?: string,
+  timeZone: string = getAppTimeZone()
+): WorkoutSessionEntry => {
   const exercises = (row.session_exercises || [])
     .sort((a: any, b: any) => (a.display_order || 0) - (b.display_order || 0))
     .map((exercise: any) => {
@@ -84,9 +94,11 @@ export const mapSessionRow = (row: any, fallbackPhaseId?: string): WorkoutSessio
       };
     });
 
+  const performedAt = row.performed_at ? new Date(row.performed_at) : new Date();
+
   return {
     id: row.id,
-    date: row.performed_at?.split('T')[0] || row.performed_at,
+    date: formatDateInTimeZone(performedAt, timeZone),
     phasePlanId: row.phase_id || fallbackPhaseId || 'phase',
     exercises,
   };
@@ -185,12 +197,17 @@ export type HomeScreenData = {
   };
 };
 
-export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => {
+export const fetchHomeData = async (
+  userId: string,
+  options?: { timeZone?: string }
+): Promise<HomeScreenData> => {
+  const timeZone = options?.timeZone ?? getAppTimeZone();
   const today = new Date();
-  const fromDate = new Date();
+  const fromDate = new Date(today);
   fromDate.setDate(today.getDate() - (WORKOUT_LOOKBACK_DAYS - 1));
-  const fromIso = fromDate.toISOString().split('T')[0];
-  const todayIso = today.toISOString().split('T')[0];
+  const todayKey = formatDateInTimeZone(today, timeZone);
+  const fromStartIso = startOfDayISO(fromDate, timeZone);
+  const tomorrowStartIso = startOfNextDayISO(today, timeZone);
 
   const phaseRes = await supabase
     .from('fitarc_phases')
@@ -238,11 +255,13 @@ export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => 
     `
     )
     .eq('user_id', userId)
-    .gte('performed_at', fromIso);
+    .gte('performed_at', fromStartIso)
+    .lt('performed_at', tomorrowStartIso);
 
   if (phaseId) {
     sessionsQuery.eq('phase_id', phaseId);
   }
+
 
   const photoQuery = supabase
     .from('fitarc_photo_checkins')
@@ -259,14 +278,29 @@ export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => 
     sessionsQuery.order('performed_at', { ascending: false }),
     photoQuery.maybeSingle(),
   ]);
-
+  console.log("recent Sessions111")
   if (sessionsRes.error) throw sessionsRes.error;
   if (photoRes.error) throw photoRes.error;
 
-  const recentSessions = (sessionsRes.data || []).map((row: any) => mapSessionRow(row, phase?.id));
-  const todaySession = recentSessions.find((session) => session.date === todayIso) || null;
+  const recentSessions = (sessionsRes.data || []).map((row: any) => {
+    console.log("kkkk")
+   return  mapSessionRow(row, phase?.id, timeZone)
+  });
+  console.log("recent Sessions")
+  console.log(recentSessions)
+  const todaySession = recentSessions.find((session) => session.date === todayKey) || null;
   const todayMealPlan = null;
   const lastPhotoCheckin = photoRes.data as PhotoCheckin | null;
+
+  if (__DEV__) {
+    console.log('[fetchHomeData]', {
+      timeZone,
+      todayKey,
+      fromStartIso,
+      tomorrowStartIso,
+      sessionCount: recentSessions.length,
+    });
+  }
 
   return {
     phase,
@@ -281,7 +315,8 @@ export const fetchHomeData = async (userId: string): Promise<HomeScreenData> => 
 export const fetchPhaseWorkoutSessions = async (
   userId: string,
   phaseId: string,
-  lookbackDays = 84
+  lookbackDays = 84,
+  timeZone: string = getAppTimeZone()
 ): Promise<WorkoutSessionEntry[]> => {
   const fromDate = new Date();
   fromDate.setDate(fromDate.getDate() - lookbackDays);
@@ -323,7 +358,7 @@ export const fetchPhaseWorkoutSessions = async (
     .order('performed_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []).map((row: any) => mapSessionRow(row, phaseId));
+  return (data || []).map((row: any) => mapSessionRow(row, phaseId, timeZone));
 };
 
 export const fetchMealPlansForRange = async (
@@ -375,6 +410,7 @@ export const fetchProgressData = async (
   phaseId: string,
   windowDays = PROGRESS_DEFAULT_WINDOW_DAYS
 ): Promise<ProgressData> => {
+  const timeZone = getAppTimeZone();
   const fromDate = new Date();
   fromDate.setDate(fromDate.getDate() - windowDays);
   const fromIso = fromDate.toISOString().split('T')[0];
@@ -436,7 +472,7 @@ export const fetchProgressData = async (
 
   const sessionRows = sessionsRes.data || [];
 
-  const sessionEntries = sessionRows.map((row: any) => mapSessionRow(row, phaseId));
+  const sessionEntries = sessionRows.map((row: any) => mapSessionRow(row, phaseId, timeZone));
   const analytics = buildWorkoutAnalytics(sessionEntries);
 
   return {

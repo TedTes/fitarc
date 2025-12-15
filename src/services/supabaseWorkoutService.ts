@@ -1,6 +1,8 @@
 import { supabase } from '../lib/supabaseClient';
 import { WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry } from '../types/domain';
 import { mapSessionRow } from './appDataService';
+import { getAppTimeZone } from '../utils/time';
+import { formatLocalDateYMD } from '../utils/date';
 
 export type SupabaseWorkoutSession = {
   id: string;
@@ -41,20 +43,34 @@ const parseRepsValue = (value: string): number | null => {
   return match ? parseInt(match[0], 10) : null;
 };
 
+const parseYMDToDate = (value: string): Date => {
+  const [year, month, day] = value.split('-').map((part) => parseInt(part, 10) || 0);
+  return new Date(year, Math.max(0, month - 1), day || 1);
+};
+
 const buildSetPayloads = (exercise: WorkoutSessionExercise): WorkoutSetEntry[] => {
-  if (exercise.setDetails && exercise.setDetails.length) {
-    return exercise.setDetails;
+  if (!exercise.setDetails || !exercise.setDetails.length) {
+    return [];
   }
-  const count = typeof exercise.sets === 'number' && exercise.sets > 0 ? exercise.sets : 0;
-  if (!count) return [];
-  const repsValue = parseRepsValue(exercise.reps);
-  return Array.from({ length: count }).map((_, index) => ({
-    setNumber: index + 1,
-    reps: repsValue ?? undefined,
-    weight: undefined,
-    rpe: undefined,
-    restSeconds: undefined,
+  return exercise.setDetails.map((set, index) => ({
+    setNumber: set?.setNumber ?? index + 1,
+    weight: set?.weight,
+    reps: set?.reps,
+    rpe: set?.rpe,
+    restSeconds: set?.restSeconds,
   }));
+};
+
+const buildDateRange = (start: string, end: string): string[] => {
+  const results: string[] = [];
+  const startDate = parseYMDToDate(start);
+  const endDate = parseYMDToDate(end);
+  const cursor = new Date(startDate);
+  while (cursor.getTime() <= endDate.getTime()) {
+    results.push(formatLocalDateYMD(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return results;
 };
 
 /**
@@ -147,7 +163,8 @@ export const logWorkoutSet = async ({
  */
 export const fetchWorkoutSessionEntries = async (
   userId: string,
-  phasePlanId?: string
+  phasePlanId?: string,
+  timeZone: string = getAppTimeZone()
 ): Promise<WorkoutSessionEntry[]> => {
   const query = supabase
     .from('fitarc_workout_sessions')
@@ -197,7 +214,7 @@ export const fetchWorkoutSessionEntries = async (
 
   const rows = (data as any[]) || [];
 
-  return rows.map((session) => mapSessionRow(session, phasePlanId));
+  return rows.map((session) => mapSessionRow(session, phasePlanId, timeZone));
 };
 
 type UpsertWorkoutSessionInput = {
@@ -330,7 +347,7 @@ export const upsertWorkoutSessionWithExercises = async ({
 
   if (sessionRes.error) throw sessionRes.error;
 
-  return mapSessionRow(sessionRes.data, phaseId);
+  return mapSessionRow(sessionRes.data, phaseId, getAppTimeZone());
 };
 
 type DeleteWorkoutSessionInput = {
@@ -360,4 +377,83 @@ export const deleteWorkoutSessionRemote = async ({
     .delete()
     .eq('id', existingRes.data.id);
   if (deleteSessionRes.error) throw deleteSessionRes.error;
+};
+
+export const fetchWorkoutCompletionMap = async (
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<Record<string, boolean>> => {
+  const rangeDays = buildDateRange(startDate, endDate);
+  if (!rangeDays.length) {
+    return {};
+  }
+  const dayMap: Record<string, boolean> = {};
+  rangeDays.forEach((day) => {
+    dayMap[day] = false;
+  });
+
+  const { data: sessionRows, error: sessionError } = await supabase
+    .from('fitarc_workout_sessions')
+    .select('id, performed_at')
+    .eq('user_id', userId)
+    .gte('performed_at', startDate)
+    .lte('performed_at', endDate);
+
+  if (sessionError) throw sessionError;
+  const sessions = sessionRows || [];
+  if (!sessions.length) {
+    return dayMap;
+  }
+
+  const sessionIds = sessions.map((session) => session.id);
+  const { data: exerciseRows, error: exerciseError } = await supabase
+    .from('fitarc_workout_session_exercises')
+    .select('id, session_id')
+    .in('session_id', sessionIds);
+  if (exerciseError) throw exerciseError;
+
+  const exerciseToSession = new Map<string, string>();
+  (exerciseRows || []).forEach((row) => {
+    if (row?.id && row.session_id) {
+      exerciseToSession.set(row.id, row.session_id);
+    }
+  });
+
+  const sessionExerciseIds = Array.from(exerciseToSession.keys());
+  const sessionSetCounts: Record<string, number> = {};
+
+  if (sessionExerciseIds.length) {
+    const { data: setRows, error: setError } = await supabase
+      .from('fitarc_workout_sets')
+      .select('session_exercise_id')
+      .in('session_exercise_id', sessionExerciseIds);
+    if (setError) throw setError;
+
+    (setRows || []).forEach((row) => {
+      const sessionExerciseId = row?.session_exercise_id;
+      if (!sessionExerciseId) return;
+      const sessionId = exerciseToSession.get(sessionExerciseId);
+      if (sessionId) {
+        sessionSetCounts[sessionId] = (sessionSetCounts[sessionId] || 0) + 1;
+      }
+    });
+  }
+
+  const todayKey = formatLocalDateYMD(new Date());
+
+  sessions.forEach((session) => {
+    const sessionDate = session.performed_at
+      ? formatLocalDateYMD(new Date(session.performed_at))
+      : null;
+    if (!sessionDate) return;
+    if (!(sessionDate in dayMap)) return;
+    if (sessionDate > todayKey) return;
+    const setCount = sessionSetCounts[session.id] || 0;
+    if (setCount > 0) {
+      dayMap[sessionDate] = true;
+    }
+  });
+
+  return dayMap;
 };

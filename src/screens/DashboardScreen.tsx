@@ -369,7 +369,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onToggleWorkoutExercise,
   onCreateSession,
 }) => {
-  const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
+  const { data: homeData } = useHomeScreenData(user.id);
   const [celebrationVisible, setCelebrationVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const [exercisePreview, setExercisePreview] = useState<{
@@ -382,7 +382,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     ? workoutSessions
     : homeData?.recentSessions ?? [];
   
-  // ✅ FIX: Dashboard always shows TODAY only
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   
@@ -474,6 +473,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       Alert.alert('Meals', err?.message || 'Unable to update completion.');
     }
   };
+
   const renderMealGroup = (mealType: string) => {
     const entries = mealsByType[mealType] ?? [];
     const isLastGroup = allMealTypes[allMealTypes.length - 1] === mealType;
@@ -533,18 +533,27 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     };
   });
   
-  const completedExercises = enhancedExercises.filter(e => e.completed);
-  const pendingExercises = enhancedExercises.filter(e => !e.completed);
+  const completedExercises = enhancedExercises.filter((e) => e.completed);
+  const pendingExercises = enhancedExercises.filter((e) => !e.completed);
   
-  // ✅ FIX: Only show pending items on dashboard for quick action
-  const visibleWorkoutCards = canLogWorkouts ? pendingExercises : enhancedExercises;
+  // Show pending items first, but keep completed ones visible for context
+  const visibleWorkoutCards = canLogWorkouts
+    ? [...pendingExercises, ...completedExercises]
+    : enhancedExercises;
   
   const totalWorkoutCount = enhancedExercises.length;
   const completedWorkoutCount = completedExercises.length;
+  const allWorkoutsCompleted =
+    totalWorkoutCount > 0 && completedWorkoutCount === totalWorkoutCount;
   
   const workoutProgress = totalWorkoutCount > 0 ? completedWorkoutCount / totalWorkoutCount : 0;
   const hasPendingLogs = pendingExercises.length > 0;
   const showCompletionSummary = canLogWorkouts && !hasPendingLogs && totalWorkoutCount > 0;
+  const workoutChipLabel = !totalWorkoutCount
+    ? 'No workouts today'
+    : allWorkoutsCompleted
+    ? 'Workouts complete'
+    : `${completedWorkoutCount}/${totalWorkoutCount} complete`;
   const totalMealCount = hasDailyMeal ? totalMealEntries : 0;
   const completedMealCount = 0;
 
@@ -588,83 +597,115 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </TouchableOpacity>
           )}
         </View>
-      ) : canLogWorkouts && completedExercises.length === totalWorkoutCount && totalWorkoutCount > 0 ? (
-        <View style={styles.allCompleteCard}>
-          <Text style={styles.allCompleteEmoji}>💪</Text>
-          <Text style={styles.allCompleteTitle}>Workout Complete!</Text>
-          <Text style={styles.allCompleteMeta}>
-            {totalWorkoutCount} exercises · {enhancedExercises.reduce((sum, ex) => sum + ex.setCount, 0)} total sets
-          </Text>
-        </View>
       ) : (
-        <View style={styles.verticalList}>
-          {visibleWorkoutCards.map((exercise, index) => {
-            const actualIndex = enhancedExercises.findIndex((e) => e.name === exercise.name);
-            const isCompleted = exercise.completed;
-            return (
-              <SwipeableCard
-                key={`${todayStr}-${exercise.name}-${index}`}
-                enabled={canLogWorkouts && !isCompleted}
-                onSwipeRight={() => handleSwipeExercise(exercise.name)}
+        <>
+          {totalWorkoutCount > 0 && (
+            <View
+              style={[
+                styles.workoutCompletionChip,
+                allWorkoutsCompleted && styles.workoutCompletionChipActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.workoutCompletionChipText,
+                  allWorkoutsCompleted && styles.workoutCompletionChipTextActive,
+                ]}
               >
-                <TouchableWithoutFeedback onPress={() => openExercisePreview(exercise, enhancedExercises)}>
-                  <LinearGradient
-                    colors={isCompleted ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
-                    style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
+                {workoutChipLabel}
+              </Text>
+            </View>
+          )}
+
+          {canLogWorkouts && allWorkoutsCompleted && (
+            <View style={styles.allCompleteCard}>
+              <Text style={styles.allCompleteEmoji}>💪</Text>
+              <Text style={styles.allCompleteTitle}>Workout Complete!</Text>
+              <Text style={styles.allCompleteMeta}>
+                {totalWorkoutCount} exercises ·{' '}
+                {enhancedExercises.reduce((sum, ex) => sum + ex.setCount, 0)} total sets
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.verticalList}>
+            {visibleWorkoutCards.map((exercise, index) => {
+              const actualIndex = enhancedExercises.findIndex((e) => e.name === exercise.name);
+              const isCompleted = exercise.completed;
+              return (
+                <SwipeableCard
+                  key={`${todayStr}-${exercise.name}-${index}`}
+                  enabled={canLogWorkouts && !isCompleted}
+                  onSwipeRight={() => handleSwipeExercise(exercise.name)}
+                >
+                  <TouchableWithoutFeedback
+                    onPress={() => openExercisePreview(exercise, enhancedExercises)}
                   >
-                    <View style={styles.exerciseCardHeader}>
-                      <Text style={styles.exerciseBadge}>#{actualIndex + 1}</Text>
-                      {isCompleted && (
-                        <View style={styles.completedBadge}>
-                          <Text style={styles.completedBadgeText}>✓</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    <Text style={styles.exerciseName}>{exercise.name}</Text>
-
-                    <View style={[styles.muscleTag, { backgroundColor: getMuscleTagColor(exercise.bodyParts) }]}>
-                      <Text style={styles.muscleTagText}>{formatBodyPartList(exercise.bodyParts)}</Text>
-                    </View>
-
-                    <View style={styles.exerciseMetricBlock}>
-                      <View style={styles.metricHeader}>
-                        <Text style={styles.metricLabel}>Sets</Text>
-                        <Text style={styles.metricValue}>{exercise.setCount} sets</Text>
+                    <LinearGradient
+                      colors={isCompleted ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
+                      style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
+                    >
+                      <View style={styles.exerciseCardHeader}>
+                        <Text style={styles.exerciseBadge}>#{actualIndex + 1}</Text>
+                        {isCompleted && (
+                          <View style={styles.completedBadge}>
+                            <Text style={styles.completedBadgeText}>✓</Text>
+                          </View>
+                        )}
                       </View>
-                      {renderBarRow(Math.min(WORKOUT_BAR_TOTAL, exercise.setCount), WORKOUT_BAR_TOTAL)}
-                    </View>
 
-                    <View style={styles.exerciseMetricBlock}>
-                      <View style={styles.metricHeader}>
-                        <Text style={styles.metricLabel}>Reps</Text>
-                        <Text style={styles.metricValue}>{exercise.repRange}</Text>
-                      </View>
-                      {renderBarRow(exercise.repFillCount, REP_BAR_TOTAL)}
-                    </View>
+                      <Text style={styles.exerciseName}>{exercise.name}</Text>
 
-                    <Text style={styles.exerciseStatus}>
-                      {isCompleted
-                        ? '✓ Completed'
-                        : canLogWorkouts
-                        ? 'Swipe right to complete'
-                        : 'Tap to mark complete'}
-                    </Text>
-
-                    {canLogWorkouts && !isCompleted && (
-                      <TouchableOpacity
-                        style={styles.manualCompleteButton}
-                        onPress={() => handleSwipeExercise(exercise.name)}
+                      <View
+                        style={[
+                          styles.muscleTag,
+                          { backgroundColor: getMuscleTagColor(exercise.bodyParts) },
+                        ]}
                       >
-                        <Text style={styles.manualCompleteButtonText}>Mark Complete</Text>
-                      </TouchableOpacity>
-                    )}
-                  </LinearGradient>
-                </TouchableWithoutFeedback>
-              </SwipeableCard>
-            );
-          })}
-        </View>
+                        <Text style={styles.muscleTagText}>
+                          {formatBodyPartList(exercise.bodyParts)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.exerciseMetricBlock}>
+                        <View style={styles.metricHeader}>
+                          <Text style={styles.metricLabel}>Sets</Text>
+                          <Text style={styles.metricValue}>{exercise.setCount} sets</Text>
+                        </View>
+                        {renderBarRow(Math.min(WORKOUT_BAR_TOTAL, exercise.setCount), WORKOUT_BAR_TOTAL)}
+                      </View>
+
+                      <View style={styles.exerciseMetricBlock}>
+                        <View style={styles.metricHeader}>
+                          <Text style={styles.metricLabel}>Reps</Text>
+                          <Text style={styles.metricValue}>{exercise.repRange}</Text>
+                        </View>
+                        {renderBarRow(exercise.repFillCount, REP_BAR_TOTAL)}
+                      </View>
+
+                      <Text style={styles.exerciseStatus}>
+                        {isCompleted
+                          ? '✓ Completed'
+                          : canLogWorkouts
+                          ? 'Swipe right to complete'
+                          : 'Tap to mark complete'}
+                      </Text>
+
+                      {canLogWorkouts && !isCompleted && (
+                        <TouchableOpacity
+                          style={styles.manualCompleteButton}
+                          onPress={() => handleSwipeExercise(exercise.name)}
+                        >
+                          <Text style={styles.manualCompleteButtonText}>Mark Complete</Text>
+                        </TouchableOpacity>
+                      )}
+                    </LinearGradient>
+                  </TouchableWithoutFeedback>
+                </SwipeableCard>
+              );
+            })}
+          </View>
+        </>
       )}
     </View>
   );
@@ -1467,6 +1508,27 @@ const styles = StyleSheet.create({
   },
   mealCompletionChipTextActive: {
     color: '#00F5A0',
+  },
+  workoutCompletionChip: {
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+  },
+  workoutCompletionChipActive: {
+    borderColor: '#6C63FF',
+    backgroundColor: 'rgba(108,99,255,0.12)',
+  },
+  workoutCompletionChipText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  workoutCompletionChipTextActive: {
+    color: '#B6B0FF',
   },
   mealEmptyEntryText: {
     color: '#A0A3BD',
