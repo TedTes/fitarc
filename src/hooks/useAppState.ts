@@ -29,6 +29,8 @@ import {
 } from '../services/supabaseWorkoutService';
 import { getAppTimeZone } from '../utils/time';
 
+const ENABLE_STATE_STORAGE = false;
+
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
     (existing) => existing.date === log.date && existing.phasePlanId === log.phasePlanId
@@ -128,6 +130,10 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     try {
       setIsLoading(true);
       setError(null);
+      if (!ENABLE_STATE_STORAGE) {
+        setState(createEmptyAppState());
+        return;
+      }
       const loadedState = await storageAdapter.getAppState();
       const normalizedState = loadedState
         ? { ...loadedState, workoutDataVersion: loadedState.workoutDataVersion ?? 0 }
@@ -143,6 +149,10 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
   };
 
   const persistState = useCallback(async (newState: AppState) => {
+    if (!ENABLE_STATE_STORAGE) {
+      setState(newState);
+      return;
+    }
     try {
       await storageAdapter.saveAppState(newState);
       setState(newState);

@@ -415,6 +415,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         const target = prev[index];
         if (!target) return prev;
         onToggleExercise?.(selectedPlan.dateStr, target.name);
+        setIsDirty(true);
         return prev.map((exercise, idx) =>
           idx === index ? { ...exercise, completed: !exercise.completed } : exercise
         );
@@ -539,7 +540,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                           exercise.completed && styles.completeToggleTextActive,
                         ]}
                       >
-                        {exercise.completed ? '✓ Done' : 'Mark'}
+                        {exercise.completed ? '✓ Done' : 'Complete'}
                       </Text>
                     </TouchableOpacity>
                   )}

@@ -263,34 +263,18 @@ export const fetchHomeData = async (
   }
 
 
-  const photoQuery = supabase
-    .from('fitarc_photo_checkins')
-    .select('*')
-    .eq('user_id', userId)
-    .order('date', { ascending: false })
-    .limit(1);
-
-  if (phaseId) {
-    photoQuery.eq('phase_id', phaseId);
-  }
-
-  const [sessionsRes, photoRes] = await Promise.all([
+  const [sessionsRes] = await Promise.all([
     sessionsQuery.order('performed_at', { ascending: false }),
-    photoQuery.maybeSingle(),
   ]);
-  console.log("recent Sessions111")
   if (sessionsRes.error) throw sessionsRes.error;
-  if (photoRes.error) throw photoRes.error;
 
   const recentSessions = (sessionsRes.data || []).map((row: any) => {
-    console.log("kkkk")
    return  mapSessionRow(row, phase?.id, timeZone)
   });
-  console.log("recent Sessions")
-  console.log(recentSessions)
+
   const todaySession = recentSessions.find((session) => session.date === todayKey) || null;
   const todayMealPlan = null;
-  const lastPhotoCheckin = photoRes.data as PhotoCheckin | null;
+  const lastPhotoCheckin = null;
 
   if (__DEV__) {
     console.log('[fetchHomeData]', {
