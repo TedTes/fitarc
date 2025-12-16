@@ -3,7 +3,6 @@ import {
   AppState,
   User,
   PhasePlan,
-  DailyConsistencyLog,
   PhotoCheckin,
   ProgressEstimate,
   createEmptyAppState,
@@ -14,8 +13,6 @@ import {
   HabitType,
   DailyMealPlan,
 } from '../types/domain';
-import { StorageAdapter } from '../storage';
-import { generateSeedPerformanceData } from '../utils/performanceTracker';
 import {
   createSessionForDate,
   toggleExerciseCompletion,
@@ -28,8 +25,6 @@ import {
   deleteWorkoutSessionRemote,
 } from '../services/supabaseWorkoutService';
 import { getAppTimeZone } from '../utils/time';
-
-const ENABLE_STATE_STORAGE = false;
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
@@ -110,7 +105,7 @@ const getOrCreateMealPlan = (
   return createMealPlanForDate(user, phasePlanId, date);
 };
 
-export const useAppState = (storageAdapter: StorageAdapter) => {
+export const useAppState = () => {
   const [state, setState] = useState<AppState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -123,45 +118,15 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
   }, [state]);
 
   useEffect(() => {
-    loadState();
+    // Initialize with empty state - no persistent storage
+    setState(createEmptyAppState());
+    setIsLoading(false);
   }, []);
 
-  const loadState = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      if (!ENABLE_STATE_STORAGE) {
-        setState(createEmptyAppState());
-        return;
-      }
-      const loadedState = await storageAdapter.getAppState();
-      const normalizedState = loadedState
-        ? { ...loadedState, workoutDataVersion: loadedState.workoutDataVersion ?? 0 }
-        : createEmptyAppState();
-      setState(normalizedState);
-    } catch (err) {
-      setError('Failed to load app state');
-      console.error('Load state error:', err);
-      setState(createEmptyAppState());
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  // Update in-memory state only (no persistence)
   const persistState = useCallback(async (newState: AppState) => {
-    if (!ENABLE_STATE_STORAGE) {
-      setState(newState);
-      return;
-    }
-    try {
-      await storageAdapter.saveAppState(newState);
-      setState(newState);
-    } catch (err) {
-      setError('Failed to save app state');
-      console.error('Persist state error:', err);
-      throw err;
-    }
-  }, [storageAdapter]);
+    setState(newState);
+  }, []);
 
   const hydrateFromRemote = useCallback(
     async (payload: {
@@ -191,7 +156,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       user,
     };
     await persistState(newState);
-  }, [state]);
+  }, [state, persistState]);
 
   const startPhase = useCallback(async (phase: PhasePlan) => {
     if (!state) return;
@@ -207,7 +172,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       },
     };
     await persistState(newState);
-  }, [state]);
+  }, [state, persistState]);
 
   const markDayConsistent = useCallback(async (log: DailyConsistencyLog) => {
     if (!state) return;
@@ -230,7 +195,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     };
 
     await persistState(newState);
-  }, [state]);
+  }, [state, persistState]);
 
   const addPhotoCheckin = useCallback(async (photo: PhotoCheckin) => {
     if (!state) return;
@@ -239,7 +204,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       photoCheckins: [...state.photoCheckins, photo],
     };
     await persistState(newState);
-  }, [state]);
+  }, [state, persistState]);
 
   const updateProgress = useCallback(async (estimate: ProgressEstimate) => {
     if (!state) return;
@@ -248,7 +213,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       progressEstimate: estimate,
     };
     await persistState(newState);
-  }, [state]);
+  }, [state, persistState]);
 
   const completePhase = useCallback(async () => {
     if (!state || !state.currentPhase) return;
@@ -260,7 +225,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
       },
     };
     await persistState(newState);
-  }, [state]);
+  }, [state, persistState]);
 
   const recalculateProgress = useCallback(async () => {
     if (!state?.currentPhase) return;
@@ -271,20 +236,6 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     await updateProgress(newEstimate);
   }, [state, updateProgress]);
 
-  const seedPerformanceData = useCallback(async (phase: PhasePlan, user: User) => {
-    if (!state) return;
-    const { workoutLogs, strengthSnapshots } = generateSeedPerformanceData(phase, user);
-    const newState: AppState = {
-      ...state,
-      workoutLogs,
-      strengthSnapshots,
-      workoutSessions: [],
-      habitLogs: [],
-      nextPhotoReminder: null,
-      workoutDataVersion: nextWorkoutVersion(state),
-    };
-    await persistState(newState);
-  }, [state]);
 
   const toggleWorkoutExercise = useCallback(
     async (date: string, exerciseName: string) => {
@@ -308,7 +259,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         workoutDataVersion: nextWorkoutVersion(state),
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const reorderWorkoutExercise = useCallback(
@@ -341,7 +292,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         workoutDataVersion: nextWorkoutVersion(state),
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const toggleHabit = useCallback(
@@ -370,7 +321,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         habitLogs: upsertHabitLog(state.habitLogs, updatedLog),
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const toggleMealCompletion = useCallback(
@@ -396,7 +347,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         mealPlans: updatedPlans,
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const loadWorkoutSessionsFromSupabase = useCallback(
@@ -430,7 +381,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         nextPhotoReminder: date,
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const createWorkoutSession = useCallback(
@@ -448,7 +399,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         workoutDataVersion: nextWorkoutVersion(state),
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const saveCustomWorkoutSession = useCallback(
@@ -475,7 +426,7 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         workoutDataVersion: nextWorkoutVersion(state),
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const deleteWorkoutSession = useCallback(
@@ -500,18 +451,12 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
         workoutDataVersion: nextWorkoutVersion(state),
       });
     },
-    [state]
+    [state, persistState]
   );
 
   const clearAllData = useCallback(async () => {
-    try {
-      await storageAdapter.clearAll();
-      setState(createEmptyAppState());
-    } catch (err) {
-      setError('Failed to clear data');
-      console.error('Clear data error:', err);
-      throw err;
-    }
+    // Simply reset to empty state (no AsyncStorage to clear)
+    setState(createEmptyAppState());
   }, []);
 
   return {
@@ -525,9 +470,8 @@ export const useAppState = (storageAdapter: StorageAdapter) => {
     updateProgress,
     completePhase,
     clearAllData,
-    refreshState: loadState,
+    refreshState: () => {}, // No-op since there's nothing to refresh from storage
     recalculateProgress,
-    seedPerformanceData,
     toggleWorkoutExercise,
     reorderWorkoutExercise,
     toggleHabit,

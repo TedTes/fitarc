@@ -3,7 +3,6 @@ import { StyleSheet, View, ActivityIndicator, Text } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { createStorageAdapter } from './src/storage';
 import { useAppState } from './src/hooks';
 import { 
   CurrentPhysiqueSelectionScreen,
@@ -59,7 +58,6 @@ const TabPlaceholder: React.FC<{ title: string; subtitle: string }> = ({ title, 
 );
 
 function AppContent() {
-  const storage = createStorageAdapter();
   const navigationRef = useNavigationContainerRef<RootTabParamList>();
   const { user: authUser, isLoading: isAuthLoading, isAuthenticated, signOut: signOutAuth } = useAuth();
   
@@ -69,9 +67,7 @@ function AppContent() {
     updateUser,
     addPhotoCheckin,
     startPhase,
-    markDayConsistent,
     recalculateProgress,
-    seedPerformanceData,
     toggleWorkoutExercise,
     createWorkoutSession,
     saveCustomWorkoutSession,
@@ -79,7 +75,7 @@ function AppContent() {
     clearAllData,
     loadWorkoutSessionsFromSupabase,
     hydrateFromRemote,
-  } = useAppState(storage);
+  } = useAppState();
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
   const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
   const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
@@ -146,7 +142,6 @@ function AppContent() {
       });
 
       await startPhase(remotePhase);
-      await seedPerformanceData(remotePhase, user);
       setOnboardingStep('complete');
       setPhotoCaptureVisible(false);
     } catch (error) {
@@ -241,12 +236,6 @@ function AppContent() {
     });
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
     setOnboardingStep('current_physique');
-  };
-
-  const openPhotoCapture = (phaseId: string, options?: { optional?: boolean }) => {
-    setPhotoCapturePhaseId(phaseId);
-    setPhotoCaptureOptional(!!options?.optional);
-    setPhotoCaptureVisible(true);
   };
 
   const handleLogout = async () => {
@@ -414,7 +403,6 @@ function AppContent() {
                 <DashboardScreen 
                   user={state.user}
                   phase={state.currentPhase}
-                  onMarkConsistent={markDayConsistent}
                   workoutLogs={state.workoutLogs}
                   workoutSessions={state.workoutSessions}
                   strengthSnapshots={state.strengthSnapshots}
