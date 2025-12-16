@@ -67,7 +67,6 @@ function AppContent() {
     updateUser,
     addPhotoCheckin,
     startPhase,
-    recalculateProgress,
     toggleWorkoutExercise,
     createWorkoutSession,
     saveCustomWorkoutSession,
@@ -161,11 +160,6 @@ function AppContent() {
     setOnboardingStep('current_physique');
   };
 
-  useEffect(() => {
-    if (state?.currentPhase && state.dailyConsistency.length > 0) {
-      recalculateProgress();
-    }
-  }, [state?.dailyConsistency?.length]);
 
   useEffect(() => {
     if (!authUser || !state) return;
@@ -403,9 +397,7 @@ function AppContent() {
                 <DashboardScreen 
                   user={state.user}
                   phase={state.currentPhase}
-                  workoutLogs={state.workoutLogs}
                   workoutSessions={state.workoutSessions}
-                  strengthSnapshots={state.strengthSnapshots}
                   progressEstimate={state.progressEstimate}
                   onProfilePress={() => setProfileVisible(true)}
                   onStartPhase={handleStartPhaseFromDashboard}
@@ -433,7 +425,7 @@ function AppContent() {
                   user={state.user}
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
-                  onCreateSession={createWorkoutSession}
+                  // onCreateSession={createWorkoutSession}
                   onSaveCustomSession={saveCustomWorkoutSession}
                   onDeleteSession={deleteWorkoutSession}
                   onToggleExercise={toggleWorkoutExercise}

@@ -162,15 +162,13 @@ export const APP_STATE_VERSION = 2;
 export type AppState = {
   user: User | null;
   currentPhase: PhasePlan | null;
-  dailyConsistency: DailyConsistencyLog[];
   photoCheckins: PhotoCheckin[];
-  progressEstimate: ProgressEstimate | null;
   workoutLogs: WorkoutLog[];
   strengthSnapshots: StrengthSnapshot[];
   workoutSessions: WorkoutSessionEntry[];
   mealPlans: DailyMealPlan[];
-  habitLogs: HabitLog[];
   nextPhotoReminder: string | null;
+  progressEstimate: ProgressEstimate | null;
   workoutDataVersion: number;
   version: number;
   lastModified: string;
@@ -179,15 +177,13 @@ export type AppState = {
 export const createEmptyAppState = (): AppState => ({
   user: null,
   currentPhase: null,
-  dailyConsistency: [],
   photoCheckins: [],
-  progressEstimate: null,
   workoutLogs: [],
   strengthSnapshots: [],
   workoutSessions: [],
   mealPlans: [],
-  habitLogs: [],
   nextPhotoReminder: null,
+  progressEstimate: null,
   workoutDataVersion: 0,
   version: APP_STATE_VERSION,
   lastModified: new Date().toISOString(),

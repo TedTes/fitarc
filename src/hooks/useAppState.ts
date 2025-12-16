@@ -9,8 +9,6 @@ import {
   WorkoutLog,
   WorkoutSessionEntry,
   WorkoutSessionExercise,
-  HabitLog,
-  HabitType,
   DailyMealPlan,
 } from '../types/domain';
 import {
@@ -51,18 +49,6 @@ const upsertWorkoutSession = (
     return updated;
   }
   return [...sessions, session];
-};
-
-const upsertHabitLog = (logs: HabitLog[], log: HabitLog): HabitLog[] => {
-  const index = logs.findIndex(
-    (existing) => existing.date === log.date && existing.phasePlanId === log.phasePlanId
-  );
-  if (index >= 0) {
-    const updated = [...logs];
-    updated[index] = log;
-    return updated;
-  }
-  return [...logs, log];
 };
 
 const upsertMealPlan = (plans: DailyMealPlan[], plan: DailyMealPlan): DailyMealPlan[] => {
@@ -163,37 +149,7 @@ export const useAppState = () => {
     const newState: AppState = {
       ...state,
       currentPhase: phase,
-      progressEstimate: {
-        phasePlanId: phase.id,
-        lastUpdated: new Date().toISOString(),
-        progressPercent: 0,
-        daysActive: 0,
-        daysLogged: 0,
-      },
     };
-    await persistState(newState);
-  }, [state, persistState]);
-
-  const markDayConsistent = useCallback(async (log: DailyConsistencyLog) => {
-    if (!state) return;
-    
-    const existingLogIndex = state.dailyConsistency.findIndex(
-      l => l.date === log.date && l.phasePlanId === log.phasePlanId
-    );
-
-    let updatedLogs: DailyConsistencyLog[];
-    if (existingLogIndex >= 0) {
-      updatedLogs = [...state.dailyConsistency];
-      updatedLogs[existingLogIndex] = log;
-    } else {
-      updatedLogs = [...state.dailyConsistency, log];
-    }
-
-    let newState: AppState = {
-      ...state,
-      dailyConsistency: updatedLogs,
-    };
-
     await persistState(newState);
   }, [state, persistState]);
 
@@ -226,16 +182,6 @@ export const useAppState = () => {
     };
     await persistState(newState);
   }, [state, persistState]);
-
-  const recalculateProgress = useCallback(async () => {
-    if (!state?.currentPhase) return;
-    
-    const { calculateProgress } = require('../utils/progressCalculator');
-    const newEstimate = calculateProgress(state.currentPhase, state.dailyConsistency);
-    
-    await updateProgress(newEstimate);
-  }, [state, updateProgress]);
-
 
   const toggleWorkoutExercise = useCallback(
     async (date: string, exerciseName: string) => {
@@ -290,35 +236,6 @@ export const useAppState = () => {
         ...state,
         workoutSessions: updatedSessions,
         workoutDataVersion: nextWorkoutVersion(state),
-      });
-    },
-    [state, persistState]
-  );
-
-  const toggleHabit = useCallback(
-    async (date: string, habit: HabitType, value: boolean) => {
-      if (!state || !state.currentPhase) return;
-      const existing =
-        state.habitLogs.find(
-          (log) => log.date === date && log.phasePlanId === state.currentPhase?.id
-        ) || {
-          id: `habit_${state.currentPhase.id}_${date}`,
-          date,
-          phasePlanId: state.currentPhase.id,
-          habits: { steps: false, sleep: false, hydration: false },
-        };
-
-      const updatedLog: HabitLog = {
-        ...existing,
-        habits: {
-          ...existing.habits,
-          [habit]: value,
-        },
-      };
-
-      await persistState({
-        ...state,
-        habitLogs: upsertHabitLog(state.habitLogs, updatedLog),
       });
     },
     [state, persistState]
@@ -465,16 +382,12 @@ export const useAppState = () => {
     error,
     updateUser,
     startPhase,
-    markDayConsistent,
     addPhotoCheckin,
     updateProgress,
     completePhase,
     clearAllData,
-    refreshState: () => {}, // No-op since there's nothing to refresh from storage
-    recalculateProgress,
     toggleWorkoutExercise,
     reorderWorkoutExercise,
-    toggleHabit,
     schedulePhotoReminder,
     toggleMealCompletion,
     loadWorkoutSessionsFromSupabase,

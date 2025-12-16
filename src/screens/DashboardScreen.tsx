@@ -40,9 +40,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
   User,
   PhasePlan,
-  WorkoutLog,
   ProgressEstimate,
-  StrengthSnapshot,
   WorkoutSessionEntry,
   MuscleGroup,
 } from '../types/domain';
@@ -58,15 +56,6 @@ const MEAL_TYPE_EMOJI: Record<string, string> = {
   Dinner: '🍽️',
 };
 
-// Updated muscle tag colors for better visibility
-const MUSCLE_TAG_COLORS: Record<string, string> = {
-  chest: 'rgba(108, 99, 255, 0.15)',
-  back: 'rgba(108, 99, 255, 0.15)',
-  legs: 'rgba(108, 99, 255, 0.15)',
-  shoulders: 'rgba(108, 99, 255, 0.15)',
-  arms: 'rgba(108, 99, 255, 0.15)',
-  core: 'rgba(108, 99, 255, 0.15)',
-};
 
 const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner'];
 
@@ -79,14 +68,10 @@ const getMealTypeEmoji = (mealType: string): string => {
   return '🍽️';
 };
 
-const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)'];
-const CARD_GRADIENT_COMPLETE = ['rgba(0, 245, 160, 0.15)', 'rgba(0, 214, 143, 0.1)'];
+const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)'] as const;
+const CARD_GRADIENT_COMPLETE = ['rgba(0, 245, 160, 0.15)', 'rgba(0, 214, 143, 0.1)'] as const;
 const ACTIVITY_TOTAL_DAYS = 84;
 const DAYS_PER_ACTIVITY_COLUMN = 7;
-
-const getMuscleTagColor = (muscles: MuscleGroup[]): string => {
-  return 'rgba(108, 99, 255, 0.15)';
-};
 
 const formatBodyPartList = (parts: MuscleGroup[]): string => {
   if (!parts.length) return 'Full Body';
@@ -120,9 +105,7 @@ const formatMealMacros = (entry: MealEntry): string => {
 type DashboardScreenProps = {
   user: User;
   phase: PhasePlan | null;
-  workoutLogs: WorkoutLog[];
-  strengthSnapshots: StrengthSnapshot[];
-  workoutSessions: WorkoutSessionEntry[];
+  workoutSessions:WorkoutSessionEntry[];
   progressEstimate: ProgressEstimate | null;
   onProfilePress?: () => void;
   onStartPhase?: () => void;
@@ -143,7 +126,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const { data: homeData } = useHomeScreenData(user.id);
   const derivedPhaseId = phase?.id ?? homeData?.phase?.id;
   const { sessions: phaseSessions } = useWorkoutSessions(user.id, derivedPhaseId);
-  const [celebrationVisible, setCelebrationVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const [isMarkingAll, setIsMarkingAll] = useState(false);
   
@@ -167,7 +149,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
-  const displayName = user?.name || 'Athlete';
+  const displayName = 'Athlete';
   const dateLabel = today.toLocaleDateString(undefined, {
     weekday: 'long',
     month: 'short',
