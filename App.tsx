@@ -22,7 +22,7 @@ import { PhotoCheckin, User } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/appDataService';
-import { ensureActivePhase, createPhase as createRemotePhase, completePhase as completeRemotePhase } from './src/services/phaseService';
+import { createPhase as createRemotePhase, completePhase as completeRemotePhase } from './src/services/phaseService';
 
 type RootTabParamList = {
   Home: undefined;
@@ -173,24 +173,21 @@ function AppContent() {
 
         if (remoteProfile) {
           await updateUser(remoteProfile);
-          const phase = await ensureActivePhase(authUser.id, {
-            currentLevelId: remoteProfile.currentPhysiqueLevel,
-            targetLevelId: remoteProfile.currentPhysiqueLevel + 1,
-          });
-
-          await hydrateFromRemote({ phase });
+          
+          // Fetch home data (includes existing phase if any)
           const homeData = await fetchHomeData(authUser.id);
           if (cancelled) return;
 
+          // Only hydrate with existing phase, don't create new one
           await hydrateFromRemote({
-            phase: homeData.phase ?? phase,
+            phase: homeData.phase ?? null,
             workoutSessions: homeData.recentSessions,
             mealPlans: homeData.todayMealPlan ? [homeData.todayMealPlan] : undefined,
           });
 
-          const activePhaseId = homeData.phase?.id ?? phase.id;
-          if (activePhaseId) {
-            await loadWorkoutSessionsFromSupabase(authUser.id, activePhaseId);
+          // Load workout sessions if there's an active phase
+          if (homeData.phase?.id) {
+            await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);
           }
           setOnboardingStep('complete');
         } else {

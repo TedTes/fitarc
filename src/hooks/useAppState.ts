@@ -309,10 +309,23 @@ export const useAppState = () => {
           session.phasePlanId === state.currentPhase!.id && session.date === date
       );
       if (existing) return;
+      
+      // Generate workout exercises based on user's training split
       const sessionEntry = createSessionForDate(state.user, state.currentPhase.id, date);
+      
+      // Save to Supabase database
+      const remoteSession = await upsertWorkoutSessionWithExercises({
+        userId: state.user.id,
+        phaseId: state.currentPhase.id,
+        date,
+        exercises: sessionEntry.exercises,
+      });
+
+      // Update local state with the session from Supabase (has proper IDs)
       await persistState({
         ...state,
-        workoutSessions: upsertWorkoutSession(state.workoutSessions, sessionEntry),
+        workoutSessions: upsertWorkoutSession(state.workoutSessions, remoteSession),
+        workoutLogs: upsertWorkoutLog(state.workoutLogs, sessionToWorkoutLog(remoteSession)),
         workoutDataVersion: nextWorkoutVersion(state),
       });
     },

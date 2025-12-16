@@ -325,13 +325,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const renderWorkoutsSection = () => (
     <View style={styles.section}>
-      {!hasSyncedWorkout ? (
+      {!resolvedPhase ? (
+        // No active phase - prompt to create one
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyEmoji}>🎯</Text>
+          <Text style={styles.emptyTitle}>No active arc</Text>
+          <Text style={styles.emptyText}>Create a new arc to start tracking your workouts.</Text>
+          {onStartPhase && (
+            <TouchableOpacity style={styles.startButton} onPress={onStartPhase}>
+              <Text style={styles.startButtonText}>Start New Arc</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : !hasSyncedWorkout ? (
+        // Active phase but no workout for today
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>📭</Text>
           <Text style={styles.emptyTitle}>No workout scheduled</Text>
           <Text style={styles.emptyText}>Start a session when ready to train.</Text>
           {onCreateSession && (
-            <TouchableOpacity style={styles.startButton} onPress={() => onCreateSession(todayStr)}>
+            <TouchableOpacity style={styles.startButton} onPress={handleCreateSession}>
               <Text style={styles.startButtonText}>Start Session</Text>
             </TouchableOpacity>
           )}
