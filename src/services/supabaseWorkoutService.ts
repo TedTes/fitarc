@@ -80,7 +80,7 @@ const buildDateRange = (start: string, end: string): string[] => {
 type CreateSessionInput = {
   userId: string;
   performedAt: string; // ISO string
-  phaseId?: string | null;
+  planId?: string | null;
   mood?: string;
   perceivedExertion?: number;
   notes?: string;
@@ -89,7 +89,7 @@ type CreateSessionInput = {
 export const createWorkoutSession = async ({
   userId,
   performedAt,
-  phaseId,
+  planId,
   mood,
   perceivedExertion,
   notes,
@@ -99,7 +99,7 @@ export const createWorkoutSession = async ({
     .insert({
       user_id: userId,
       performed_at: performedAt,
-      phase_id: phaseId ?? null,
+      plan_id: planId ?? null,
       mood: mood ?? null,
       perceived_exertion: perceivedExertion ?? null,
       notes: notes ?? null,
@@ -171,7 +171,7 @@ export const fetchWorkoutSessionEntries = async (
     .select(`
       id,
       user_id,
-      phase_id,
+      plan_id,
       performed_at,
       notes,
       mood,
@@ -203,7 +203,7 @@ export const fetchWorkoutSessionEntries = async (
     .eq('user_id', userId);
 
   if (phasePlanId) {
-    query.eq('phase_id', phasePlanId);
+    query.eq('plan_id', phasePlanId);
   }
 
   const { data, error } = await query.order('performed_at', { ascending: false });
@@ -219,7 +219,7 @@ export const fetchWorkoutSessionEntries = async (
 
 type UpsertWorkoutSessionInput = {
   userId: string;
-  phaseId: string;
+  planId: string;
   date: string;
   exercises: WorkoutSessionExercise[];
 };
@@ -247,7 +247,7 @@ const deleteExercisesForSession = async (sessionId: string) => {
 
 export const upsertWorkoutSessionWithExercises = async ({
   userId,
-  phaseId,
+  planId,
   date,
   exercises,
 }: UpsertWorkoutSessionInput): Promise<WorkoutSessionEntry> => {
@@ -257,7 +257,7 @@ export const upsertWorkoutSessionWithExercises = async ({
     .from('fitarc_workout_sessions')
     .select('id')
     .eq('user_id', userId)
-    .eq('phase_id', phaseId)
+    .eq('plan_id', planId)
     .eq('performed_at', performedAt)
     .maybeSingle();
 
@@ -272,7 +272,7 @@ export const upsertWorkoutSessionWithExercises = async ({
       .from('fitarc_workout_sessions')
       .insert({
         user_id: userId,
-        phase_id: phaseId,
+        plan_id: planId,
         performed_at: performedAt,
       })
       .select('id')
@@ -317,7 +317,7 @@ export const upsertWorkoutSessionWithExercises = async ({
       `
       id,
       user_id,
-      phase_id,
+      plan_id,
       performed_at,
       notes,
       session_exercises:fitarc_workout_session_exercises (
@@ -347,18 +347,18 @@ export const upsertWorkoutSessionWithExercises = async ({
 
   if (sessionRes.error) throw sessionRes.error;
 
-  return mapSessionRow(sessionRes.data, phaseId, getAppTimeZone());
+  return mapSessionRow(sessionRes.data, planId, getAppTimeZone());
 };
 
 type DeleteWorkoutSessionInput = {
   userId: string;
-  phaseId: string;
+  planId: string;
   date: string;
 };
 
 export const deleteWorkoutSessionRemote = async ({
   userId,
-  phaseId,
+  planId,
   date,
 }: DeleteWorkoutSessionInput) => {
   const performedAt = normalizeDate(date);
@@ -366,7 +366,7 @@ export const deleteWorkoutSessionRemote = async ({
     .from('fitarc_workout_sessions')
     .select('id')
     .eq('user_id', userId)
-    .eq('phase_id', phaseId)
+    .eq('plan_id', planId)
     .eq('performed_at', performedAt)
     .maybeSingle();
   if (existingRes.error) throw existingRes.error;

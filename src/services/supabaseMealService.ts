@@ -29,7 +29,7 @@ export type MealsByType = Record<string, MealEntry[]>;
 export type DailyMealRecord = {
   id: string;
   user_id: string;
-  phase_id: string | null;
+  plan_id: string | null;
   meal_plan_id: string | null;
   meal_date: string;
   completed: boolean;
@@ -93,7 +93,7 @@ export const getDailyMealForDate = async (
 ): Promise<DailyMealRecord | null> => {
   const { data, error } = await supabase
     .from('fitarc_daily_meals')
-    .select('id, user_id, phase_id, meal_plan_id, meal_date, completed')
+    .select('id, user_id, plan_id, meal_plan_id, meal_date, completed')
     .eq('user_id', userId)
     .eq('meal_date', mealDate)
     .maybeSingle();
@@ -118,7 +118,7 @@ export const ensureDailyMealForDate = async (
       meal_plan_id: mealPlanId ?? null,
       completed: false,
     })
-    .select('id, user_id, phase_id, meal_plan_id, meal_date, completed')
+    .select('id, user_id, plan_id, meal_plan_id, meal_date, completed')
     .single();
 
   if (error) throw error;
@@ -275,7 +275,7 @@ export const setDailyMealsCompleted = async (
     .from('fitarc_daily_meals')
     .update({ completed })
     .eq('id', dailyMealId)
-    .select('id, user_id, phase_id, meal_plan_id, meal_date, completed')
+    .select('id, user_id, plan_id, meal_plan_id, meal_date, completed')
     .single();
 
   if (error) throw error;

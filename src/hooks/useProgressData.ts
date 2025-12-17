@@ -5,12 +5,12 @@ const cache = new Map<string, ProgressData>();
 
 export const useProgressData = (
   userId?: string,
-  phaseId?: string,
+  planId?: string,
   windowDays?: number,
   version = 0
 ) => {
   const cacheKey =
-    userId && phaseId ? `${userId}:${phaseId}:${windowDays ?? ''}:${version}` : undefined;
+    userId && planId ? `${userId}:${planId}:${windowDays ?? ''}:${version}` : undefined;
   const [data, setData] = useState<ProgressData | null>(
     cacheKey && cache.has(cacheKey) ? cache.get(cacheKey)! : null
   );
@@ -18,12 +18,12 @@ export const useProgressData = (
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!userId || !phaseId) return;
+    if (!userId || !planId) return;
     try {
       setIsLoading(true);
       setError(null);
-      const result = await fetchProgressData(userId, phaseId, windowDays);
-      const key = `${userId}:${phaseId}:${windowDays ?? ''}:${version}`;
+      const result = await fetchProgressData(userId, planId, windowDays);
+      const key = `${userId}:${planId}:${windowDays ?? ''}:${version}`;
       cache.set(key, result);
       setData(result);
     } catch (err: any) {
@@ -31,7 +31,7 @@ export const useProgressData = (
     } finally {
       setIsLoading(false);
     }
-  }, [userId, phaseId, windowDays, version]);
+  }, [userId, planId, windowDays, version]);
 
   useEffect(() => {
     if (!cacheKey) return;

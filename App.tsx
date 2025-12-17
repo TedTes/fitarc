@@ -280,7 +280,7 @@ function AppContent() {
 
   // Check if user needs onboarding
   const shouldShowOnboarding =
-    !state?.user || (!state.currentPhase && onboardingStep !== 'complete');
+  !state?.user && onboardingStep !== 'complete';
 
   // Onboarding flow
   if (shouldShowOnboarding) {

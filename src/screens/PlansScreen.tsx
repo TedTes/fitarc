@@ -165,8 +165,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onDeleteSession,
   onToggleExercise,
 }) => {
-  const { sessions: remoteSessions } = useWorkoutSessions(user.id, phase?.id ?? undefined);
+  // Load sessions from database based on plan_id
+  const { sessions: remoteSessions, isLoading: sessionsLoading } = useWorkoutSessions(
+    user.id, 
+    phase?.id ?? undefined
+  );
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
+  
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
   const [exerciseModalVisible, setExerciseModalVisible] = useState(false);
   const [duplicateModalVisible, setDuplicateModalVisible] = useState(false);
@@ -175,9 +180,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [completionMap, setCompletionMap] = useState<Record<string, boolean>>({});
-  const seededDatesRef = useRef<Set<string>>(new Set());
 
-  const resolvedSessions = workoutSessions.length ? workoutSessions : remoteSessions;
+  // Use database sessions (remoteSessions) - no fallback to static data
+  const resolvedSessions = remoteSessions;
 
   const convertCatalogExercise = useCallback(
     (entry: ExerciseCatalogEntry): WorkoutSessionExercise => {
@@ -198,6 +203,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     []
   );
 
+  // Build week plans from database sessions only
   const weekPlans = useMemo(() => {
     if (!phase) return [];
     const anchor = new Date();
@@ -215,6 +221,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     });
   }, [resolvedSessions, phase?.id]);
 
+  // Template exercises are only for suggestion UI, not auto-populated
   const weekPlansWithTemplates = useMemo(() => {
     if (!phase) return [];
     const sequence = TEMPLATE_SEQUENCE[user.trainingSplit] || TEMPLATE_SEQUENCE.custom;
@@ -255,9 +262,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const planSyncKey = selectedPlan
     ? selectedPlan.session
       ? `session-${selectedPlan.session.id}-${sessionFingerprint}`
-      : `template-${selectedPlan.dateStr}-${selectedPlan.templateExercises
-          .map((exercise) => exercise.exerciseId ?? exercise.name)
-          .join(',')}`
+      : `no-session-${selectedPlan.dateStr}`
     : null;
 
   const persistSession = useCallback(
@@ -268,38 +273,32 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     [onSaveCustomSession]
   );
 
+  // Sync editing exercises when selected plan changes or sessions update
   useEffect(() => {
-    if (!planSyncKey || !selectedPlan) {
+    if (!selectedPlan) {
       setEditingExercises([]);
       setIsDirty(false);
       lastSyncedKeyRef.current = null;
       return;
     }
+
+    // Only update if we're not in the middle of editing
     if (isDirty && lastSyncedKeyRef.current === planSyncKey) {
       return;
     }
-    const source =
-      selectedPlan.session && selectedPlan.session.exercises.length
-        ? selectedPlan.session.exercises
-        : selectedPlan.templateExercises;
-    setEditingExercises(createSessionExercises(source));
-    setIsDirty(false);
-    lastSyncedKeyRef.current = planSyncKey;
-  }, [planSyncKey, selectedPlan, isDirty]);
 
-  useEffect(() => {
-    const seedMissingSessions = async () => {
-      if (!onSaveCustomSession) return;
-      for (const plan of weekPlansWithTemplates) {
-        if (!plan.templateExercises.length) continue;
-        if (plan.session) continue;
-        if (seededDatesRef.current.has(plan.dateStr)) continue;
-        seededDatesRef.current.add(plan.dateStr);
-        await onSaveCustomSession(plan.dateStr, plan.templateExercises);
-      }
-    };
-    seedMissingSessions();
-  }, [weekPlansWithTemplates, onSaveCustomSession]);
+    // Load exercises from the database session if it exists
+    if (selectedPlan.session && selectedPlan.session.exercises.length > 0) {
+      setEditingExercises(createSessionExercises(selectedPlan.session.exercises));
+      setIsDirty(false);
+      lastSyncedKeyRef.current = planSyncKey;
+    } else {
+      // No session exists - clear exercises
+      setEditingExercises([]);
+      setIsDirty(false);
+      lastSyncedKeyRef.current = planSyncKey;
+    }
+  }, [planSyncKey, selectedPlan, isDirty]);
 
   useEffect(() => {
     if (!editingExercises.length) {
@@ -359,14 +358,14 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     const completedCount = editingExercises.filter((exercise) => exercise.completed).length;
     const isFuture = selectedPlan.dateStr > todayKey;
     const meta = !totalExercises
-      ? selectedPlan.template?.title ?? 'Rest day'
+      ? selectedPlan.template?.title ?? 'No workout'
       : isFuture
       ? selectedPlan.template?.title
         ? `${selectedPlan.template.title} • Scheduled`
         : 'Scheduled workout'
       : completionMap[selectedPlan.dateStr]
       ? 'Completed'
-      : `${completedCount}/${totalExercises} complete`;
+      : `${completedCount}/${totalExercises} exercises`;
     return { fullDate, meta };
   }, [selectedPlan, editingExercises, completionMap, todayKey]);
 
@@ -501,17 +500,27 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         <View style={styles.emptyCard}>
           <Text style={styles.emptyIcon}>💪</Text>
           <Text style={styles.emptyTitle}>No workout planned</Text>
-          <Text style={styles.emptySubtitle}>Load the suggested session or start from scratch.</Text>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() =>
-              selectedPlan.templateExercises.length ? handleAddFromTemplate() : setExerciseModalVisible(true)
-            }
-          >
-            <Text style={styles.primaryButtonText}>
-              {selectedPlan.templateExercises.length ? 'Load suggested workout' : 'Create workout'}
-            </Text>
-          </TouchableOpacity>
+          <Text style={styles.emptySubtitle}>
+            {selectedPlan.templateExercises.length 
+              ? 'Load the suggested session or start from scratch.' 
+              : 'Create a workout for this day.'}
+          </Text>
+          <View style={styles.buttonRow}>
+            {selectedPlan.templateExercises.length > 0 && (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.secondaryButton]}
+                onPress={handleAddFromTemplate}
+              >
+                <Text style={styles.actionButtonText}>Load Template</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.actionButton, styles.primaryButton]}
+              onPress={() => setExerciseModalVisible(true)}
+            >
+              <Text style={styles.actionButtonText}>Create Session</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       );
     }
@@ -618,9 +627,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               {weekPlansWithTemplates.map((plan) => {
               const { weekday, day } = formatDateLabel(plan.dateStr);
               const isActive = plan.dateStr === selectedDate;
-              const hasWorkout =
-                (plan.session && plan.session.exercises.length > 0) ||
-                plan.templateExercises.length > 0;
+              const hasWorkout = plan.session && plan.session.exercises.length > 0;
               const isFutureDay = plan.dateStr > todayKey;
               const isCompletedDay = !isFutureDay && Boolean(completionMap[plan.dateStr]);
               return (
@@ -694,7 +701,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                 </View>
               )}
             </View>
-            {renderSession()}
+            {sessionsLoading ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptySubtitle}>Loading...</Text>
+              </View>
+            ) : (
+              renderSession()
+            )}
           </View>
         </ScrollView>
       </LinearGradient>
@@ -1159,17 +1172,33 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textAlign: 'center',
   },
-  primaryButton: {
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+    width: '100%',
+  },
+  actionButton: {
+    flex: 1,
     paddingVertical: 14,
-    paddingHorizontal: 32,
+    paddingHorizontal: 20,
     borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryButton: {
     backgroundColor: COLORS.accent,
     shadowColor: COLORS.accent,
     shadowOpacity: 0.35,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
   },
-  primaryButtonText: {
+  secondaryButton: {
+    backgroundColor: COLORS.elevated,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+  },
+  actionButtonText: {
     color: COLORS.textPrimary,
     fontSize: 15,
     fontWeight: '600',

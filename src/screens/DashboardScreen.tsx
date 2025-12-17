@@ -328,27 +328,42 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       {!resolvedPhase ? (
         // No active phase - prompt to create one
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>🎯</Text>
-          <Text style={styles.emptyTitle}>No active arc</Text>
-          <Text style={styles.emptyText}>Create a new arc to start tracking your workouts.</Text>
+        <Text style={styles.emptyEmoji}>🎯</Text>
+        <Text style={styles.emptyTitle}>No active plan</Text>
+        <Text style={styles.emptyText}>Create a structured plan or start training now.</Text>
+        
+        <View style={styles.buttonRow}>
           {onStartPhase && (
-            <TouchableOpacity style={styles.startButton} onPress={onStartPhase}>
-              <Text style={styles.startButtonText}>Start New Arc</Text>
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.primaryButton]} 
+              onPress={onStartPhase}
+            >
+              <Text style={styles.actionButtonText}>Create Plan</Text>
+            </TouchableOpacity>
+          )}
+          
+          {onCreateSession && (
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.secondaryButton]} 
+              onPress={() => onCreateSession(todayStr)}
+            >
+              <Text style={styles.actionButtonText}>Start Session</Text>
             </TouchableOpacity>
           )}
         </View>
+      </View>
       ) : !hasSyncedWorkout ? (
         // Active phase but no workout for today
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>📭</Text>
-          <Text style={styles.emptyTitle}>No workout scheduled</Text>
-          <Text style={styles.emptyText}>Start a session when ready to train.</Text>
-          {onCreateSession && (
-            <TouchableOpacity style={styles.startButton} onPress={handleCreateSession}>
-              <Text style={styles.startButtonText}>Start Session</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        <Text style={styles.emptyEmoji}>📭</Text>
+        <Text style={styles.emptyTitle}>No workout scheduled</Text>
+        <Text style={styles.emptyText}>Create a session when ready to train.</Text>
+        {onCreateSession && (
+          <TouchableOpacity style={styles.startButton} onPress={() => onCreateSession(todayStr)}>
+            <Text style={styles.startButtonText}>Create Session</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       ) : (
         <View style={styles.verticalList}>
           {visibleWorkoutCards.map((exercise, index) => {
@@ -989,5 +1004,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+    width: '100%',
+  },
+  
+  actionButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  primaryButton: {
+    backgroundColor: '#4C9AFF',
+  },
+  
+  secondaryButton: {
+    backgroundColor: '#2A2D35',
+    borderWidth: 1,
+    borderColor: '#3A3D45',
+  },
+  
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

@@ -268,13 +268,13 @@ export const useAppState = () => {
   );
 
   const loadWorkoutSessionsFromSupabase = useCallback(
-    async (userId: string, phaseId?: string) => {
+    async (userId: string, planId?: string) => {
       const currentState = stateRef.current;
       if (!currentState) return;
       try {
         const remoteSessions = await fetchWorkoutSessionEntries(
           userId,
-          phaseId,
+          planId,
           getAppTimeZone()
         );
         await persistState({
@@ -316,7 +316,7 @@ export const useAppState = () => {
       // Save to Supabase database
       const remoteSession = await upsertWorkoutSessionWithExercises({
         userId: state.user.id,
-        phaseId: state.currentPhase.id,
+        planId: state.currentPhase.id,
         date,
         exercises: sessionEntry.exercises,
       });
@@ -344,7 +344,7 @@ export const useAppState = () => {
 
       const remoteSession = await upsertWorkoutSessionWithExercises({
         userId: state.user.id,
-        phaseId: state.currentPhase.id,
+        planId: state.currentPhase.id,
         date,
         exercises: normalizedExercises,
       });
@@ -364,7 +364,7 @@ export const useAppState = () => {
       if (!state || !state.currentPhase || !state.user) return;
       await deleteWorkoutSessionRemote({
         userId: state.user.id,
-        phaseId: state.currentPhase.id,
+        planId: state.currentPhase.id,
         date,
       });
       const filteredSessions = state.workoutSessions.filter(

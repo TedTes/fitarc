@@ -99,7 +99,7 @@ export const mapSessionRow = (
   return {
     id: row.id,
     date: formatDateInTimeZone(performedAt, timeZone),
-    phasePlanId: row.phase_id || fallbackPhaseId || 'phase',
+    phasePlanId: row.plan_id || fallbackPhaseId || 'phase',
     exercises,
   };
 };
@@ -135,7 +135,7 @@ const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
     return {
       id: row.id,
       date: row.meal_date,
-      phasePlanId: phasePlanId || row.phase_id || 'phase',
+      phasePlanId: phasePlanId || row.plan_id || 'phase',
       meals,
       completed: dayCompleted,
     };
@@ -150,7 +150,7 @@ const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
   return {
     id: row.id,
     date: row.date,
-    phasePlanId: phasePlanId || row.phase_id || 'phase',
+    phasePlanId: phasePlanId || row.plan_id || 'phase',
     meals,
     completed:
       typeof row.completed === 'boolean'
@@ -210,7 +210,7 @@ export const fetchHomeData = async (
   const tomorrowStartIso = startOfNextDayISO(today, timeZone);
 
   const phaseRes = await supabase
-    .from('fitarc_phases')
+    .from('fitarc_workout_plans')
     .select('*')
     .eq('user_id', userId)
     .eq('status', 'active')
@@ -220,7 +220,7 @@ export const fetchHomeData = async (
 
   if (phaseRes.error) throw phaseRes.error;
   const phase = phaseRes.data ? mapPhaseRow(phaseRes.data) : null;
-  const phaseId = phase?.id;
+  const planId = phase?.id;
 
   const sessionsQuery = supabase
     .from('fitarc_workout_sessions')
@@ -228,7 +228,7 @@ export const fetchHomeData = async (
       `
       id,
       user_id,
-      phase_id,
+      plan_id,
       performed_at,
       notes,
       session_exercises:fitarc_workout_session_exercises (
@@ -258,8 +258,8 @@ export const fetchHomeData = async (
     .gte('performed_at', fromStartIso)
     .lt('performed_at', tomorrowStartIso);
 
-  if (phaseId) {
-    sessionsQuery.eq('phase_id', phaseId);
+  if (planId) {
+    sessionsQuery.eq('plan_id', planId);
   }
 
 
@@ -298,7 +298,7 @@ export const fetchHomeData = async (
 
 export const fetchPhaseWorkoutSessions = async (
   userId: string,
-  phaseId: string,
+  planId: string,
   lookbackDays = 84,
   timeZone: string = getAppTimeZone()
 ): Promise<WorkoutSessionEntry[]> => {
@@ -310,7 +310,7 @@ export const fetchPhaseWorkoutSessions = async (
       `
       id,
       user_id,
-      phase_id,
+      plan_id,
       performed_at,
       notes,
       session_exercises:fitarc_workout_session_exercises (
@@ -337,12 +337,12 @@ export const fetchPhaseWorkoutSessions = async (
     `
     )
     .eq('user_id', userId)
-    .eq('phase_id', phaseId)
+    .eq('plan_id', planId)
     .gte('performed_at', fromDate.toISOString().split('T')[0])
     .order('performed_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []).map((row: any) => mapSessionRow(row, phaseId, timeZone));
+  return (data || []).map((row: any) => mapSessionRow(row, planId, timeZone));
 };
 
 export const fetchMealPlansForRange = async (
@@ -356,7 +356,7 @@ export const fetchMealPlansForRange = async (
       `
       id,
       user_id,
-      phase_id,
+      plan_id,
       meal_date,
       completed,
       notes,
@@ -391,7 +391,7 @@ export type ProgressData = {
 
 export const fetchProgressData = async (
   userId: string,
-  phaseId: string,
+  planId: string,
   windowDays = PROGRESS_DEFAULT_WINDOW_DAYS
 ): Promise<ProgressData> => {
   const timeZone = getAppTimeZone();
@@ -401,10 +401,10 @@ export const fetchProgressData = async (
 
   const [phaseRes, sessionsRes, photosRes] = await Promise.all([
     supabase
-      .from('fitarc_phases')
+      .from('fitarc_workout_plans')
       .select('*')
       .eq('user_id', userId)
-      .eq('id', phaseId)
+      .eq('id', planId)
       .single(),
     supabase
       .from('fitarc_workout_sessions')
@@ -412,7 +412,7 @@ export const fetchProgressData = async (
         `
         id,
         user_id,
-        phase_id,
+        plan_id,
         performed_at,
         notes,
         session_exercises:fitarc_workout_session_exercises (
@@ -439,14 +439,14 @@ export const fetchProgressData = async (
       `
       )
       .eq('user_id', userId)
-      .eq('phase_id', phaseId)
+      .eq('plan_id', planId)
       .gte('performed_at', fromIso)
       .order('performed_at', { ascending: false }),
     supabase
       .from('fitarc_photo_checkins')
       .select('*')
       .eq('user_id', userId)
-      .eq('phase_id', phaseId)
+      .eq('plan_id', planId)
       .order('date', { ascending: false }),
   ]);
 
@@ -456,7 +456,7 @@ export const fetchProgressData = async (
 
   const sessionRows = sessionsRes.data || [];
 
-  const sessionEntries = sessionRows.map((row: any) => mapSessionRow(row, phaseId, timeZone));
+  const sessionEntries = sessionRows.map((row: any) => mapSessionRow(row, planId, timeZone));
   const analytics = buildWorkoutAnalytics(sessionEntries);
 
   return {

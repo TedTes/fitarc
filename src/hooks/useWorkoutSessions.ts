@@ -4,8 +4,8 @@ import { WorkoutSessionEntry } from '../types/domain';
 
 const sessionCache = new Map<string, WorkoutSessionEntry[]>();
 
-export const useWorkoutSessions = (userId?: string, phaseId?: string) => {
-  const cacheKey = userId && phaseId ? `${userId}:${phaseId}` : undefined;
+export const useWorkoutSessions = (userId?: string, planId?: string) => {
+  const cacheKey = userId && planId ? `${userId}:${planId}` : undefined;
   const [sessions, setSessions] = useState<WorkoutSessionEntry[]>(
     cacheKey && sessionCache.has(cacheKey) ? sessionCache.get(cacheKey)! : []
   );
@@ -13,12 +13,12 @@ export const useWorkoutSessions = (userId?: string, phaseId?: string) => {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!userId || !phaseId) return;
+    if (!userId || !planId) return;
     try {
       setIsLoading(true);
       setError(null);
-      const data = await fetchPhaseWorkoutSessions(userId, phaseId);
-      const key = `${userId}:${phaseId}`;
+      const data = await fetchPhaseWorkoutSessions(userId, planId);
+      const key = `${userId}:${planId}`;
       sessionCache.set(key, data);
       setSessions(data);
     } catch (err: any) {
@@ -26,7 +26,7 @@ export const useWorkoutSessions = (userId?: string, phaseId?: string) => {
     } finally {
       setIsLoading(false);
     }
-  }, [userId, phaseId]);
+  }, [userId, planId]);
 
   useEffect(() => {
     if (!cacheKey) return;
