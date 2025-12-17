@@ -417,15 +417,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         <View style={styles.emptyCard}>
           <Text style={styles.emptyIcon}>💪</Text>
           <Text style={styles.emptyTitle}>No workout planned</Text>
-          <Text style={styles.emptySubtitle}>Create a workout for this day.</Text>
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.primaryButton]}
-              onPress={() => setExerciseModalVisible(true)}
-            >
-              <Text style={styles.actionButtonText}>Create Session</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.emptySubtitle}>
+            Start today’s session from the Dashboard tab, then it will appear here.
+          </Text>
         </View>
       );
     }

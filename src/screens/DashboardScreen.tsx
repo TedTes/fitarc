@@ -209,6 +209,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const totalMealCount = hasDailyMeal ? allMealTypes.length : 0;
   const completedMealCount = dayMealsCompleted ? totalMealCount : 0;
   const allMealsCompleted = totalMealCount > 0 && dayMealsCompleted;
+  const showWorkoutCompletionButton =
+    activeTab === 'workouts' &&
+    canLogWorkouts &&
+    resolvedPhase &&
+    hasSyncedWorkout &&
+    pendingWorkoutCount > 0;
 
   const handleSwipeExercise = (exerciseName: string) => {
     if (!canLogWorkouts || !onToggleWorkoutExercise) return;
@@ -312,6 +318,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <Text style={styles.emptyText}>
             Your workout for today will appear here once scheduled.
           </Text>
+          {onCreateSession && (
+            <TouchableOpacity
+              style={[styles.createPlanButton, styles.createSessionButton]}
+              onPress={() => onCreateSession(todayStr)}
+            >
+              <Text style={styles.createPlanButtonText}>Create Session</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : pendingWorkoutCount === 0 ? (
         <View style={styles.emptyCard}>
@@ -497,7 +511,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   : `${completedMealCount}/${totalMealCount} meals`}
               </Text>
             </View>
-            {activeTab === 'workouts' && canLogWorkouts && resolvedPhase ? (
+            {showWorkoutCompletionButton ? (
               <TouchableOpacity 
                 style={[
                   styles.markAllFloater, 
@@ -821,6 +835,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 6,
+  },
+  createSessionButton: {
+    marginTop: 16,
   },
   createPlanButtonText: {
     fontSize: 16,
