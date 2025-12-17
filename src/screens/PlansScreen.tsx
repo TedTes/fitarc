@@ -45,64 +45,6 @@ const COLORS = {
 };
 const MAX_LIBRARY_ITEMS = 30;
 
-type WorkoutTemplate = {
-  id: string;
-  title: string;
-  description: string;
-  focus: string[];
-  exercises: string[];
-};
-
-const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
-  {
-    id: 'upper_push',
-    title: 'Upper Push',
-    description: 'Pressing focus for chest, shoulders, and triceps.',
-    focus: ['Chest', 'Shoulders', 'Arms'],
-    exercises: [
-      'Barbell Bench Press',
-      'Incline Dumbbell Press',
-      'Cable Flyes',
-      'Overhead Barbell Press',
-      'Dumbbell Lateral Raise',
-    ],
-  },
-  {
-    id: 'upper_pull',
-    title: 'Upper Pull',
-    description: 'Rowing + pull focus for back thickness and lats.',
-    focus: ['Back', 'Arms'],
-    exercises: [
-      'Bent Over Barbell Row',
-      'Seated Cable Row',
-      'Lat Pulldown',
-      'Pull-Up',
-      'Face Pull',
-    ],
-  },
-  {
-    id: 'lower_strength',
-    title: 'Lower Strength',
-    description: 'Heavy squat/hinge staples for legs + glutes.',
-    focus: ['Legs'],
-    exercises: [
-      'Barbell Back Squat',
-      'Romanian Deadlift',
-      'Leg Press',
-      'Barbell Hip Thrust',
-      'Walking Lunges',
-    ],
-  },
-];
-
-const TEMPLATE_SEQUENCE: Record<User['trainingSplit'], WorkoutTemplate['id'][]> = {
-  full_body: ['upper_push', 'lower_strength', 'upper_pull'],
-  upper_lower: ['upper_push', 'lower_strength', 'upper_pull', 'lower_strength'],
-  push_pull_legs: ['upper_push', 'upper_pull', 'lower_strength'],
-  bro_split: ['upper_push', 'upper_pull', 'lower_strength'],
-  custom: ['upper_push', 'upper_pull', 'lower_strength'],
-};
-
 const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = ['All', 'chest', 'back', 'shoulders', 'arms', 'legs', 'core'];
 
 const parseLocalDateFromYMD = (dateStr: string) => {
@@ -167,10 +109,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 }) => {
 
   // Load sessions from database based on plan_id
-  const { sessions: remoteSessions, isLoading: sessionsLoading } = useWorkoutSessions(
-    user.id, 
-    phase?.id ?? undefined
-  );
+  const {
+    sessions: remoteSessions,
+    isLoading: sessionsLoading,
+    refresh: refreshSessions,
+  } = useWorkoutSessions(user.id, phase?.id ?? undefined);
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
   
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
@@ -222,32 +165,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     });
   }, [resolvedSessions, phase?.id]);
 
-
-  // Template exercises are only for suggestion UI, not auto-populated
-  const weekPlansWithTemplates = useMemo(() => {
-    if (!phase) return [];
-    const sequence = TEMPLATE_SEQUENCE[user.trainingSplit] || TEMPLATE_SEQUENCE.custom;
-    return weekPlans.map((plan, idx) => {
-      const templateId = sequence[idx % sequence.length];
-      const template = WORKOUT_TEMPLATES.find((tpl) => tpl.id === templateId) || null;
-      const templateExercises = template
-        ? template.exercises
-            .map((name) => exerciseCatalog.find((exercise) => exercise.name === name))
-            .filter((exercise): exercise is ExerciseCatalogEntry => !!exercise)
-            .map((exercise) => convertCatalogExercise(exercise))
-        : [];
-      return {
-        ...plan,
-        template,
-        templateExercises,
-      };
-    });
-  }, [weekPlans, exerciseCatalog, convertCatalogExercise, user.trainingSplit, phase]);
-
   const selectedPlan =
-    weekPlansWithTemplates.find((plan) => plan.dateStr === selectedDate) || weekPlansWithTemplates[0];
-  const weekStart = weekPlansWithTemplates[0]?.dateStr;
-  const weekEnd = weekPlansWithTemplates[weekPlansWithTemplates.length - 1]?.dateStr;
+    weekPlans.find((plan) => plan.dateStr === selectedDate) || weekPlans[0];
+  const weekStart = weekPlans[0]?.dateStr;
+  const weekEnd = weekPlans[weekPlans.length - 1]?.dateStr;
   const todayKey = formatLocalDateYMD(new Date());
 
   const [editingExercises, setEditingExercises] = useState<WorkoutSessionExercise[]>([]);
@@ -332,10 +253,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
  
     return (
       <View style={styles.container}>
-        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-          <View style={styles.emptyCard}>
+        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradientCentered}>
+          <View style={styles.emptyCardCentered}>
             <Text style={styles.emptyIcon}>🏋️‍♂️</Text>
-            <Text style={styles.emptyTitle}>No Active Phase</Text>
+            <Text style={styles.emptyTitle}>No Active Plan</Text>
             <Text style={styles.emptySubtitle}>Complete onboarding to unlock your workouts.</Text>
           </View>
         </LinearGradient>
@@ -361,11 +282,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     const completedCount = editingExercises.filter((exercise) => exercise.completed).length;
     const isFuture = selectedPlan.dateStr > todayKey;
     const meta = !totalExercises
-      ? selectedPlan.template?.title ?? 'No workout'
+      ? 'No workout scheduled'
       : isFuture
-      ? selectedPlan.template?.title
-        ? `${selectedPlan.template.title} • Scheduled`
-        : 'Scheduled workout'
+      ? 'Scheduled workout'
       : completionMap[selectedPlan.dateStr]
       ? 'Completed'
       : `${completedCount}/${totalExercises} exercises`;
@@ -375,6 +294,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const handleSelectDate = (dateStr: string) => {
     setSelectedDate(dateStr);
     setOverflowMenuOpen(false);
+    refreshSessions();
   };
 
   const handleAddExercise = (entry: ExerciseCatalogEntry) => {
@@ -400,14 +320,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setDuplicateTarget(null);
     setDuplicateModalVisible(false);
   };
-
-  const handleAddFromTemplate = useCallback(async () => {
-    if (!selectedPlan || !selectedPlan.templateExercises.length) return;
-    const exercisesFromTemplate = createSessionExercises(selectedPlan.templateExercises);
-    setEditingExercises(exercisesFromTemplate);
-    setIsDirty(false);
-    await persistSession(selectedPlan.dateStr, exercisesFromTemplate);
-  }, [persistSession, selectedPlan?.dateStr, selectedPlan?.templateExercises]);
 
   const isFutureSelected = selectedPlan ? selectedPlan.dateStr > todayKey : false;
   const canToggleCompletion = Boolean(onToggleExercise && selectedPlan?.session && !isFutureSelected);
@@ -502,24 +414,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
     if (!editingExercises.length) {
       return (
-  
         <View style={styles.emptyCard}>
           <Text style={styles.emptyIcon}>💪</Text>
           <Text style={styles.emptyTitle}>No workout planned</Text>
-          <Text style={styles.emptySubtitle}>
-            {selectedPlan.templateExercises.length 
-              ? 'Load the suggested session or start from scratch.' 
-              : 'Create a workout for this day.'}
-          </Text>
+          <Text style={styles.emptySubtitle}>Create a workout for this day.</Text>
           <View style={styles.buttonRow}>
-            {selectedPlan.templateExercises.length > 0 && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.secondaryButton]}
-                onPress={handleAddFromTemplate}
-              >
-                <Text style={styles.actionButtonText}>Load Template</Text>
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
               style={[styles.actionButton, styles.primaryButton]}
               onPress={() => setExerciseModalVisible(true)}
@@ -542,30 +441,19 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                   <Text style={styles.exerciseName}>{exercise.name}</Text>
                 </View>
                 <View style={styles.exerciseHeaderActions}>
-                  {canToggleCompletion && (
+                  {exercise.completed && (
+                    <View style={styles.planCompleteBadge}>
+                      <Text style={styles.planCompleteBadgeText}>Done</Text>
+                    </View>
+                  )}
+                  {!exercise.completed && (
                     <TouchableOpacity
-                      style={[
-                        styles.completeToggle,
-                        exercise.completed && styles.completeToggleActive,
-                      ]}
-                      onPress={() => handleToggleExerciseCompletion(idx)}
+                      style={[styles.iconButton, styles.iconButtonDanger]}
+                      onPress={() => handleRemoveExercise(idx)}
                     >
-                      <Text
-                        style={[
-                          styles.completeToggleText,
-                          exercise.completed && styles.completeToggleTextActive,
-                        ]}
-                      >
-                        {exercise.completed ? '✓ Done' : 'Complete'}
-                      </Text>
+                      <Text style={styles.iconButtonText}>×</Text>
                     </TouchableOpacity>
                   )}
-                  <TouchableOpacity
-                    style={[styles.iconButton, styles.iconButtonDanger]}
-                    onPress={() => handleRemoveExercise(idx)}
-                  >
-                    <Text style={styles.iconButtonText}>×</Text>
-                  </TouchableOpacity>
                 </View>
               </View>
               <View style={styles.exerciseTags}>
@@ -632,7 +520,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.weekStrip}
             >
-              {weekPlansWithTemplates.map((plan) => {
+              {weekPlans.map((plan) => {
               const { weekday, day } = formatDateLabel(plan.dateStr);
               const isActive = plan.dateStr === selectedDate;
               const hasWorkout = plan.session && plan.session.exercises.length > 0;
@@ -798,7 +686,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               </TouchableOpacity>
             </View>
             <View style={styles.duplicateGrid}>
-              {weekPlansWithTemplates.map((plan) => {
+              {weekPlans.map((plan) => {
                 const { weekday, day } = formatDateLabel(plan.dateStr);
                 const isSelected = duplicateTarget === plan.dateStr;
                 return (
@@ -834,6 +722,12 @@ const styles = StyleSheet.create({
   },
   gradient: {
     flex: 1,
+  },
+  gradientCentered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
   },
   menuBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -1045,25 +939,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  completeToggle: {
+  planCompleteBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 4,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-  },
-  completeToggleActive: {
     borderColor: COLORS.success,
-    backgroundColor: 'rgba(0,245,160,0.12)',
+    backgroundColor: 'rgba(0, 245, 160, 0.12)',
   },
-  completeToggleText: {
+  planCompleteBadgeText: {
+    color: COLORS.success,
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  completeToggleTextActive: {
-    color: COLORS.success,
   },
   exerciseTags: {
     flexDirection: 'row',
@@ -1163,7 +1050,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
-    marginBottom: 24,
+    marginHorizontal: 24,
+    marginVertical: 32,
+  },
+  emptyCardCentered: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    width: '100%',
   },
   emptyIcon: {
     fontSize: 56,

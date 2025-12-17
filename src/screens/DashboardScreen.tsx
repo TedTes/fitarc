@@ -200,7 +200,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return ordered;
   }, [mealsByType]);
 
-  const canLogWorkouts = !!phase && !!onToggleWorkoutExercise;
+  const canLogWorkouts = !!resolvedPhase && !!onToggleWorkoutExercise;
   const totalWorkoutCount = displayExercises.length;
   const completedWorkoutCount = totalWorkoutCount - visibleWorkoutCards.length;
   const pendingWorkoutCount = visibleWorkoutCards.length;
@@ -497,7 +497,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   : `${completedMealCount}/${totalMealCount} meals`}
               </Text>
             </View>
-            {activeTab === 'workouts' && canLogWorkouts ? (
+            {activeTab === 'workouts' && canLogWorkouts && resolvedPhase ? (
               <TouchableOpacity 
                 style={[
                   styles.markAllFloater, 
@@ -511,7 +511,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 </Text>
               </TouchableOpacity>
             ) : (
-              (activeTab === 'meals' || totalMealCount === 0) && (
+              activeTab === 'meals' && totalMealCount > 0 && (
                 <TouchableOpacity 
                   style={[styles.markAllButton, isMarkingAll && styles.markAllButtonDisabled]} 
                   onPress={handleMarkAllComplete}

@@ -18,6 +18,7 @@ export const useWorkoutSessions = (userId?: string, planId?: string) => {
       setIsLoading(true);
       setError(null);
       const data = await fetchPhaseWorkoutSessions(userId, planId);
+
       const key = `${userId}:${planId}`;
       sessionCache.set(key, data);
       setSessions(data);
