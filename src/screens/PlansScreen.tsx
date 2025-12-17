@@ -22,6 +22,7 @@ type PlansScreenProps = {
   user: User;
   phase: PhasePlan | null;
   workoutSessions: WorkoutSessionEntry[];
+  workoutDataVersion?: number;
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
   onDeleteSession?: (date: string) => void;
   onToggleExercise?: (date: string, exerciseName: string) => void;
@@ -103,6 +104,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   user,
   phase,
   workoutSessions,
+  workoutDataVersion,
   onSaveCustomSession,
   onDeleteSession,
   onToggleExercise,
@@ -222,6 +224,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       lastSyncedKeyRef.current = planSyncKey;
     }
   }, [planSyncKey, selectedPlan, isDirty]);
+
+  useEffect(() => {
+    if (!phase?.id) return;
+    refreshSessions();
+  }, [phase?.id, workoutDataVersion, refreshSessions]);
 
   useEffect(() => {
     if (!editingExercises.length) {
