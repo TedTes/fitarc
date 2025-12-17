@@ -31,22 +31,25 @@ export type WorkoutSetEntry = {
 };
 
 export type WorkoutSessionExercise = {
+  id?: string;  
+  exerciseId?: string;
   name: string;
   bodyParts: MuscleGroup[];
-  completed: boolean;
-  sets: number;
-  reps: string;
-  setDetails?: WorkoutSetEntry[];
-  exerciseId?: string;
-  movementPattern?: string | null;
+  sets?: number;
+  reps?: string;
+  completed?: boolean; 
+  displayOrder?: number;
+  notes?: string;
+  setDetails?: string[];
 };
 
 export type WorkoutSessionEntry = {
   id: string;
-  date: string;
   phasePlanId: string;
+  date: string;
   exercises: WorkoutSessionExercise[];
-  completedAt?: string;
+  notes?: string;
+  completed?: boolean; 
 };
 
 export type MealPlanMeal = {

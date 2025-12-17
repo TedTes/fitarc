@@ -1,31 +1,3 @@
-/**
- * DashboardScreen - Main workout and meal tracking interface
- * 
- * DATABASE FLOW & COMPLETION LOGIC:
- * 
- * WORKOUTS:
- * - Sessions are fetched from: fitarc_workout_sessions -> fitarc_workout_session_exercises -> fitarc_workout_sets
- * - CRITICAL: Exercise completion is determined by existence of sets in fitarc_workout_sets
- *   - completed = TRUE if ANY sets exist for that session_exercise
- *   - completed = FALSE if NO sets exist (even if session_exercise exists)
- * - This prevents pre-created/empty sessions from showing as complete
- * - onToggleWorkoutExercise handler should:
- *   1. If not complete: INSERT a set to fitarc_workout_sets (marks as complete)
- *   2. If complete: DELETE all sets from fitarc_workout_sets (marks as incomplete)
- * 
- * MEALS:
- * - Meals are fetched from: fitarc_daily_meals -> fitarc_meal_entries
- * - Completion is stored at DAY level in fitarc_daily_meals.completed
- * - toggleDayCompleted handler updates this boolean flag
- * - Individual meal entries don't have completion flags
- * 
- * UI STATE:
- * - resolvedSessions: Array of WorkoutSessionEntry (from DB or props)
- * - todaySession: Today's session filtered from resolvedSessions
- * - displayExercises: Today's exercises (from todaySession.exercises)
- * - completedExercises: Exercises where exercise.completed = true
- * - pendingExercises: Exercises where exercise.completed = false
- */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -40,7 +12,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
   User,
   PhasePlan,
-  ProgressEstimate,
   WorkoutSessionEntry,
   MuscleGroup,
 } from '../types/domain';
@@ -55,7 +26,6 @@ const MEAL_TYPE_EMOJI: Record<string, string> = {
   Lunch: '🥗',
   Dinner: '🍽️',
 };
-
 
 const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner'];
 
@@ -105,11 +75,11 @@ const formatMealMacros = (entry: MealEntry): string => {
 type DashboardScreenProps = {
   user: User;
   phase: PhasePlan | null;
-  workoutSessions:WorkoutSessionEntry[];
-  progressEstimate: ProgressEstimate | null;
+  workoutSessions: WorkoutSessionEntry[];
   onProfilePress?: () => void;
   onStartPhase?: () => void;
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
+  onMarkAllWorkoutsComplete?: (date: string) => Promise<void>;
   onCreateSession?: (date: string) => void;
 };
 
@@ -117,10 +87,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   user,
   phase,
   workoutSessions,
-  progressEstimate,
   onProfilePress,
   onStartPhase,
   onToggleWorkoutExercise,
+  onMarkAllWorkoutsComplete,
   onCreateSession,
 }) => {
   const { data: homeData } = useHomeScreenData(user.id);
@@ -139,12 +109,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   
-  const storedSession =
-    resolvedPhase &&
-    resolvedSessions.find(
-      (session) => session.phasePlanId === resolvedPhase.id && session.date === todayStr
-    );
-  const todaySession = storedSession && storedSession.exercises.length ? storedSession : null;
+  const todaySession = resolvedSessions.find((session) => session.date === todayStr) || null;
   const displayExercises = todaySession?.exercises ?? [];
   
   const hasSyncedWorkout = displayExercises.length > 0;
@@ -222,23 +187,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return ordered;
   }, [mealsByType]);
 
-  const weeksIntoPhase = Math.max(1, Math.floor((progressEstimate?.daysActive || 0) / 7) + 1);
   const canLogWorkouts = !!phase && !!onToggleWorkoutExercise;
-
-  const enhancedExercises = displayExercises.map((exercise) => ({
-    ...exercise,
-    setCount: exercise.sets || 4,
-    repRange: exercise.reps || '8-10',
-  }));
-  
-  const completedExercises = enhancedExercises.filter((e) => e.completed);
-  const pendingExercises = enhancedExercises.filter((e) => !e.completed);
-  const visibleWorkoutCards = canLogWorkouts
-    ? [...pendingExercises, ...completedExercises]
-    : enhancedExercises;
-  
-  const totalWorkoutCount = enhancedExercises.length;
-  const completedWorkoutCount = completedExercises.length;
+  const visibleWorkoutCards = displayExercises;
+  const totalWorkoutCount = displayExercises.length;
+  const completedWorkoutCount = displayExercises.filter((exercise) => exercise.completed).length;
+  const pendingWorkoutCount = totalWorkoutCount - completedWorkoutCount;
   const allWorkoutsCompleted = totalWorkoutCount > 0 && completedWorkoutCount === totalWorkoutCount;
 
   const totalMealCount = hasDailyMeal ? allMealTypes.length : 0;
@@ -252,31 +205,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   };
 
   const handleMarkAllComplete = async () => {
-    if (isMarkingAll) return; // Prevent double-tap
+    if (isMarkingAll) return;
     
     setIsMarkingAll(true);
     
     try {
       if (activeTab === 'workouts') {
-        // Mark all incomplete workouts as complete
-        if (pendingExercises.length === 0) {
+        if (pendingWorkoutCount === 0) {
           setIsMarkingAll(false);
           return;
         }
         
-        // Toggle each pending exercise sequentially
-        // This ensures database operations complete properly
-        for (const exercise of pendingExercises) {
-          if (onToggleWorkoutExercise) {
-            await new Promise<void>((resolve) => {
-              onToggleWorkoutExercise(todayStr, exercise.name);
-              // Small delay to allow state updates to propagate
-              setTimeout(resolve, 50);
-            });
-          }
+        // Use the new markAllWorkoutsComplete function
+        if (onMarkAllWorkoutsComplete) {
+          await onMarkAllWorkoutsComplete(todayStr);
         }
       } else {
-        // Mark all meals complete for the day
         if (!dayMealsCompleted && toggleDayCompleted) {
           await toggleDayCompleted(true);
         }
@@ -286,10 +230,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     } finally {
       setIsMarkingAll(false);
     }
-  };
-
-  const handleCreateSession = () => {
-    onCreateSession?.(todayStr);
   };
 
   const renderMealGroup = (mealType: string) => {
@@ -326,45 +266,34 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const renderWorkoutsSection = () => (
     <View style={styles.section}>
       {!resolvedPhase ? (
-        // No active phase - prompt to create one
+        // NO PLAN - Show only "Create Plan" button (opens physique selection)
         <View style={styles.emptyCard}>
-        <Text style={styles.emptyEmoji}>🎯</Text>
-        <Text style={styles.emptyTitle}>No active plan</Text>
-        <Text style={styles.emptyText}>Create a structured plan or start training now.</Text>
-        
-        <View style={styles.buttonRow}>
+          <Text style={styles.emptyEmoji}>🎯</Text>
+          <Text style={styles.emptyTitle}>No active plan</Text>
+          <Text style={styles.emptyText}>
+            Create your personalized training plan to get started.
+          </Text>
+          
           {onStartPhase && (
             <TouchableOpacity 
-              style={[styles.actionButton, styles.primaryButton]} 
+              style={styles.createPlanButton} 
               onPress={onStartPhase}
             >
-              <Text style={styles.actionButtonText}>Create Plan</Text>
-            </TouchableOpacity>
-          )}
-          
-          {onCreateSession && (
-            <TouchableOpacity 
-              style={[styles.actionButton, styles.secondaryButton]} 
-              onPress={() => onCreateSession(todayStr)}
-            >
-              <Text style={styles.actionButtonText}>Start Session</Text>
+              <Text style={styles.createPlanButtonText}>Create Plan</Text>
             </TouchableOpacity>
           )}
         </View>
-      </View>
       ) : !hasSyncedWorkout ? (
-        // Active phase but no workout for today
+        // HAS PLAN BUT NO WORKOUT TODAY
         <View style={styles.emptyCard}>
-        <Text style={styles.emptyEmoji}>📭</Text>
-        <Text style={styles.emptyTitle}>No workout scheduled</Text>
-        <Text style={styles.emptyText}>Create a session when ready to train.</Text>
-        {onCreateSession && (
-          <TouchableOpacity style={styles.startButton} onPress={() => onCreateSession(todayStr)}>
-            <Text style={styles.startButtonText}>Create Session</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+          <Text style={styles.emptyEmoji}>📭</Text>
+          <Text style={styles.emptyTitle}>No workout scheduled</Text>
+          <Text style={styles.emptyText}>
+            Your workout for today will appear here once scheduled.
+          </Text>
+        </View>
       ) : (
+        // HAS WORKOUT - Display exercises
         <View style={styles.verticalList}>
           {visibleWorkoutCards.map((exercise, index) => {
             const isCompleted = exercise.completed;
@@ -380,34 +309,42 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   <View style={styles.exerciseBadge}>
                     <Text style={styles.exerciseBadgeText}>#{index + 1}</Text>
                   </View>
-                  
-                  {isCompleted ? (
-                    <View style={styles.completedBadge}>
-                      <Text style={styles.completedBadgeText}>✓ Done</Text>
-                    </View>
-                  ) : canLogWorkouts ? (
-                    <TouchableOpacity
-                      style={styles.logSetsButtonSmall}
-                      onPress={() => handleSwipeExercise(exercise.name)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.logSetsButtonSmallText}>✓ Complete</Text>
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
 
                 <Text style={styles.exerciseName}>{exercise.name}</Text>
 
-                <View style={styles.metaTags}>
-                  <View style={styles.metaTag}>
-                    <Text style={styles.metaTagText}>{formatBodyPartList(exercise.bodyParts)}</Text>
+                <View style={styles.metaRow}>
+                  <View style={styles.metaTags}>
+                    <View style={styles.metaTag}>
+                      <Text style={styles.metaTagText}>{formatBodyPartList(exercise.bodyParts)}</Text>
+                    </View>
+                    <View style={styles.metaTag}>
+                      <Text style={styles.metaTagText}>{exercise.setCount} sets</Text>
+                    </View>
+                    <View style={styles.metaTag}>
+                      <Text style={styles.metaTagText}>{exercise.repRange} reps</Text>
+                    </View>
                   </View>
-                  <View style={styles.metaTag}>
-                    <Text style={styles.metaTagText}>{exercise.setCount} sets</Text>
-                  </View>
-                  <View style={styles.metaTag}>
-                    <Text style={styles.metaTagText}>{exercise.repRange} reps</Text>
-                  </View>
+                  
+                  <TouchableOpacity
+                    style={[
+                      styles.exerciseDoneButtonInline,
+                      !canLogWorkouts && styles.exerciseDoneButtonDisabled,
+                      isCompleted && styles.exerciseDoneButtonActive,
+                    ]}
+                    onPress={() => canLogWorkouts && handleSwipeExercise(exercise.name)}
+                    disabled={!canLogWorkouts || isCompleted}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.exerciseDoneButtonText,
+                        isCompleted && styles.exerciseDoneButtonTextActive,
+                      ]}
+                    >
+                      Done
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </LinearGradient>
             );
@@ -447,10 +384,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
             <Text style={styles.userName}>{displayName}</Text>
-            <Text style={styles.dateInfo}>
-              {dateLabel}
-              {resolvedPhase ? ` • Week ${weeksIntoPhase}` : ''}
-            </Text>
+            <Text style={styles.dateInfo}>{dateLabel}</Text>
           </View>
           {onProfilePress && (
             <TouchableOpacity style={styles.settingsButton} onPress={onProfilePress}>
@@ -536,23 +470,37 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   : `${completedMealCount}/${totalMealCount} meals`}
               </Text>
             </View>
-            {((activeTab === 'workouts' && !allWorkoutsCompleted && totalWorkoutCount > 0) ||
-              (activeTab === 'meals' && !allMealsCompleted && totalMealCount > 0)) && (
+            {activeTab === 'workouts' && canLogWorkouts ? (
               <TouchableOpacity 
-                style={[styles.markAllButton, isMarkingAll && styles.markAllButtonDisabled]} 
+                style={[
+                  styles.markAllFloater, 
+                  (isMarkingAll || allWorkoutsCompleted) && styles.markAllButtonDisabled
+                ]} 
                 onPress={handleMarkAllComplete}
-                disabled={isMarkingAll}
+                disabled={isMarkingAll || allWorkoutsCompleted}
               >
-                <Text style={styles.markAllButtonText}>
-                  {isMarkingAll 
-                    ? '...' 
-                    : activeTab === 'workouts' 
-                      ? 'Mark All' 
-                      : 'Log All'}
+                <Text style={styles.markAllFloaterText}>
+                  {allWorkoutsCompleted ? 'Done' : 'Complete'}
                 </Text>
               </TouchableOpacity>
+            ) : (
+              (activeTab === 'meals' || totalMealCount === 0) && (
+                <TouchableOpacity 
+                  style={[styles.markAllButton, isMarkingAll && styles.markAllButtonDisabled]} 
+                  onPress={handleMarkAllComplete}
+                  disabled={isMarkingAll}
+                >
+                  <Text style={styles.markAllButtonText}>
+                    {isMarkingAll 
+                      ? '...' 
+                      : activeTab === 'workouts' 
+                        ? 'Mark All' 
+                        : 'Log All'}
+                  </Text>
+                </TouchableOpacity>
+              )
             )}
-          </View>
+         </View>
         </View>
 
         {/* Scrollable Content Area */}
@@ -783,13 +731,29 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   markAllButtonDisabled: {
-    backgroundColor: '#4A4A6A',
-    opacity: 0.6,
+    opacity: 0.5,
   },
   markAllButtonText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  markAllFloater: {
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    backgroundColor: '#00F5A0',
+    borderRadius: 20,
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  markAllFloaterText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A0E27',
     letterSpacing: 0.3,
   },
   section: {
@@ -818,17 +782,24 @@ const styles = StyleSheet.create({
     color: '#8B93B0',
     textAlign: 'center',
     marginBottom: 20,
+    lineHeight: 20,
   },
-  startButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
+  createPlanButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 32,
     backgroundColor: '#6C63FF',
     borderRadius: 12,
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
   },
-  startButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
+  createPlanButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
     color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
   verticalList: {
     gap: 16,
@@ -886,11 +857,18 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginBottom: 12,
   },
+  metaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    gap: 16,
+  },
   metaTags: {
+    flex: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 16,
   },
   metaTag: {
     paddingVertical: 6,
@@ -905,46 +883,38 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#8B93B0',
   },
-  logSetsButton: {
-    backgroundColor: '#6C63FF',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 12,
+  exerciseDoneButton: {
+    alignSelf: 'flex-end',
+    marginTop: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
-  logSetsButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
+  exerciseDoneButtonInline: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  exerciseDoneButtonDisabled: {
+    opacity: 0.4,
+  },
+  exerciseDoneButtonActive: {
+    borderColor: 'rgba(0,245,160,0.4)',
+    backgroundColor: 'rgba(0,245,160,0.1)',
+  },
+  exerciseDoneButtonText: {
     color: '#FFFFFF',
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    fontSize: 12,
   },
-  swipeHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(108, 99, 255, 0.08)',
-    borderRadius: 12,
-    marginTop: 16,
-  },
-  swipeHintText: {
-    fontSize: 13,
-    color: '#8B93B0',
-  },
-  swipeHintIcon: {
-    fontSize: 18,
-    color: '#6C63FF',
-  },
-  completedHint: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(0, 245, 160, 0.08)',
-    borderRadius: 12,
-    marginTop: 16,
-    alignItems: 'center',
-  },
-  completedHintText: {
-    fontSize: 13,
+  exerciseDoneButtonTextActive: {
     color: '#00F5A0',
   },
   mealCard: {
@@ -993,47 +963,5 @@ const styles = StyleSheet.create({
   mealEmptyText: {
     fontSize: 13,
     color: '#8B93B0',
-  },
-  logSetsButtonSmall: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: '#6C63FF',
-    borderRadius: 8,
-  },
-  logSetsButtonSmallText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 16,
-    width: '100%',
-  },
-  
-  actionButton: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  
-  primaryButton: {
-    backgroundColor: '#4C9AFF',
-  },
-  
-  secondaryButton: {
-    backgroundColor: '#2A2D35',
-    borderWidth: 1,
-    borderColor: '#3A3D45',
-  },
-  
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
   },
 });

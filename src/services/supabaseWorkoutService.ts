@@ -457,3 +457,92 @@ export const fetchWorkoutCompletionMap = async (
 
   return dayMap;
 };
+
+/**
+ * Toggle individual exercise completion
+ */
+export const toggleExerciseCompletion = async (
+  sessionExerciseId: string,
+  completed: boolean
+): Promise<void> => {
+  const { error } = await supabase
+    .from('fitarc_workout_session_exercises')
+    .update({ complete: completed })
+    .eq('id', sessionExerciseId);
+
+  if (error) throw error;
+};
+
+/**
+ * Check if all exercises in session are complete
+ */
+export const checkAllExercisesComplete = async (
+  sessionId: string
+): Promise<boolean> => {
+  const { data, error } = await supabase
+    .from('fitarc_workout_session_exercises')
+    .select('complete')
+    .eq('session_id', sessionId);
+
+  if (error) throw error;
+  
+  return (data || []).length > 0 && data.every(ex => ex.complete === true);
+};
+
+/**
+ * Update session completion status
+ */
+export const updateSessionCompletion = async (
+  sessionId: string,
+  completed: boolean
+): Promise<void> => {
+  const { error } = await supabase
+    .from('fitarc_workout_sessions')
+    .update({ complete: completed })
+    .eq('id', sessionId);
+
+  if (error) throw error;
+};
+
+/**
+ * Mark all exercises in a session as complete
+ */
+export const markAllExercisesComplete = async (
+  sessionId: string
+): Promise<void> => {
+  const { error: exercisesError } = await supabase
+    .from('fitarc_workout_session_exercises')
+    .update({ complete: true })
+    .eq('session_id', sessionId);
+
+  if (exercisesError) throw exercisesError;
+
+  const { error: sessionError } = await supabase
+    .from('fitarc_workout_sessions')
+    .update({ complete: true })
+    .eq('id', sessionId);
+
+  if (sessionError) throw sessionError;
+};
+
+/**
+ * Toggle exercise and auto-update session if all complete
+ */
+export const toggleExerciseAndCheckSession = async (
+  sessionId: string,
+  sessionExerciseId: string,
+  currentlyCompleted: boolean
+): Promise<void> => {
+  const newCompleted = !currentlyCompleted;
+  
+  await toggleExerciseCompletion(sessionExerciseId, newCompleted);
+  
+  if (newCompleted) {
+    const allComplete = await checkAllExercisesComplete(sessionId);
+    if (allComplete) {
+      await updateSessionCompletion(sessionId, true);
+    }
+  } else {
+    await updateSessionCompletion(sessionId, false);
+  }
+};

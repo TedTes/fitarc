@@ -21,6 +21,8 @@ import {
   fetchWorkoutSessionEntries,
   upsertWorkoutSessionWithExercises,
   deleteWorkoutSessionRemote,
+  toggleExerciseAndCheckSession, 
+  markAllExercisesComplete 
 } from '../services/supabaseWorkoutService';
 import { getAppTimeZone } from '../utils/time';
 
@@ -109,112 +111,164 @@ export const useAppState = () => {
     setIsLoading(false);
   }, []);
 
-  // Update in-memory state only (no persistence)
-  const persistState = useCallback(async (newState: AppState) => {
-    setState(newState);
+  const updateState = useCallback((updater: (prev: AppState) => AppState) => {
+    setState((prev) => {
+      const base = prev ?? createEmptyAppState();
+      return updater(base);
+    });
   }, []);
 
   const hydrateFromRemote = useCallback(
-    async (payload: {
+    (payload: {
       user?: User | null;
       phase?: PhasePlan | null;
       workoutSessions?: WorkoutSessionEntry[];
       mealPlans?: DailyMealPlan[];
     }) => {
-      if (!state) return;
-      const newState: AppState = {
-        ...state,
-        user: payload.user !== undefined ? payload.user : state.user,
-        currentPhase: payload.phase !== undefined ? payload.phase : state.currentPhase,
+      updateState((prev) => ({
+        ...prev,
+        user: payload.user !== undefined ? payload.user : prev.user,
+        currentPhase: payload.phase !== undefined ? payload.phase : prev.currentPhase,
         workoutSessions:
-          payload.workoutSessions !== undefined ? payload.workoutSessions : state.workoutSessions,
-        mealPlans: payload.mealPlans !== undefined ? payload.mealPlans : state.mealPlans,
-      };
-      await persistState(newState);
+          payload.workoutSessions !== undefined ? payload.workoutSessions : prev.workoutSessions,
+        mealPlans: payload.mealPlans !== undefined ? payload.mealPlans : prev.mealPlans,
+      }));
     },
-    [state, persistState]
+    [updateState]
   );
 
-  const updateUser = useCallback(async (user: User) => {
-    if (!state) return;
-    const newState: AppState = {
-      ...state,
+  const updateUser = useCallback((user: User) => {
+    updateState((prev) => ({
+      ...prev,
       user,
-    };
-    await persistState(newState);
-  }, [state, persistState]);
+    }));
+  }, [updateState]);
 
-  const startPhase = useCallback(async (phase: PhasePlan) => {
-    if (!state) return;
-    const newState: AppState = {
-      ...state,
+  const startPhase = useCallback((phase: PhasePlan) => {
+    updateState((prev) => ({
+      ...prev,
       currentPhase: phase,
-    };
-    await persistState(newState);
-  }, [state, persistState]);
+    }));
+  }, [updateState]);
 
-  const addPhotoCheckin = useCallback(async (photo: PhotoCheckin) => {
-    if (!state) return;
-    const newState: AppState = {
-      ...state,
-      photoCheckins: [...state.photoCheckins, photo],
-    };
-    await persistState(newState);
-  }, [state, persistState]);
+  const addPhotoCheckin = useCallback((photo: PhotoCheckin) => {
+    updateState((prev) => ({
+      ...prev,
+      photoCheckins: [...prev.photoCheckins, photo],
+    }));
+  }, [updateState]);
 
-  const updateProgress = useCallback(async (estimate: ProgressEstimate) => {
-    if (!state) return;
-    const newState: AppState = {
-      ...state,
+  const updateProgress = useCallback((estimate: ProgressEstimate) => {
+    updateState((prev) => ({
+      ...prev,
       progressEstimate: estimate,
-    };
-    await persistState(newState);
-  }, [state, persistState]);
+    }));
+  }, [updateState]);
 
-  const completePhase = useCallback(async () => {
-    if (!state || !state.currentPhase) return;
-    const newState: AppState = {
-      ...state,
-      currentPhase: {
-        ...state.currentPhase,
-        status: 'completed',
-      },
-    };
-    await persistState(newState);
-  }, [state, persistState]);
+  const completePhase = useCallback(() => {
+    updateState((prev) => {
+      if (!prev.currentPhase) return prev;
+      return {
+        ...prev,
+        currentPhase: {
+          ...prev.currentPhase,
+          status: 'completed',
+        },
+      };
+    });
+  }, [updateState]);
+  const loadWorkoutSessionsFromSupabase = useCallback(
+    async (userId: string, planId?: string) => {
+      try {
+        const remoteSessions = await fetchWorkoutSessionEntries(
+          userId,
+          planId,
+          getAppTimeZone()
+        );
+        setState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            workoutSessions: remoteSessions,
+            workoutDataVersion: nextWorkoutVersion(prev),
+          };
+        });
+      } catch (err) {
+        console.error('Failed to load workouts from Supabase:', err);
+        setError('Failed to load workouts from Supabase');
+      }
+    },
+    []
+  );
 
   const toggleWorkoutExercise = useCallback(
     async (date: string, exerciseName: string) => {
-      if (!state || !state.currentPhase || !state.user) return;
-      const session = getOrCreateSessionEntry(
-        state.workoutSessions,
-        state.user,
-        state.currentPhase.id,
-        date
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
+      
+      const session = current.workoutSessions.find(
+        (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
       );
+      
+      if (!session) {
+        console.error('No session found for date:', date);
+        return;
+      }
+  
+      const exercise = session.exercises.find((ex) => ex.name === exerciseName);
+      
+      if (!exercise || !exercise.id) {
+        console.error('Exercise not found or missing ID:', exerciseName);
+        return;
+      }
+  
+      try {
+        await toggleExerciseAndCheckSession(
+          session.id,
+          exercise.id,
+          exercise.completed || false
+        );
+        
+        await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
+      } catch (error) {
+        console.error('Failed to toggle exercise:', error);
+        throw error;
+      }
+    },[loadWorkoutSessionsFromSupabase]);
 
-      const updatedSession = toggleExerciseCompletion(session, exerciseName);
-      const updatedSessions = upsertWorkoutSession(state.workoutSessions, updatedSession);
-      const log = sessionToWorkoutLog(updatedSession);
-      const updatedLogs = upsertWorkoutLog(state.workoutLogs, log);
-
-      await persistState({
-        ...state,
-        workoutSessions: updatedSessions,
-        workoutLogs: updatedLogs,
-        workoutDataVersion: nextWorkoutVersion(state),
-      });
+  const markAllWorkoutsComplete = useCallback(
+    async (date: string) => {
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
+      
+      const session = current.workoutSessions.find(
+        (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+      );
+      
+      if (!session) {
+        console.error('No session found for date:', date);
+        return;
+      }
+      
+      try {
+        await markAllExercisesComplete(session.id);
+        await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
+      } catch (error) {
+        console.error('Failed to mark all complete:', error);
+        throw error;
+      }
     },
-    [state, persistState]
-  );
+    [loadWorkoutSessionsFromSupabase]);
+
 
   const reorderWorkoutExercise = useCallback(
     async (date: string, fromIndex: number, toIndex: number) => {
-      if (!state || !state.currentPhase || !state.user) return;
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
       const session = getOrCreateSessionEntry(
-        state.workoutSessions,
-        state.user,
-        state.currentPhase.id,
+        current.workoutSessions,
+        current.user,
+        current.currentPhase.id,
         date
       );
       const length = session.exercises.length;
@@ -231,23 +285,24 @@ export const useAppState = () => {
         ...session,
         exercises,
       };
-      const updatedSessions = upsertWorkoutSession(state.workoutSessions, updatedSession);
-      await persistState({
-        ...state,
+      const updatedSessions = upsertWorkoutSession(current.workoutSessions, updatedSession);
+      updateState((prev) => ({
+        ...prev,
         workoutSessions: updatedSessions,
-        workoutDataVersion: nextWorkoutVersion(state),
-      });
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
     },
-    [state, persistState]
+    [updateState]
   );
 
   const toggleMealCompletion = useCallback(
     async (date: string, mealTitle: string) => {
-      if (!state || !state.currentPhase || !state.user) return;
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
       const plan = getOrCreateMealPlan(
-        state.mealPlans,
-        state.user,
-        state.currentPhase.id,
+        current.mealPlans,
+        current.user,
+        current.currentPhase.id,
         date
       );
       const updatedMeals = plan.meals.map((meal) =>
@@ -258,83 +313,62 @@ export const useAppState = () => {
         meals: updatedMeals,
         completed: updatedMeals.every((meal) => meal.completed),
       };
-      const updatedPlans = upsertMealPlan(state.mealPlans, updatedPlan);
-      await persistState({
-        ...state,
+      const updatedPlans = upsertMealPlan(current.mealPlans, updatedPlan);
+      updateState((prev) => ({
+        ...prev,
         mealPlans: updatedPlans,
-      });
+      }));
     },
-    [state, persistState]
+    [updateState]
   );
 
-  const loadWorkoutSessionsFromSupabase = useCallback(
-    async (userId: string, planId?: string) => {
-      const currentState = stateRef.current;
-      if (!currentState) return;
-      try {
-        const remoteSessions = await fetchWorkoutSessionEntries(
-          userId,
-          planId,
-          getAppTimeZone()
-        );
-        await persistState({
-          ...currentState,
-          workoutSessions: remoteSessions,
-          workoutDataVersion: nextWorkoutVersion(currentState),
-        });
-      } catch (err) {
-        console.error('Failed to load workouts from Supabase:', err);
-        setError('Failed to load workouts from Supabase');
-      }
-    },
-    [persistState]
-  );
 
   const schedulePhotoReminder = useCallback(
     async (date: string) => {
-      if (!state) return;
-      await persistState({
-        ...state,
+      updateState((prev) => ({
+        ...prev,
         nextPhotoReminder: date,
-      });
+      }));
     },
-    [state, persistState]
+    [updateState]
   );
 
   const createWorkoutSession = useCallback(
     async (date: string) => {
-      if (!state || !state.currentPhase || !state.user) return;
-      const existing = state.workoutSessions.find(
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
+      const existing = current.workoutSessions.find(
         (session) =>
-          session.phasePlanId === state.currentPhase!.id && session.date === date
+          session.phasePlanId === current.currentPhase!.id && session.date === date
       );
       if (existing) return;
       
       // Generate workout exercises based on user's training split
-      const sessionEntry = createSessionForDate(state.user, state.currentPhase.id, date);
+      const sessionEntry = createSessionForDate(current.user, current.currentPhase.id, date);
       
       // Save to Supabase database
       const remoteSession = await upsertWorkoutSessionWithExercises({
-        userId: state.user.id,
-        planId: state.currentPhase.id,
+        userId: current.user.id,
+        planId: current.currentPhase.id,
         date,
         exercises: sessionEntry.exercises,
       });
 
       // Update local state with the session from Supabase (has proper IDs)
-      await persistState({
-        ...state,
-        workoutSessions: upsertWorkoutSession(state.workoutSessions, remoteSession),
-        workoutLogs: upsertWorkoutLog(state.workoutLogs, sessionToWorkoutLog(remoteSession)),
-        workoutDataVersion: nextWorkoutVersion(state),
-      });
+      updateState((prev) => ({
+        ...prev,
+        workoutSessions: upsertWorkoutSession(prev.workoutSessions, remoteSession),
+        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(remoteSession)),
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
     },
-    [state, persistState]
+    [updateState]
   );
 
   const saveCustomWorkoutSession = useCallback(
     async (date: string, exercises: WorkoutSessionExercise[]) => {
-      if (!state || !state.currentPhase || !state.user) return;
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
       const normalizedExercises = exercises.map((exercise) => ({
         ...exercise,
         bodyParts: exercise.bodyParts,
@@ -343,45 +377,46 @@ export const useAppState = () => {
       }));
 
       const remoteSession = await upsertWorkoutSessionWithExercises({
-        userId: state.user.id,
-        planId: state.currentPhase.id,
+        userId: current.user.id,
+        planId: current.currentPhase.id,
         date,
         exercises: normalizedExercises,
       });
 
-      await persistState({
-        ...state,
-        workoutSessions: upsertWorkoutSession(state.workoutSessions, remoteSession),
-        workoutLogs: upsertWorkoutLog(state.workoutLogs, sessionToWorkoutLog(remoteSession)),
-        workoutDataVersion: nextWorkoutVersion(state),
-      });
+      updateState((prev) => ({
+        ...prev,
+        workoutSessions: upsertWorkoutSession(prev.workoutSessions, remoteSession),
+        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(remoteSession)),
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
     },
-    [state, persistState]
+    [updateState]
   );
 
   const deleteWorkoutSession = useCallback(
     async (date: string) => {
-      if (!state || !state.currentPhase || !state.user) return;
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
       await deleteWorkoutSessionRemote({
-        userId: state.user.id,
-        planId: state.currentPhase.id,
+        userId: current.user.id,
+        planId: current.currentPhase.id,
         date,
       });
-      const filteredSessions = state.workoutSessions.filter(
+      const filteredSessions = current.workoutSessions.filter(
         (session) =>
-          !(session.phasePlanId === state.currentPhase!.id && session.date === date)
+          !(session.phasePlanId === current.currentPhase!.id && session.date === date)
       );
-      const filteredLogs = state.workoutLogs.filter(
-        (log) => !(log.phasePlanId === state.currentPhase!.id && log.date === date)
+      const filteredLogs = current.workoutLogs.filter(
+        (log) => !(log.phasePlanId === current.currentPhase!.id && log.date === date)
       );
-      await persistState({
-        ...state,
+      updateState((prev) => ({
+        ...prev,
         workoutSessions: filteredSessions,
         workoutLogs: filteredLogs,
-        workoutDataVersion: nextWorkoutVersion(state),
-      });
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
     },
-    [state, persistState]
+    [updateState]
   );
 
   const clearAllData = useCallback(async () => {
@@ -408,5 +443,6 @@ export const useAppState = () => {
     saveCustomWorkoutSession,
     deleteWorkoutSession,
     hydrateFromRemote,
+    markAllWorkoutsComplete,
   };
 };

@@ -17,12 +17,16 @@ import {
   AuthNavigator,
 } from './src/screens';
 import { generatePhase } from './src/utils';
-import { useEffect, useState } from 'react';
-import { PhotoCheckin, User } from './src/types/domain';
+import { useEffect, useState, useCallback } from 'react';
+import { PhotoCheckin, User, WorkoutSessionEntry } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/appDataService';
-import { createPhase as createRemotePhase, completePhase as completeRemotePhase } from './src/services/phaseService';
+import { 
+  createPhaseWithWorkouts,
+  completePhase as completeRemotePhase 
+} from './src/services/phaseService';
+import { fetchWorkoutSessionEntries } from './src/services/supabaseWorkoutService';
 
 type RootTabParamList = {
   Home: undefined;
@@ -71,14 +75,22 @@ function AppContent() {
     createWorkoutSession,
     saveCustomWorkoutSession,
     deleteWorkoutSession,
+    markAllWorkoutsComplete,
     clearAllData,
     loadWorkoutSessionsFromSupabase,
     hydrateFromRemote,
   } = useAppState();
+  
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
   const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
   const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
   const [isProfileVisible, setProfileVisible] = useState(false);
+  const [isCreatingPlan, setIsCreatingPlan] = useState(false);
+
+  // Onboarding state - Start with 'complete' instead of 'profile'
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('complete');
+  const [tempProfileData, setTempProfileData] = useState<any>(null);
+  const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
 
   const closeProfileSheet = () => {
     setProfileVisible(false);
@@ -86,11 +98,29 @@ function AppContent() {
       navigationRef.navigate('Home');
     }
   };
-  
-  // Onboarding state
-  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('profile');
-  const [tempProfileData, setTempProfileData] = useState<any>(null);
-  const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
+
+  const waitForInitialSessions = useCallback(async (
+    userId: string,
+    planId: string
+  ): Promise<WorkoutSessionEntry[]> => {
+    const maxAttempts = 10;
+    const delayMs = 2000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const sessions = await fetchWorkoutSessionEntries(userId, planId);
+        if (sessions.length > 0) {
+          return sessions;
+        }
+      } catch (error) {
+        console.warn('Workout session poll failed', error);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    return [];
+  }, []);
 
   const handleCurrentPhysiqueSelect = (levelId: number) => {
     setTempCurrentLevel(levelId);
@@ -107,44 +137,47 @@ function AppContent() {
   };
 
   const handleTargetPhysiqueSelect = async (targetLevelId: number) => {
-    if (!tempCurrentLevel || !authUser) return;
+    if (!tempCurrentLevel || !authUser || !state?.user) return;
 
-    const existingUser = state?.user;
-    
-    // Create user with auth user ID
-    const user: User = {
-      id: authUser.id, // Use Supabase auth user ID
-      sex: tempProfileData.sex,
-      age: tempProfileData.age,
-      heightCm: tempProfileData.heightCm,
-      experienceLevel: tempProfileData.experienceLevel,
-      currentPhysiqueLevel: tempCurrentLevel,
-      trainingSplit: tempProfileData.trainingSplit || 'full_body',
-      eatingMode: tempProfileData.eatingMode || 'maintenance',
-      createdAt: existingUser?.createdAt || new Date().toISOString(),
-    };
-
-    await handleProfileSave(user);
+    setIsCreatingPlan(true);
 
     try {
-      if (state?.currentPhase) {
+      console.log('🎯 Creating plan with workouts...');
+      
+      if (state.currentPhase) {
         await completeRemotePhase(state.currentPhase.id);
       }
-      const generatedPhase = generatePhase(user, tempCurrentLevel, targetLevelId);
-      const remotePhase = await createRemotePhase(authUser.id, {
-        name: generatedPhase.name,
-        goalType: generatedPhase.goalType,
-        startDate: generatedPhase.startDate.split('T')[0],
-        endDate: generatedPhase.expectedEndDate.split('T')[0],
-        currentLevelId: tempCurrentLevel,
-        targetLevelId,
-      });
+      
+      const remotePhase = await createPhaseWithWorkouts(
+        authUser.id,
+        state.user.trainingSplit,
+        {
+          name: `Arc ${new Date().getFullYear()}`,
+          goalType: 'general',
+          startDate: new Date().toISOString().split('T')[0],
+          currentLevelId: tempCurrentLevel,
+          targetLevelId,
+        }
+      );
+
+      console.log('✅ Plan created:', remotePhase.id);
 
       await startPhase(remotePhase);
+      const seededSessions = await waitForInitialSessions(authUser.id, remotePhase.id);
+      if (seededSessions.length) {
+        await hydrateFromRemote({ workoutSessions: seededSessions });
+      }
+      await loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id);
+      
+      console.log('✅ Sessions loaded successfully');
+      
       setOnboardingStep('complete');
       setPhotoCaptureVisible(false);
     } catch (error) {
-      console.error('Failed to create phase', error);
+      console.error('❌ Failed to create plan:', error);
+      alert('Failed to create plan. Please try again.');
+    } finally {
+      setIsCreatingPlan(false);
     }
   };
 
@@ -160,9 +193,9 @@ function AppContent() {
     setOnboardingStep('current_physique');
   };
 
-
   useEffect(() => {
-    if (!authUser || !state) return;
+    if (!authUser) return;
+    if (!state) return;
     if (state.currentPhase) return;
     let cancelled = false;
 
@@ -191,6 +224,7 @@ function AppContent() {
           }
           setOnboardingStep('complete');
         } else {
+          // No profile exists - show profile setup
           setOnboardingStep('profile');
         }
       } catch (err) {
@@ -205,18 +239,24 @@ function AppContent() {
     };
   }, [
     authUser?.id,
-    state,
+    state?.currentPhase,
     updateUser,
     hydrateFromRemote,
     loadWorkoutSessionsFromSupabase,
   ]);
 
   const handleStartPhaseFromDashboard = () => {
+    console.log('🎯 Create Plan clicked!');
+    
     if (!state?.user) {
+      console.log('❌ No user found, showing profile setup');
       setOnboardingStep('profile');
       return;
     }
 
+    console.log('✅ User found, preparing physique selection');
+    
+    // Prepare data for physique selection
     setTempProfileData({
       sex: state.user.sex,
       age: state.user.age,
@@ -226,7 +266,11 @@ function AppContent() {
       eatingMode: state.user.eatingMode,
     });
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
+    
+    // Trigger physique selection flow
     setOnboardingStep('current_physique');
+    
+    console.log('✅ Onboarding step set to: current_physique');
   };
 
   const handleLogout = async () => {
@@ -278,13 +322,26 @@ function AppContent() {
     );
   }
 
-  // Check if user needs onboarding
-  const shouldShowOnboarding =
-  !state?.user && onboardingStep !== 'complete';
+  if (isCreatingPlan) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6C63FF" />
+        <Text style={styles.loadingText}>Building your plan…</Text>
+        <StatusBar style="light" />
+      </View>
+    );
+  }
+
+  //Show onboarding based on step, allowing "Create Plan" to trigger physique selection
+  const shouldShowOnboarding = 
+    !state?.user || 
+    onboardingStep === 'current_physique' || 
+    onboardingStep === 'target_physique';
 
   // Onboarding flow
   if (shouldShowOnboarding) {
-    if (onboardingStep === 'profile' || !tempProfileData) {
+    // Profile setup - only if no user exists
+    if (onboardingStep === 'profile' || !state?.user) {
       return (
         <View style={styles.container}>
           <ProfileSetupScreen onComplete={handleProfileSetupComplete} />
@@ -293,6 +350,7 @@ function AppContent() {
       );
     }
 
+    // Current physique selection - can be triggered by "Create Plan" button
     if (onboardingStep === 'current_physique' && tempProfileData) {
       return (
         <View style={styles.container}>
@@ -305,6 +363,7 @@ function AppContent() {
       );
     }
 
+    // Target physique selection
     if (onboardingStep === 'target_physique' && tempCurrentLevel && tempProfileData) {
       return (
         <View style={styles.container}>
@@ -395,10 +454,10 @@ function AppContent() {
                   user={state.user}
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
-                  progressEstimate={state.progressEstimate}
                   onProfilePress={() => setProfileVisible(true)}
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
+                  onMarkAllWorkoutsComplete={markAllWorkoutsComplete}
                   onCreateSession={createWorkoutSession}
                 />
               ) : (
@@ -422,7 +481,6 @@ function AppContent() {
                   user={state.user}
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
-                  // onCreateSession={createWorkoutSession}
                   onSaveCustomSession={saveCustomWorkoutSession}
                   onDeleteSession={deleteWorkoutSession}
                   onToggleExercise={toggleWorkoutExercise}
@@ -574,6 +632,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#0A0E27',
+  },
+  loadingText: {
+    marginTop: 16,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
   container: {
     flex: 1,

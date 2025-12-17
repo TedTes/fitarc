@@ -165,6 +165,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onDeleteSession,
   onToggleExercise,
 }) => {
+
   // Load sessions from database based on plan_id
   const { sessions: remoteSessions, isLoading: sessionsLoading } = useWorkoutSessions(
     user.id, 
@@ -221,6 +222,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     });
   }, [resolvedSessions, phase?.id]);
 
+
   // Template exercises are only for suggestion UI, not auto-populated
   const weekPlansWithTemplates = useMemo(() => {
     if (!phase) return [];
@@ -273,7 +275,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     [onSaveCustomSession]
   );
 
-  // Sync editing exercises when selected plan changes or sessions update
+ // Sync editing exercises when selected plan changes or sessions update
   useEffect(() => {
     if (!selectedPlan) {
       setEditingExercises([]);
@@ -327,6 +329,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   }, [user.id, weekStart, weekEnd]);
 
   if (!phase) {
+ 
     return (
       <View style={styles.container}>
         <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
@@ -398,11 +401,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setDuplicateModalVisible(false);
   };
 
-  const handleAddFromTemplate = () => {
+  const handleAddFromTemplate = useCallback(async () => {
     if (!selectedPlan || !selectedPlan.templateExercises.length) return;
-    setEditingExercises(createSessionExercises(selectedPlan.templateExercises));
-    setIsDirty(true);
-  };
+    const exercisesFromTemplate = createSessionExercises(selectedPlan.templateExercises);
+    setEditingExercises(exercisesFromTemplate);
+    setIsDirty(false);
+    await persistSession(selectedPlan.dateStr, exercisesFromTemplate);
+  }, [persistSession, selectedPlan?.dateStr, selectedPlan?.templateExercises]);
 
   const isFutureSelected = selectedPlan ? selectedPlan.dateStr > todayKey : false;
   const canToggleCompletion = Boolean(onToggleExercise && selectedPlan?.session && !isFutureSelected);
@@ -497,6 +502,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
     if (!editingExercises.length) {
       return (
+  
         <View style={styles.emptyCard}>
           <Text style={styles.emptyIcon}>💪</Text>
           <Text style={styles.emptyTitle}>No workout planned</Text>
@@ -526,6 +532,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
 
     return (
+
       <View style={styles.workoutCard}>
         <View style={styles.exerciseList}>
           {editingExercises.map((exercise, idx) => (
@@ -602,6 +609,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   };
 
   return (
+
     <View style={styles.container}>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
         {overflowMenuOpen && (

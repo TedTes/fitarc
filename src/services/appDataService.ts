@@ -22,6 +22,7 @@ import {
   startOfDayISO,
   startOfNextDayISO,
 } from '../utils/time';
+import { formatLocalDateYMD } from '../utils/date';
 
 const WORKOUT_LOOKBACK_DAYS = 14;
 const PROGRESS_DEFAULT_WINDOW_DAYS = 90;
@@ -35,74 +36,40 @@ const extractBodyParts = (exerciseRow: any): MuscleGroup[] =>
     )
   );
 
-export const mapSessionRow = (
-  row: any,
-  fallbackPhaseId?: string,
-  timeZone: string = getAppTimeZone()
-): WorkoutSessionEntry => {
-  const exercises = (row.session_exercises || [])
-    .sort((a: any, b: any) => (a.display_order || 0) - (b.display_order || 0))
-    .map((exercise: any) => {
-      const muscles = extractBodyParts(exercise);
-      const sortedSets: WorkoutSetEntry[] = (exercise.sets || [])
-        .map((set: any): WorkoutSetEntry => ({
-          setNumber: typeof set.set_number === 'number' ? set.set_number : undefined,
-          weight:
-            typeof set.weight === 'number'
-              ? set.weight
-              : set.weight !== undefined
-              ? Number(set.weight)
-              : undefined,
-          reps:
-            typeof set.reps === 'number'
-              ? set.reps
-              : set.reps !== undefined
-              ? Number(set.reps)
-              : undefined,
-          rpe:
-            typeof set.rpe === 'number'
-              ? set.rpe
-              : set.rpe !== undefined
-              ? Number(set.rpe)
-              : undefined,
-          restSeconds:
-            typeof set.rest_seconds === 'number'
-              ? set.rest_seconds
-              : set.rest_seconds !== undefined
-              ? Number(set.rest_seconds)
-              : undefined,
-        }))
-        .sort(
-          (a: WorkoutSetEntry, b: WorkoutSetEntry) =>
-            (a.setNumber || 0) - (b.setNumber || 0)
-        );
-      const setCount = sortedSets.length;
-      const firstReps = sortedSets[0]?.reps;
-      const movementPattern =
-        exercise.exercise?.movement_pattern ||
-        inferMovementPatternFromName(exercise.exercise?.name);
-
-      return {
-        name: exercise.exercise?.name || 'Exercise',
-        bodyParts: muscles,
-        completed: setCount > 0,
-        sets: setCount || 3,
-        reps: firstReps ? `${firstReps}` : '8-12',
-        setDetails: sortedSets,
-        exerciseId: exercise.exercise?.id || undefined,
-        movementPattern,
-      };
-    });
-
-  const performedAt = row.performed_at ? new Date(row.performed_at) : new Date();
-
-  return {
-    id: row.id,
-    date: formatDateInTimeZone(performedAt, timeZone),
-    phasePlanId: row.plan_id || fallbackPhaseId || 'phase',
-    exercises,
+  export const mapSessionRow = (
+    session: any,
+    phasePlanId: string | undefined,
+    timeZone: string
+  ): WorkoutSessionEntry => {
+    const sessionExercises = session.session_exercises || [];
+    const performedAtDate = session.performed_at ? new Date(session.performed_at) : null;
+    
+    return {
+      id: session.id,
+      phasePlanId: phasePlanId ?? session.plan_id,
+      date: performedAtDate ? formatLocalDateYMD(performedAtDate) : formatLocalDateYMD(new Date()),
+      exercises: sessionExercises.map((se: any) => ({
+        id: se.id,  // CRITICAL: session_exercise_id for updates
+        exerciseId: se.exercise?.id,
+        name: se.exercise?.name || 'Unknown',
+        bodyParts: extractBodyParts(se.exercise?.muscle_links || []),
+        sets: 4,
+        reps: '8-12',
+        completed: se.complete || false,  // ← READ FROM DB
+        displayOrder: se.display_order,
+        notes: se.notes,
+        setDetails: (se.sets || []).map((s: any) => ({
+          setNumber: s.set_number,
+          reps: s.reps,
+          weight: s.weight,
+          rpe: s.rpe,
+          restSeconds: s.rest_seconds,
+        })),
+      })),
+      notes: session.notes,
+      completed: session.complete || false,  // ← SESSION COMPLETE FROM DB
+    };
   };
-};
 
 const formatMealTypeLabel = (raw?: string | null) => {
   if (!raw) return 'Meal';
