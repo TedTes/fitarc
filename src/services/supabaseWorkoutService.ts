@@ -176,10 +176,12 @@ export const fetchWorkoutSessionEntries = async (
       notes,
       mood,
       perceived_exertion,
+      complete,
       session_exercises:fitarc_workout_session_exercises (
         id,
         display_order,
         notes,
+        complete,
         exercise:fitarc_exercises (
           id,
           name,
@@ -320,9 +322,11 @@ export const upsertWorkoutSessionWithExercises = async ({
       plan_id,
       performed_at,
       notes,
+      complete,
       session_exercises:fitarc_workout_session_exercises (
         id,
         display_order,
+        complete,
         exercise:fitarc_exercises (
           id,
           name,

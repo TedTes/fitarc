@@ -198,10 +198,12 @@ export const fetchHomeData = async (
       plan_id,
       performed_at,
       notes,
+      complete,
       session_exercises:fitarc_workout_session_exercises (
         id,
         display_order,
         notes,
+        complete,
         exercise:fitarc_exercises (
           id,
           name,
@@ -280,10 +282,12 @@ export const fetchPhaseWorkoutSessions = async (
       plan_id,
       performed_at,
       notes,
+      complete,
       session_exercises:fitarc_workout_session_exercises (
         id,
         display_order,
         notes,
+        complete,
         exercise:fitarc_exercises (
           id,
           name,
@@ -382,10 +386,12 @@ export const fetchProgressData = async (
         plan_id,
         performed_at,
         notes,
+        complete,
         session_exercises:fitarc_workout_session_exercises (
           id,
           display_order,
           notes,
+          complete,
           exercise:fitarc_exercises (
             id,
             name,

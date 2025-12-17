@@ -98,6 +98,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const { sessions: phaseSessions } = useWorkoutSessions(user.id, derivedPhaseId);
   const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const [localCompleted, setLocalCompleted] = useState<Set<string>>(new Set());
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const resolvedSessions = phaseSessions.length
@@ -111,6 +112,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   
   const todaySession = resolvedSessions.find((session) => session.date === todayStr) || null;
   const displayExercises = todaySession?.exercises ?? [];
+  const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) =>
+    (exercise.id as string) ||
+    (exercise.exerciseId as string) ||
+    `${exercise.name}-${exercise.setCount ?? ''}-${exercise.repRange ?? ''}`;
+
+  useEffect(() => {
+    setLocalCompleted(new Set());
+  }, [todaySession?.id]);
+
+  const visibleWorkoutCards = displayExercises.filter(
+    (exercise) => !exercise.completed && !localCompleted.has(getExerciseKey(exercise))
+  );
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
@@ -188,10 +201,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   }, [mealsByType]);
 
   const canLogWorkouts = !!phase && !!onToggleWorkoutExercise;
-  const visibleWorkoutCards = displayExercises;
   const totalWorkoutCount = displayExercises.length;
-  const completedWorkoutCount = displayExercises.filter((exercise) => exercise.completed).length;
-  const pendingWorkoutCount = totalWorkoutCount - completedWorkoutCount;
+  const completedWorkoutCount = totalWorkoutCount - visibleWorkoutCards.length;
+  const pendingWorkoutCount = visibleWorkoutCards.length;
   const allWorkoutsCompleted = totalWorkoutCount > 0 && completedWorkoutCount === totalWorkoutCount;
 
   const totalMealCount = hasDailyMeal ? allMealTypes.length : 0;
@@ -199,9 +211,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const allMealsCompleted = totalMealCount > 0 && dayMealsCompleted;
 
   const handleSwipeExercise = (exerciseName: string) => {
-    if (canLogWorkouts && onToggleWorkoutExercise) {
-      onToggleWorkoutExercise(todayStr, exerciseName);
-    }
+    if (!canLogWorkouts || !onToggleWorkoutExercise) return;
+    onToggleWorkoutExercise(todayStr, exerciseName);
+    setLocalCompleted((prev) => {
+      const next = new Set(prev);
+      const target = displayExercises.find((exercise) => exercise.name === exerciseName);
+      if (target) {
+        next.add(getExerciseKey(target));
+      }
+      return next;
+    });
   };
 
   const handleMarkAllComplete = async () => {
@@ -216,10 +235,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           return;
         }
         
-        // Use the new markAllWorkoutsComplete function
         if (onMarkAllWorkoutsComplete) {
           await onMarkAllWorkoutsComplete(todayStr);
         }
+        const next = new Set(localCompleted);
+        visibleWorkoutCards.forEach((exercise) => next.add(getExerciseKey(exercise)));
+        setLocalCompleted(next);
       } else {
         if (!dayMealsCompleted && toggleDayCompleted) {
           await toggleDayCompleted(true);
@@ -291,6 +312,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <Text style={styles.emptyText}>
             Your workout for today will appear here once scheduled.
           </Text>
+        </View>
+      ) : pendingWorkoutCount === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyEmoji}>✅</Text>
+          <Text style={styles.emptyTitle}>Workouts complete</Text>
+          <Text style={styles.emptyText}>Rest up and check Plans for tomorrow’s session.</Text>
         </View>
       ) : (
         // HAS WORKOUT - Display exercises
