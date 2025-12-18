@@ -61,6 +61,31 @@ const buildSetPayloads = (exercise: WorkoutSessionExercise): WorkoutSetEntry[] =
   }));
 };
 
+const buildDefaultSetPayloads = (
+  exercise: WorkoutSessionExercise
+): SupabaseWorkoutSetInsert[] => {
+  const setCount = Math.max(1, exercise.sets ?? 3);
+  const repsValue = parseRepsValue(exercise.reps ?? '');
+
+  return Array.from({ length: setCount }).map((_, idx) => ({
+    session_exercise_id: exercise.id as string,
+    set_number: idx + 1,
+    weight: null,
+    reps: repsValue,
+    rpe: null,
+    rest_seconds: null,
+  }));
+};
+
+type SupabaseWorkoutSetInsert = {
+  session_exercise_id: string;
+  set_number: number;
+  weight: number | null;
+  reps: number | null;
+  rpe: number | null;
+  rest_seconds: number | null;
+};
+
 const buildDateRange = (start: string, end: string): string[] => {
   const results: string[] = [];
   const startDate = parseYMDToDate(start);
@@ -149,6 +174,26 @@ export const logWorkoutSet = async ({
   }
 
   return data as SupabaseWorkoutSet;
+};
+
+export const ensureSetsForExercises = async (
+  exercises: WorkoutSessionExercise[]
+): Promise<void> => {
+  if (!exercises.length) return;
+
+  const payload: SupabaseWorkoutSetInsert[] = [];
+
+  exercises.forEach((exercise) => {
+    if (!exercise?.id) return;
+    const existingCount = exercise.setDetails?.length ?? 0;
+    if (existingCount > 0) return;
+    payload.push(...buildDefaultSetPayloads(exercise));
+  });
+
+  if (!payload.length) return;
+
+  const { error } = await supabase.from('fitarc_workout_sets').insert(payload);
+  if (error) throw error;
 };
 
 /**

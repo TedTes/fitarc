@@ -16,13 +16,15 @@ import {
   toggleExerciseCompletion,
   sessionToWorkoutLog,
 } from '../utils/workoutPlanner';
+import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
 import { createMealPlanForDate } from '../utils/dietPlanner';
 import {
   fetchWorkoutSessionEntries,
   upsertWorkoutSessionWithExercises,
   deleteWorkoutSessionRemote,
   toggleExerciseAndCheckSession, 
-  markAllExercisesComplete 
+  markAllExercisesComplete,
+  ensureSetsForExercises,
 } from '../services/supabaseWorkoutService';
 import { getAppTimeZone } from '../utils/time';
 
@@ -185,11 +187,14 @@ export const useAppState = () => {
           planId,
           getAppTimeZone()
         );
+        const analytics = buildWorkoutAnalytics(remoteSessions);
         setState((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
             workoutSessions: remoteSessions,
+            workoutLogs: analytics.workoutLogs,
+            strengthSnapshots: analytics.strengthSnapshots,
             workoutDataVersion: nextWorkoutVersion(prev),
           };
         });
@@ -223,6 +228,10 @@ export const useAppState = () => {
       }
   
       try {
+        const willComplete = !(exercise.completed ?? false);
+        if (willComplete) {
+          await ensureSetsForExercises([exercise]);
+        }
         await toggleExerciseAndCheckSession(
           session.id,
           exercise.id,
@@ -251,6 +260,7 @@ export const useAppState = () => {
       }
       
       try {
+        await ensureSetsForExercises(session.exercises);
         await markAllExercisesComplete(session.id);
         await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
       } catch (error) {

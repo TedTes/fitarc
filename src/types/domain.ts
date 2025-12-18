@@ -40,7 +40,7 @@ export type WorkoutSessionExercise = {
   completed?: boolean; 
   displayOrder?: number;
   notes?: string;
-  setDetails?: string[];
+  setDetails?: WorkoutSetEntry[];
 };
 
 export type WorkoutSessionEntry = {

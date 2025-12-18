@@ -27,14 +27,19 @@ import { formatLocalDateYMD } from '../utils/date';
 const WORKOUT_LOOKBACK_DAYS = 14;
 const PROGRESS_DEFAULT_WINDOW_DAYS = 90;
 
-const extractBodyParts = (exerciseRow: any): MuscleGroup[] =>
-  Array.from(
+const extractBodyParts = (exerciseRow: any): MuscleGroup[] => {
+  const links = Array.isArray(exerciseRow)
+    ? exerciseRow
+    : exerciseRow?.exercise?.muscle_links || [];
+
+  return Array.from(
     new Set(
-      (exerciseRow.exercise?.muscle_links || [])
-        .map((link: any) => mapMuscleNameToGroup(link.muscle?.name))
+      links
+        .map((link: any) => mapMuscleNameToGroup(link?.muscle?.name))
         .filter((m: MuscleGroup | null | undefined): m is MuscleGroup => !!m)
     )
   );
+};
 
   export const mapSessionRow = (
     session: any,
