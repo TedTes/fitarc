@@ -20,6 +20,7 @@ import { useTodayMeals } from '../hooks/useTodayMeals';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { MealEntry } from '../services/supabaseMealService';
 import { getBodyPartLabel } from '../utils';
+import { formatLocalDateYMD } from '../utils/date';
 
 const MEAL_TYPE_EMOJI: Record<string, string> = {
   Breakfast: '🥚',
@@ -108,9 +109,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     : homeData?.recentSessions ?? [];
   
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  
+  const todayStr = formatLocalDateYMD(today);
   const todaySession = resolvedSessions.find((session) => session.date === todayStr) || null;
+
   const displayExercises = todaySession?.exercises ?? [];
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) =>
     (exercise.id as string) ||
