@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -19,11 +19,16 @@ import { useMealPlans } from '../hooks/useMealPlans';
 import { formatLocalDateYMD } from '../utils/date';
 import { useTodayMeals } from '../hooks/useTodayMeals';
 import { MealEntry } from '../services/supabaseMealService';
+import { FoodItem, createUserFood, searchFoods } from '../services/foodCatalogService';
+import {
+  computeEntriesMacroTotals,
+  formatMacroSummaryLine,
+  formatMealEntryMacros,
+} from '../utils/mealMacros';
 
 type MenuScreenProps = {
   user: User;
   phase: PhasePlan | null;
-  mealPlans: DailyMealPlan[];
 };
 
 
@@ -79,16 +84,19 @@ const getMealEmoji = (title: string): string => {
   return '🍽️';
 };
 
-const formatMealMacros = (entry: MealEntry): string => {
+const formatFoodDisplayName = (food: FoodItem): string =>
+  food.brand ? `${food.name} (${food.brand})` : food.name;
+
+const formatFoodMacroSummary = (food: FoodItem): string => {
   const parts: string[] = [];
-  if (typeof entry.calories === 'number') parts.push(`${entry.calories} kcal`);
-  if (typeof entry.protein === 'number') parts.push(`${entry.protein}g P`);
-  if (typeof entry.carbs === 'number') parts.push(`${entry.carbs}g C`);
-  if (typeof entry.fats === 'number') parts.push(`${entry.fats}g F`);
+  if (typeof food.calories === 'number') parts.push(`${food.calories} kcal`);
+  if (typeof food.protein === 'number') parts.push(`${food.protein}g P`);
+  if (typeof food.carbs === 'number') parts.push(`${food.carbs}g C`);
+  if (typeof food.fats === 'number') parts.push(`${food.fats}g F`);
   return parts.length ? parts.join(' · ') : 'Macros TBD';
 };
 
-export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }) => {
+export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayKey = formatLocalDateYMD(today);
@@ -96,7 +104,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
   endDate.setDate(today.getDate() + 6);
   const endKey = formatLocalDateYMD(endDate);
 
-  const { mealPlansByDate, refresh: refreshMealPlans } = useMealPlans(user.id, todayKey, endKey);
+  const { mealPlansByDate, refresh: refreshMealPlans } = useMealPlans(
+    user.id,
+    todayKey,
+    endKey,
+    phase?.id ?? null
+  );
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const selectedDateObj = useMemo(() => parseLocalDateFromYMD(selectedDate), [selectedDate]);
 
@@ -106,11 +119,17 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
     isLoading: isMealsLoading,
     isMutating: isMealsMutating,
     error: todayMealsError,
+    addEntryFromFood: addFoodEntry,
     addEntry,
     editEntry,
     removeEntry,
     toggleDayCompleted,
-  } = useTodayMeals(phase ? user.id : undefined, phase ? selectedDateObj : undefined, Boolean(phase));
+  } = useTodayMeals(
+    phase ? user.id : undefined,
+    phase ? selectedDateObj : undefined,
+    Boolean(phase),
+    phase?.id ?? null
+  );
 
   const [mealModalVisible, setMealModalVisible] = useState(false);
   const [mealModalMode, setMealModalMode] = useState<'add' | 'edit'>('add');
@@ -124,6 +143,27 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
     fats: '',
   });
   const [editingMealEntryId, setEditingMealEntryId] = useState<string | null>(null);
+  const [foodQuery, setFoodQuery] = useState('');
+  const [foodSuggestions, setFoodSuggestions] = useState<FoodItem[]>([]);
+  const [isSearchingFoods, setIsSearchingFoods] = useState(false);
+  const [foodSearchError, setFoodSearchError] = useState<string | null>(null);
+  const [showNewFoodForm, setShowNewFoodForm] = useState(false);
+  const [customFoodForm, setCustomFoodForm] = useState({
+    name: '',
+    brand: '',
+    servingLabel: '',
+    calories: '',
+    protein: '',
+    carbs: '',
+    fats: '',
+  });
+  const [isCreatingFood, setIsCreatingFood] = useState(false);
+  const foodSearchCache = useRef<Map<string, FoodItem[]>>(new Map());
+
+  const getCurrentMealType = useCallback(
+    () => (mealModalType || '').trim() || 'Meal',
+    [mealModalType]
+  );
   const resetMealModal = useCallback(() => {
     setMealModalType('');
     setMealTypeLocked(false);
@@ -135,6 +175,19 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
       fats: '',
     });
     setEditingMealEntryId(null);
+    setFoodQuery('');
+    setFoodSuggestions([]);
+    setFoodSearchError(null);
+    setShowNewFoodForm(false);
+    setCustomFoodForm({
+      name: '',
+      brand: '',
+      servingLabel: '',
+      calories: '',
+      protein: '',
+      carbs: '',
+      fats: '',
+    });
   }, []);
 
   const closeMealModal = useCallback(() => {
@@ -154,6 +207,19 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
       fats: '',
     });
     setEditingMealEntryId(null);
+    setFoodQuery('');
+    setFoodSuggestions([]);
+    setFoodSearchError(null);
+    setShowNewFoodForm(false);
+    setCustomFoodForm({
+      name: '',
+      brand: '',
+      servingLabel: '',
+      calories: '',
+      protein: '',
+      carbs: '',
+      fats: '',
+    });
     setMealModalVisible(true);
   };
 
@@ -169,6 +235,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
       fats: entry.fats != null ? String(entry.fats) : '',
     });
     setEditingMealEntryId(entry.id);
+    setFoodQuery('');
+    setFoodSuggestions([]);
+    setFoodSearchError(null);
+    setShowNewFoodForm(false);
     setMealModalVisible(true);
   };
 
@@ -183,8 +253,99 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
     return Number.isFinite(parsed) ? parsed : null;
   };
 
+  const handleFoodQueryChange = (text: string) => {
+    setFoodQuery(text);
+    setFoodSearchError(null);
+    if (!text.trim()) {
+      setFoodSuggestions([]);
+      setShowNewFoodForm(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!mealModalVisible) return;
+    const trimmed = foodQuery.trim();
+    if (trimmed.length < 2) {
+      setFoodSuggestions([]);
+      setIsSearchingFoods(false);
+      return;
+    }
+    const normalized = trimmed.toLowerCase();
+    if (foodSearchCache.current.has(normalized)) {
+      setFoodSuggestions(foodSearchCache.current.get(normalized)!);
+      return;
+    }
+    const searchTimeout = setTimeout(async () => {
+      if (!mealModalVisible) return;
+      try {
+        setIsSearchingFoods(true);
+        const results = await searchFoods(trimmed, user.id);
+        foodSearchCache.current.set(normalized, results);
+        setFoodSuggestions(results);
+        setFoodSearchError(null);
+      } catch (err) {
+        console.error('Failed to search foods', err);
+        setFoodSearchError('Unable to fetch foods.');
+      } finally {
+        setIsSearchingFoods(false);
+      }
+    }, 300);
+    return () => clearTimeout(searchTimeout);
+  }, [foodQuery, mealModalVisible, user.id]);
+
+  const handleSelectFoodSuggestion = async (food: FoodItem) => {
+    try {
+      await addFoodEntry(getCurrentMealType(), food);
+      await refreshMealPlans();
+      closeMealModal();
+    } catch (err) {
+      console.error('Failed to add food entry', err);
+      Alert.alert('Meals', 'Unable to add this food.');
+    }
+  };
+
+  const handleOpenCustomFoodForm = () => {
+    setShowNewFoodForm(true);
+    setCustomFoodForm((prev) => ({
+      ...prev,
+      name: foodQuery.trim() || prev.name,
+    }));
+  };
+
+  const handleCustomFoodFormChange = (field: keyof typeof customFoodForm, value: string) => {
+    setCustomFoodForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleAddCustomFood = async () => {
+    const baseName = (customFoodForm.name || foodQuery).trim();
+    if (!baseName) {
+      Alert.alert('Meals', 'Enter a food name to save.');
+      return;
+    }
+    try {
+      setIsCreatingFood(true);
+      const food = await createUserFood(user.id, {
+        name: baseName,
+        brand: customFoodForm.brand.trim() || undefined,
+        servingLabel: customFoodForm.servingLabel.trim() || undefined,
+        calories: parseNumberField(customFoodForm.calories) ?? undefined,
+        protein: parseNumberField(customFoodForm.protein) ?? undefined,
+        carbs: parseNumberField(customFoodForm.carbs) ?? undefined,
+        fats: parseNumberField(customFoodForm.fats) ?? undefined,
+      });
+      await addFoodEntry(getCurrentMealType(), food);
+      await refreshMealPlans();
+      closeMealModal();
+    } catch (err) {
+      console.error('Failed to create custom food', err);
+      Alert.alert('Meals', 'Unable to save this food.');
+    } finally {
+      setIsCreatingFood(false);
+    }
+  };
+
   const handleMealModalSave = async () => {
-    const typeLabel = (mealModalType || '').trim() || 'Meal';
+    const typeLabel = getCurrentMealType();
     const foodName = mealForm.foodName.trim();
     if (!foodName) {
       Alert.alert('Meals', 'Please enter a food name.');
@@ -241,8 +402,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
   const getMealsForDate = (dateStr: string) => {
     if (!phase) return [];
     const remotePlan = mealPlansByDate[dateStr];
-    const stored = remotePlan ?? mealPlans.find((plan) => plan.phasePlanId === phase.id && plan.date === dateStr);
-    return stored?.meals ?? [];
+    return remotePlan?.meals ?? [];
   };
 
   const weeklyMenus: WeeklyMenu[] = useMemo(() => {
@@ -261,7 +421,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
         meals: getMealsForDate(dateStr),
       };
     });
-  }, [todayKey, mealPlansByDate, mealPlans, phase?.id]);
+  }, [todayKey, mealPlansByDate]);
 
   useEffect(() => {
     if (!weeklyMenus.find((plan) => plan.dateStr === selectedDate)) {
@@ -282,19 +442,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
   );
   const hasDailyMeal = Boolean(dailyMeal) || totalMealEntries > 0;
   const dayMealsCompleted = Boolean(dailyMeal?.completed);
-  const fallbackMealTypes = useMemo(
-    () => selectedPlan?.meals.map((meal) => meal.title).filter(Boolean) ?? [],
-    [selectedPlan]
-  );
   const allMealTypes = useMemo((): string[] => {
     const ordered: string[] = [...DEFAULT_MEAL_TYPES];
-    [...fallbackMealTypes, ...Object.keys(mealsByType)].forEach((type) => {
+    Object.keys(mealsByType).forEach((type) => {
       if (type && !ordered.includes(type)) {
         ordered.push(type);
       }
     });
     return ordered;
-  }, [fallbackMealTypes, mealsByType]);
+  }, [mealsByType]);
 
   if (!phase) {
     return (
@@ -312,57 +468,68 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
 
   const renderMealGroup = (mealType: string) => {
     const entries = mealsByType[mealType] ?? [];
+    if (!entries.length) return null;
+    const totals = computeEntriesMacroTotals(entries);
+    const summaryLine = formatMacroSummaryLine(totals);
+    const totalCount = entries.length;
     return (
-      <View key={mealType} style={styles.detailGroup}>
-        <View style={styles.detailGroupHeader}>
-          <View style={styles.detailGroupInfo}>
-            <View style={styles.detailGroupIcon}>
-              <Text style={styles.detailGroupEmoji}>{getMealEmoji(mealType)}</Text>
+      <View key={mealType} style={styles.mealGroupCard}>
+        <View style={styles.mealGroupHeader}>
+          <View style={styles.mealGroupInfo}>
+            <View style={styles.mealGroupIcon}>
+              <Text style={styles.mealGroupEmoji}>{getMealEmoji(mealType)}</Text>
             </View>
             <View>
-              <Text style={styles.detailGroupTitle}>{mealType}</Text>
-              <Text style={styles.detailGroupMeta}>
-                {entries.length ? `${entries.length} item${entries.length > 1 ? 's' : ''}` : 'No items yet'}
+              <Text style={styles.mealGroupTitle}>{mealType}</Text>
+              <Text style={styles.mealGroupMeta}>
+                {`${totalCount} item${totalCount > 1 ? 's' : ''} · ${summaryLine}`}
               </Text>
             </View>
           </View>
-          <Text style={styles.detailGroupHint}>Use the + button above to add foods</Text>
+          <TouchableOpacity
+            style={styles.mealGroupAddButton}
+            onPress={() => openAddMealModal(mealType)}
+            disabled={isMealsMutating}
+          >
+            <Text style={styles.mealGroupAddText}>＋</Text>
+          </TouchableOpacity>
         </View>
-        {entries.length === 0 ? (
-          <Text style={styles.detailEmptyText}>
-            Use the Add Meal button to start logging {mealType.toLowerCase()}.
-          </Text>
-        ) : (
-          entries.map((entry) => (
-            <View key={entry.id} style={styles.detailEntryRow}>
-              <View style={styles.detailEntryInfo}>
-                <Text style={styles.detailEntryName}>{entry.foodName}</Text>
-                <Text style={styles.detailEntryMeta}>{formatMealMacros(entry)}</Text>
-              </View>
-              <View style={styles.detailEntryActions}>
-                <TouchableOpacity
-                  style={styles.detailActionButton}
-                  onPress={() => openEditMealModal(mealType, entry)}
-                  disabled={isMealsMutating}
-                >
-                  <Text style={styles.detailActionText}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.detailActionButton, styles.detailActionDanger]}
-                  onPress={() => confirmDeleteEntry(entry.id)}
-                  disabled={isMealsMutating}
-                >
-                  <Text style={[styles.detailActionText, styles.detailActionDangerText]}>Delete</Text>
-                </TouchableOpacity>
-              </View>
+        {entries.map((entry) => (
+          <View key={entry.id} style={styles.mealEntryCard}>
+            <View style={styles.mealEntryInfo}>
+              <Text style={styles.mealEntryName}>{entry.foodName}</Text>
+              <Text style={styles.mealEntryMeta}>{formatMealEntryMacros(entry)}</Text>
             </View>
-          ))
-        )}
+            <View style={styles.mealEntryActions}>
+              {entry.isDone && (
+                <View style={styles.mealEntryDoneBadge}>
+                  <Text style={styles.mealEntryDoneText}>Done</Text>
+                </View>
+              )}
+              <TouchableOpacity
+                style={styles.mealEntryAction}
+                onPress={() => openEditMealModal(mealType, entry)}
+                disabled={isMealsMutating}
+              >
+                <Text style={styles.mealEntryActionText}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.mealEntryAction, styles.mealEntryActionDanger]}
+                onPress={() => confirmDeleteEntry(entry.id)}
+                disabled={isMealsMutating}
+              >
+                <Text style={[styles.mealEntryActionText, styles.mealEntryActionDangerText]}>
+                  Delete
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
       </View>
     );
   };
 
-  const renderMeals = () => {
+const renderMeals = () => {
     if (!hasDailyMeal && !isMealsLoading) {
       return (
         <View style={styles.emptyCard}>
@@ -530,62 +697,190 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase, mealPlans }
                     />
                   </View>
                 )}
-                <View style={styles.modalField}>
-                  <Text style={styles.modalLabel}>Food name</Text>
+                <View style={styles.modalSection}>
+                  <Text style={styles.modalLabel}>Search foods</Text>
                   <TextInput
                     style={styles.modalInput}
-                    placeholder="Food or recipe name"
+                    placeholder="Search by name"
                     placeholderTextColor={COLORS.textTertiary}
-                    value={mealForm.foodName}
-                    onChangeText={(value) => handleMealFormChange('foodName', value)}
+                    value={foodQuery}
+                    onChangeText={handleFoodQueryChange}
                   />
+                  {foodSearchError && <Text style={styles.errorText}>{foodSearchError}</Text>}
+                  {isSearchingFoods && (
+                    <Text style={styles.helperText}>Searching foods...</Text>
+                  )}
+                  {foodSuggestions.map((food) => (
+                    <TouchableOpacity
+                      key={food.id}
+                      style={styles.foodSuggestion}
+                      onPress={() => handleSelectFoodSuggestion(food)}
+                      disabled={isMealsMutating}
+                    >
+                      <View>
+                        <Text style={styles.foodSuggestionName}>{formatFoodDisplayName(food)}</Text>
+                        <Text style={styles.foodSuggestionMeta}>{formatFoodMacroSummary(food)}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                  {foodQuery.trim().length >= 2 &&
+                    !isSearchingFoods &&
+                    !foodSuggestions.length &&
+                    !showNewFoodForm && (
+                      <TouchableOpacity
+                        style={styles.addCustomFoodButton}
+                        onPress={handleOpenCustomFoodForm}
+                      >
+                        <Text style={styles.addCustomFoodText}>
+                          Add “{foodQuery.trim()}” as new food
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  {showNewFoodForm && (
+                    <View style={styles.customFoodForm}>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="Food name"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={customFoodForm.name}
+                        onChangeText={(value) => handleCustomFoodFormChange('name', value)}
+                      />
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="Brand (optional)"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={customFoodForm.brand}
+                        onChangeText={(value) => handleCustomFoodFormChange('brand', value)}
+                      />
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="Serving label (e.g. 1 cup)"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={customFoodForm.servingLabel}
+                        onChangeText={(value) => handleCustomFoodFormChange('servingLabel', value)}
+                      />
+                      <View style={styles.modalRow}>
+                        <View style={styles.modalField}>
+                          <Text style={styles.modalLabel}>Calories</Text>
+                          <TextInput
+                            style={styles.modalInput}
+                            placeholder="0"
+                            keyboardType="number-pad"
+                            placeholderTextColor={COLORS.textTertiary}
+                            value={customFoodForm.calories}
+                            onChangeText={(value) => handleCustomFoodFormChange('calories', value)}
+                          />
+                        </View>
+                        <View style={styles.modalField}>
+                          <Text style={styles.modalLabel}>Protein (g)</Text>
+                          <TextInput
+                            style={styles.modalInput}
+                            placeholder="0"
+                            keyboardType="number-pad"
+                            placeholderTextColor={COLORS.textTertiary}
+                            value={customFoodForm.protein}
+                            onChangeText={(value) => handleCustomFoodFormChange('protein', value)}
+                          />
+                        </View>
+                      </View>
+                      <View style={styles.modalRow}>
+                        <View style={styles.modalField}>
+                          <Text style={styles.modalLabel}>Carbs (g)</Text>
+                          <TextInput
+                            style={styles.modalInput}
+                            placeholder="0"
+                            keyboardType="number-pad"
+                            placeholderTextColor={COLORS.textTertiary}
+                            value={customFoodForm.carbs}
+                            onChangeText={(value) => handleCustomFoodFormChange('carbs', value)}
+                          />
+                        </View>
+                        <View style={styles.modalField}>
+                          <Text style={styles.modalLabel}>Fats (g)</Text>
+                          <TextInput
+                            style={styles.modalInput}
+                            placeholder="0"
+                            keyboardType="number-pad"
+                            placeholderTextColor={COLORS.textTertiary}
+                            value={customFoodForm.fats}
+                            onChangeText={(value) => handleCustomFoodFormChange('fats', value)}
+                          />
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.addCustomFoodSaveButton, isCreatingFood && styles.modalSaveButtonDisabled]}
+                        onPress={handleAddCustomFood}
+                        disabled={isCreatingFood}
+                      >
+                        <Text style={styles.addCustomFoodSaveText}>
+                          {isCreatingFood ? 'Saving…' : 'Add food'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
-                <View style={styles.modalRow}>
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Calories</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="kcal"
-                      keyboardType="number-pad"
-                      placeholderTextColor={COLORS.textTertiary}
-                      value={mealForm.calories}
-                      onChangeText={(value) => handleMealFormChange('calories', value)}
-                    />
+                <View style={styles.manualSection}>
+                  <View style={styles.manualHeader}>
+                    <Text style={styles.modalLabel}>Manual entry</Text>
+                    <Text style={styles.manualHint}>Use when macros aren’t known</Text>
                   </View>
                   <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Protein (g)</Text>
+                    <Text style={styles.modalLabel}>Food name</Text>
                     <TextInput
                       style={styles.modalInput}
-                      placeholder="0"
-                      keyboardType="number-pad"
+                      placeholder="Food or recipe name"
                       placeholderTextColor={COLORS.textTertiary}
-                      value={mealForm.protein}
-                      onChangeText={(value) => handleMealFormChange('protein', value)}
+                      value={mealForm.foodName}
+                      onChangeText={(value) => handleMealFormChange('foodName', value)}
                     />
                   </View>
-                </View>
-                <View style={styles.modalRow}>
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Carbs (g)</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="0"
-                      keyboardType="number-pad"
-                      placeholderTextColor={COLORS.textTertiary}
-                      value={mealForm.carbs}
-                      onChangeText={(value) => handleMealFormChange('carbs', value)}
-                    />
+                  <View style={styles.modalRow}>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Calories</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="kcal"
+                        keyboardType="number-pad"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={mealForm.calories}
+                        onChangeText={(value) => handleMealFormChange('calories', value)}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Protein (g)</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={mealForm.protein}
+                        onChangeText={(value) => handleMealFormChange('protein', value)}
+                      />
+                    </View>
                   </View>
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Fats (g)</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="0"
-                      keyboardType="number-pad"
-                      placeholderTextColor={COLORS.textTertiary}
-                      value={mealForm.fats}
-                      onChangeText={(value) => handleMealFormChange('fats', value)}
-                    />
+                  <View style={styles.modalRow}>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Carbs (g)</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={mealForm.carbs}
+                        onChangeText={(value) => handleMealFormChange('carbs', value)}
+                      />
+                    </View>
+                    <View style={styles.modalField}>
+                      <Text style={styles.modalLabel}>Fats (g)</Text>
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={mealForm.fats}
+                        onChangeText={(value) => handleMealFormChange('fats', value)}
+                      />
+                    </View>
                   </View>
                 </View>
                 <View style={styles.modalActions}>
@@ -798,96 +1093,124 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     marginBottom: 24,
   },
-  detailGroup: {
+  mealGroupCard: {
     marginTop: 16,
     padding: 16,
-    borderRadius: 16,
+    borderRadius: 18,
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
     gap: 12,
   },
-  detailGroupHeader: {
+  mealGroupHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 12,
   },
-  detailGroupInfo: {
+  mealGroupInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     flex: 1,
   },
-  detailGroupIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  mealGroupIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: COLORS.elevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  detailGroupEmoji: {
-    fontSize: 18,
+  mealGroupEmoji: {
+    fontSize: 20,
   },
-  detailGroupTitle: {
+  mealGroupTitle: {
     color: COLORS.textPrimary,
     fontSize: 16,
     fontWeight: '700',
   },
-  detailGroupMeta: {
+  mealGroupMeta: {
     color: COLORS.textSecondary,
     fontSize: 12,
   },
-  detailGroupHint: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
+  mealGroupAddButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.elevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mealGroupAddText: {
+    color: COLORS.textPrimary,
+    fontSize: 20,
+    fontWeight: '700',
   },
   detailEmptyText: {
     color: COLORS.textSecondary,
     fontSize: 13,
   },
-  detailEntryRow: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 12,
+  mealEntryCard: {
     marginTop: 12,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: COLORS.elevated,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
   },
-  detailEntryInfo: {
+  mealEntryInfo: {
     flex: 1,
   },
-  detailEntryName: {
+  mealEntryName: {
     color: COLORS.textPrimary,
     fontSize: 15,
     fontWeight: '600',
   },
-  detailEntryMeta: {
+  mealEntryMeta: {
     color: COLORS.textSecondary,
     fontSize: 12,
     marginTop: 2,
   },
-  detailEntryActions: {
+  mealEntryDoneBadge: {
+    alignSelf: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.success,
+    backgroundColor: 'rgba(0,245,160,0.1)',
+  },
+  mealEntryDoneText: {
+    color: COLORS.success,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  mealEntryActions: {
     flexDirection: 'row',
     gap: 8,
   },
-  detailActionButton: {
-    paddingHorizontal: 10,
+  mealEntryAction: {
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: COLORS.elevated,
+    backgroundColor: COLORS.surface,
   },
-  detailActionText: {
+  mealEntryActionText: {
     color: COLORS.textPrimary,
     fontSize: 12,
     fontWeight: '600',
   },
-  detailActionDanger: {
-    backgroundColor: 'rgba(239,68,68,0.1)',
+  mealEntryActionDanger: {
+    backgroundColor: 'rgba(239,68,68,0.12)',
   },
-  detailActionDangerText: {
+  mealEntryActionDangerText: {
     color: '#ef4444',
   },
   errorText: {
@@ -945,11 +1268,18 @@ const styles = StyleSheet.create({
   modalField: {
     gap: 6,
   },
+  modalSection: {
+    gap: 10,
+  },
   modalLabel: {
     fontSize: 13,
     color: COLORS.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  helperText: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
   },
   modalInput: {
     backgroundColor: COLORS.elevated,
@@ -970,6 +1300,69 @@ const styles = StyleSheet.create({
   },
   modalActions: {
     marginTop: 12,
+  },
+  foodSuggestion: {
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    marginTop: 4,
+  },
+  foodSuggestionName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  foodSuggestionMeta: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  addCustomFoodButton: {
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentDim,
+  },
+  addCustomFoodText: {
+    color: COLORS.accent,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  customFoodForm: {
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  addCustomFoodSaveButton: {
+    marginTop: 4,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  addCustomFoodSaveText: {
+    color: COLORS.textPrimary,
+    fontWeight: '600',
+  },
+  manualSection: {
+    gap: 10,
+    marginTop: 8,
+  },
+  manualHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  manualHint: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
   },
   modalSaveButton: {
     borderRadius: 12,

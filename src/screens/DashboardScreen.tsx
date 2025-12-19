@@ -1,4 +1,3 @@
-
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -21,6 +20,11 @@ import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { MealEntry } from '../services/supabaseMealService';
 import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
+import {
+  computeEntriesMacroTotals,
+  formatMacroSummaryLine,
+  formatMealEntryMacros,
+} from '../utils/mealMacros';
 
 const MEAL_TYPE_EMOJI: Record<string, string> = {
   Breakfast: '🥚',
@@ -43,6 +47,7 @@ const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)']
 const CARD_GRADIENT_COMPLETE = ['rgba(0, 245, 160, 0.15)', 'rgba(0, 214, 143, 0.1)'] as const;
 const ACTIVITY_TOTAL_DAYS = 84;
 const DAYS_PER_ACTIVITY_COLUMN = 7;
+const ACTIVITY_GAP = 6;
 
 const formatBodyPartList = (parts: MuscleGroup[]): string => {
   if (!parts.length) return 'Full Body';
@@ -62,15 +67,6 @@ type ActivityCell = {
   count: number;
   level: number;
   isToday: boolean;
-};
-
-const formatMealMacros = (entry: MealEntry): string => {
-  const parts: string[] = [];
-  if (typeof entry.calories === 'number') parts.push(`${entry.calories} kcal`);
-  if (typeof entry.protein === 'number') parts.push(`P${entry.protein}g`);
-  if (typeof entry.carbs === 'number') parts.push(`C${entry.carbs}g`);
-  if (typeof entry.fats === 'number') parts.push(`F${entry.fats}g`);
-  return parts.length ? parts.join(' · ') : 'Macros TBD';
 };
 
 type DashboardScreenProps = {
@@ -116,7 +112,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) =>
     (exercise.id as string) ||
     (exercise.exerciseId as string) ||
-    `${exercise.name}-${exercise.setCount ?? ''}-${exercise.repRange ?? ''}`;
+    `${exercise.name}-${exercise.sets ?? ''}-${exercise.reps ?? ''}`;
 
   useEffect(() => {
     setLocalCompleted(new Set());
@@ -135,19 +131,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     day: 'numeric',
   });
 
-  const activityCells = useMemo<ActivityCell[]>(() => {
-    const counts: Record<string, number> = {};
+  const sessionsByDate = useMemo(() => {
+    const map = new Map<string, WorkoutSessionEntry[]>();
     resolvedSessions.forEach((session) => {
       if (!session.date) return;
-      counts[session.date] = (counts[session.date] || 0) + 1;
+      const key = session.date;
+      map.set(key, [...(map.get(key) || []), session]);
     });
+    return map;
+  }, [resolvedSessions]);
+
+  const activityCells = useMemo<ActivityCell[]>(() => {
     const now = new Date();
     const cells: ActivityCell[] = [];
     for (let i = ACTIVITY_TOTAL_DAYS - 1; i >= 0; i -= 1) {
       const cellDate = new Date(now);
       cellDate.setDate(now.getDate() - i);
       const iso = cellDate.toISOString().split('T')[0];
-      const count = counts[iso] || 0;
+      const count = sessionsByDate.get(iso)?.length || 0;
       cells.push({
         date: cellDate,
         iso,
@@ -158,6 +159,35 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
     return cells;
   }, [resolvedSessions]);
+
+  const [gridLayout, setGridLayout] = useState({ width: 0, height: 0 });
+  const [selectedActivityMeta, setSelectedActivityMeta] = useState<{
+    iso: string;
+    row: number;
+    col: number;
+  } | null>(null);
+  
+  useEffect(() => {
+    if (!selectedActivityMeta) return;
+    const timeout = setTimeout(() => {
+      setSelectedActivityMeta(null);
+    }, 2500); // Increased timeout for better UX
+    return () => clearTimeout(timeout);
+  }, [selectedActivityMeta]);
+
+  useEffect(() => {
+    if (
+      selectedActivityMeta &&
+      !activityCells.some((cell) => cell.iso === selectedActivityMeta.iso)
+    ) {
+      setSelectedActivityMeta(null);
+    }
+  }, [activityCells, selectedActivityMeta]);
+
+  const selectedActivity =
+    (selectedActivityMeta &&
+      activityCells.find((cell) => cell.iso === selectedActivityMeta.iso)) ||
+    null;
 
   const activityColumns = useMemo(() => {
     const columns: ActivityCell[][] = [];
@@ -181,7 +211,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     isMutating: isMealsMutating,
     error: todayMealsError,
     toggleDayCompleted,
-  } = useTodayMeals(phase ? user.id : undefined, today, Boolean(phase));
+  } = useTodayMeals(phase ? user.id : undefined, today, Boolean(phase), phase?.id ?? null);
   
   const hasDailyMeal = Boolean(dailyMeal);
   const totalMealEntries = Object.values(mealsByType).reduce(
@@ -248,10 +278,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         const next = new Set(localCompleted);
         visibleWorkoutCards.forEach((exercise) => next.add(getExerciseKey(exercise)));
         setLocalCompleted(next);
-      } else {
-        if (!dayMealsCompleted && toggleDayCompleted) {
-          await toggleDayCompleted(true);
-        }
+      } else if (toggleDayCompleted) {
+        await toggleDayCompleted(true);
       }
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Unable to complete action.');
@@ -262,6 +290,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const renderMealGroup = (mealType: string) => {
     const entries = mealsByType[mealType] ?? [];
+    if (!entries.length) return null;
+    const totals = computeEntriesMacroTotals(entries);
+    const macroSummary = formatMacroSummaryLine(totals);
+    const totalCount = entries.length;
     return (
       <LinearGradient
         key={mealType}
@@ -273,20 +305,112 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.mealInfo}>
             <Text style={styles.mealName}>{mealType}</Text>
             <Text style={styles.mealMeta}>
-              {entries.length ? `${entries.length} item${entries.length > 1 ? 's' : ''}` : 'No items'}
+              {totalCount
+                ? `${totalCount} item${totalCount > 1 ? 's' : ''} · ${macroSummary}`
+                : 'No items'}
             </Text>
           </View>
         </View>
-        {entries.length === 0 ? (
-          <Text style={styles.mealEmptyText}>Add from Menu tab</Text>
-        ) : (
-          entries.map((entry) => (
-            <View key={entry.id} style={styles.mealEntry}>
+        {entries.map((entry) => (
+          <View key={entry.id} style={styles.mealEntry}>
+            <View>
               <Text style={styles.mealEntryName}>{entry.foodName}</Text>
-              <Text style={styles.mealEntryMacros}>{formatMealMacros(entry)}</Text>
+              <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
             </View>
-          ))
+            {entry.isDone && (
+              <View style={styles.mealEntryDoneBadge}>
+                <Text style={styles.mealEntryDoneText}>Done</Text>
+              </View>
+            )}
+          </View>
+        ))}
+      </LinearGradient>
+    );
+  };
+
+  const renderActivityDetails = () => {
+    if (!selectedActivity || !selectedActivityMeta) return null;
+    
+    const sessionsForDay = sessionsByDate.get(selectedActivity.iso) || [];
+    const workoutCount = sessionsForDay.length;
+    
+    const totalExercises = sessionsForDay.reduce(
+      (sum, session) => sum + session.exercises.length,
+      0
+    );
+    
+    const totalSets = sessionsForDay.reduce((sum, session) => {
+      return (
+        sum +
+        session.exercises.reduce((exerciseSum, exercise) => {
+          const setsLogged = exercise.setDetails?.length ?? exercise.sets ?? 0;
+          return exerciseSum + setsLogged;
+        }, 0)
+      );
+    }, 0);
+  
+    const columnsCount = activityColumns.length || 1;
+    const columnWidth =
+      columnsCount > 0
+        ? (gridLayout.width - ACTIVITY_GAP * (columnsCount - 1)) / columnsCount
+        : 0;
+    const rowHeight =
+      (gridLayout.height - ACTIVITY_GAP * (DAYS_PER_ACTIVITY_COLUMN - 1)) /
+      DAYS_PER_ACTIVITY_COLUMN;
+  
+    if (!columnWidth || !rowHeight) return null;
+  
+    const baseLeft =
+      selectedActivityMeta.col * (columnWidth + ACTIVITY_GAP) + columnWidth / 2;
+    const baseTop =
+      selectedActivityMeta.row * (rowHeight + ACTIVITY_GAP) - rowHeight;
+  
+    const tooltipHalfWidth = 60;
+    const clampedLeft = Math.min(
+      Math.max(baseLeft, tooltipHalfWidth),
+      gridLayout.width - tooltipHalfWidth
+    );
+  
+    return (
+      <LinearGradient
+        colors={['rgba(16, 20, 39, 0.98)', 'rgba(25, 30, 55, 0.98)']}
+        style={[
+          styles.activityDetailCard,
+          {
+            left: clampedLeft - tooltipHalfWidth,
+            top: Math.max(baseTop, -10),
+          },
+        ]}
+        pointerEvents="none"
+      >
+        {workoutCount === 0 ? (
+          <View style={styles.activityTooltipCompact}>
+            <Text style={styles.activityCompactIcon}>💤</Text>
+          </View>
+        ) : (
+          <View style={styles.activityTooltipCompact}>
+            <View style={styles.activityCompactStat}>
+              <Text style={styles.activityCompactIcon}>🏋️</Text>
+              <Text style={styles.activityCompactValue}>{workoutCount}</Text>
+            </View>
+            
+            <View style={styles.activityCompactDivider} />
+            
+            <View style={styles.activityCompactStat}>
+              <Text style={styles.activityCompactIcon}>💪</Text>
+              <Text style={styles.activityCompactValue}>{totalExercises}</Text>
+            </View>
+            
+            <View style={styles.activityCompactDivider} />
+            
+            <View style={styles.activityCompactStat}>
+              <Text style={styles.activityCompactIcon}>🔥</Text>
+              <Text style={styles.activityCompactValue}>{totalSets}</Text>
+            </View>
+          </View>
         )}
+  
+        <View style={styles.activityTooltipArrow} />
       </LinearGradient>
     );
   };
@@ -294,7 +418,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const renderWorkoutsSection = () => (
     <View style={styles.section}>
       {!resolvedPhase ? (
-        // NO PLAN - Show only "Create Plan" button (opens physique selection)
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>🎯</Text>
           <Text style={styles.emptyTitle}>No active plan</Text>
@@ -312,7 +435,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           )}
         </View>
       ) : !hasSyncedWorkout ? (
-        // HAS PLAN BUT NO WORKOUT TODAY
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>📭</Text>
           <Text style={styles.emptyTitle}>No workout scheduled</Text>
@@ -332,10 +454,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>✅</Text>
           <Text style={styles.emptyTitle}>Workouts complete</Text>
-          <Text style={styles.emptyText}>Rest up and check Plans for tomorrow’s session.</Text>
+          <Text style={styles.emptyText}>Rest up and check Plans for tomorrow's session.</Text>
         </View>
       ) : (
-        // HAS WORKOUT - Display exercises
         <View style={styles.verticalList}>
           {visibleWorkoutCards.map((exercise, index) => {
             const isCompleted = exercise.completed;
@@ -354,20 +475,27 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 </View>
 
                 <Text style={styles.exerciseName}>{exercise.name}</Text>
+                <Text style={styles.exerciseBodyParts}>
+                  {formatBodyPartList(exercise.bodyParts)}
+                </Text>
 
                 <View style={styles.metaRow}>
-                  <View style={styles.metaTags}>
-                    <View style={styles.metaTag}>
-                      <Text style={styles.metaTagText}>{formatBodyPartList(exercise.bodyParts)}</Text>
+                  <View style={styles.exerciseStats}>
+                    <View style={styles.inlineStat}>
+                      <Text style={styles.inlineStatValue}>
+                        {exercise.sets ?? '—'}
+                      </Text>
+                      <Text style={styles.inlineStatLabel}>sets</Text>
                     </View>
-                    <View style={styles.metaTag}>
-                      <Text style={styles.metaTagText}>{exercise.setCount} sets</Text>
-                    </View>
-                    <View style={styles.metaTag}>
-                      <Text style={styles.metaTagText}>{exercise.repRange} reps</Text>
+                    <Text style={styles.inlineDot}>•</Text>
+                    <View style={styles.inlineStat}>
+                      <Text style={styles.inlineStatValue}>
+                        {exercise.reps?? '—'}
+                      </Text>
+                      <Text style={styles.inlineStatLabel}>reps</Text>
                     </View>
                   </View>
-                  
+
                   <TouchableOpacity
                     style={[
                       styles.exerciseDoneButtonInline,
@@ -421,7 +549,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   return (
     <View style={styles.container}>
       <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
@@ -435,14 +562,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           )}
         </View>
 
-        {/* Scrollable Content - Activity Grid */}
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           bounces={true}
         >
-          {/* Activity Grid */}
           <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
             <View style={styles.activityHeader}>
               <Text style={styles.activityTitle}>ACTIVITY STREAK</Text>
@@ -461,28 +586,41 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 </View>
               </View>
             </View>
-            <View style={styles.activityGrid}>
-              {activityColumns.map((column, colIdx) => (
-                <View key={`col-${colIdx}`} style={styles.activityColumn}>
-                  {column.map((cell) => (
-                    <View
-                      key={cell.iso}
-                      style={[
-                        styles.activityCell,
-                        getActivityLevelStyle(cell.level),
-                        cell.isToday && styles.activityCellToday,
-                      ]}
-                    />
-                  ))}
-                </View>
-              ))}
+            <View style={styles.activityGridWrapper}>
+              <View
+                style={styles.activityGrid}
+                onLayout={(event) =>
+                  setGridLayout({
+                    width: event.nativeEvent.layout.width,
+                    height: event.nativeEvent.layout.height,
+                  })
+                }
+              >
+                {activityColumns.map((column, colIdx) => (
+                  <View key={`col-${colIdx}`} style={styles.activityColumn}>
+                    {column.map((cell, rowIdx) => (
+                      <TouchableOpacity
+                        key={cell.iso}
+                        style={[
+                          styles.activityCell,
+                          getActivityLevelStyle(cell.level),
+                          cell.isToday && styles.activityCellToday,
+                        ]}
+                        onPress={() =>
+                          setSelectedActivityMeta({ iso: cell.iso, row: rowIdx, col: colIdx })
+                        }
+                        activeOpacity={0.85}
+                      />
+                    ))}
+                  </View>
+                ))}
+              </View>
+              {selectedActivity && renderActivityDetails()}
             </View>
           </LinearGradient>
         </ScrollView>
 
-        {/* Sticky Tabs Container */}
         <View style={styles.stickyTabsContainer}>
-          {/* Tabs */}
           <View style={styles.tabs}>
             <TouchableOpacity
               style={[styles.tab, activeTab === 'workouts' && styles.tabActive]}
@@ -502,7 +640,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </TouchableOpacity>
           </View>
 
-          {/* Progress Chip with Mark All Button */}
           <View style={styles.progressChip}>
             <View style={styles.progressLeft}>
               <View style={styles.progressDot} />
@@ -545,7 +682,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
          </View>
         </View>
 
-        {/* Scrollable Content Area */}
         <ScrollView
           style={styles.contentScrollView}
           contentContainerStyle={styles.contentScrollContent}
@@ -672,6 +808,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
   },
+  activityGridWrapper: {
+    position: 'relative',
+    marginTop: 8,
+  },
   activityColumn: {
     flex: 1,
     gap: 6,
@@ -701,7 +841,42 @@ const styles = StyleSheet.create({
   activityCellToday: {
     borderWidth: 2,
     borderColor: '#00F5A0',
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 6,
+    elevation: 5,
   },
+
+  activityDetailCard: {
+    position: 'absolute',
+    width: 100,
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.4)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 8,
+    overflow: 'visible',
+  },
+  activityTooltipArrow: {
+    position: 'absolute',
+    bottom: -5,
+    left: '50%',
+    marginLeft: -5,
+    width: 10,
+    height: 10,
+    backgroundColor: 'rgba(16, 20, 39, 0.98)',
+    borderRightWidth: 1.5,
+    borderBottomWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.4)',
+    transform: [{ rotate: '45deg' }],
+  },
+  
   tabs: {
     flexDirection: 'row',
     backgroundColor: 'rgba(30, 35, 64, 0.4)',
@@ -885,21 +1060,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  completedBadge: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: '#00F5A0',
-    borderRadius: 8,
-  },
-  completedBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0A0E27',
-  },
   exerciseName: {
     fontSize: 20,
     fontWeight: '700',
     color: '#FFFFFF',
+    marginBottom: 6,
+  },
+  exerciseBodyParts: {
+    fontSize: 13,
+    color: '#A0A3BD',
     marginBottom: 12,
   },
   metaRow: {
@@ -909,34 +1078,29 @@ const styles = StyleSheet.create({
     marginTop: 12,
     gap: 16,
   },
-  metaTags: {
-    flex: 1,
+  exerciseStats: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
   },
-  metaTag: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: 'rgba(139, 147, 176, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(139, 147, 176, 0.2)',
-    borderRadius: 8,
+  inlineStat: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 4,
   },
-  metaTagText: {
-    fontSize: 13,
-    fontWeight: '500',
+  inlineStatValue: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  inlineStatLabel: {
+    fontSize: 12,
     color: '#8B93B0',
   },
-  exerciseDoneButton: {
-    alignSelf: 'flex-end',
-    marginTop: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  inlineDot: {
+    color: '#8B93B0',
+    fontSize: 12,
   },
   exerciseDoneButtonInline: {
     paddingHorizontal: 16,
@@ -994,6 +1158,10 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.04)',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
   },
   mealEntryName: {
     fontSize: 15,
@@ -1005,8 +1173,50 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8B93B0',
   },
+  mealEntryDoneBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#00F5A0',
+    backgroundColor: 'rgba(0,245,160,0.1)',
+  },
+  mealEntryDoneText: {
+    color: '#00F5A0',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
   mealEmptyText: {
     fontSize: 13,
     color: '#8B93B0',
   },
+
+  activityTooltipCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  activityCompactStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  activityCompactIcon: {
+    fontSize: 12,
+  },
+  activityCompactValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+  },
+  activityCompactDivider: {
+    width: 1,
+    height: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  
+
 });

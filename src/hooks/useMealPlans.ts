@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchMealPlansForRange } from '../services/appDataService';
+import {
+  hasDailyMealsInRange,
+  createMealPlanWithSeed,
+} from '../services/supabaseMealService';
 import { DailyMealPlan } from '../types/domain';
 
 const cache = new Map<string, DailyMealPlan[]>();
 
-const buildKey = (userId?: string, from?: string, to?: string) =>
-  userId && from && to ? `${userId}:${from}:${to}` : undefined;
+const buildKey = (userId?: string, from?: string, to?: string, planId?: string | null) =>
+  userId && from && to ? `${userId}:${from}:${to}:${planId ?? 'none'}` : undefined;
 
-export const useMealPlans = (userId?: string, from?: string, to?: string) => {
-  const cacheKey = buildKey(userId, from, to);
+export const useMealPlans = (
+  userId?: string,
+  from?: string,
+  to?: string,
+  planId?: string | null
+) => {
+  const cacheKey = buildKey(userId, from, to, planId);
   const [plans, setPlans] = useState<DailyMealPlan[]>(
     cacheKey && cache.has(cacheKey) ? cache.get(cacheKey)! : []
   );
@@ -16,12 +25,24 @@ export const useMealPlans = (userId?: string, from?: string, to?: string) => {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!userId || !from || !to) return;
+    if (!userId || !from || !to || !planId) return;
     try {
       setIsLoading(true);
       setError(null);
-      const data = await fetchMealPlansForRange(userId, from, to);
-      const key = `${userId}:${from}:${to}`;
+      const hasMeals = await hasDailyMealsInRange(userId, from, to, planId ?? null);
+      if (!hasMeals) {
+        await createMealPlanWithSeed({
+          userId,
+          startDate: from,
+          planId: planId ?? null,
+        });
+        const keyToInvalidate = buildKey(userId, from, to, planId);
+        if (keyToInvalidate) {
+          cache.delete(keyToInvalidate);
+        }
+      }
+      const data = await fetchMealPlansForRange(userId, from, to, planId ?? undefined);
+      const key = buildKey(userId, from, to, planId);
       cache.set(key, data);
       setPlans(data);
     } catch (err: any) {
@@ -29,7 +50,7 @@ export const useMealPlans = (userId?: string, from?: string, to?: string) => {
     } finally {
       setIsLoading(false);
     }
-  }, [userId, from, to]);
+  }, [from, planId, to, userId]);
 
   useEffect(() => {
     if (!cacheKey) return;

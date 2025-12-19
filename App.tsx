@@ -505,7 +505,6 @@ function AppContent() {
                 <MenuScreen
                   user={state.user}
                   phase={state.currentPhase}
-                  mealPlans={state.mealPlans}
                 />
               ) : (
                 <TabPlaceholder

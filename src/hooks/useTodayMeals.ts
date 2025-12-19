@@ -9,7 +9,9 @@ import {
   updateMealEntry,
   deleteMealEntry,
   setDailyMealsCompleted,
+  setDailyMealEntriesDone,
 } from '../services/supabaseMealService';
+import { addMealEntryFromFood, FoodItem } from '../services/foodCatalogService';
 import { formatLocalDateYMD } from '../utils/date';
 
 type AddEntryPayload = {
@@ -85,9 +87,26 @@ const removeEntryFromMap = (map: MealsByType, entryId: string): MealsByType => {
   return nextMap;
 };
 
-export const useTodayMeals = (userId?: string, date?: Date, enabled = true) => {
+const updateEntriesCompletion = (map: MealsByType, completed: boolean): MealsByType => {
+  const next: MealsByType = {};
+  Object.keys(map).forEach((key) => {
+    next[key] = map[key].map((entry) => ({
+      ...entry,
+      isDone: completed,
+    }));
+  });
+  return next;
+};
+
+export const useTodayMeals = (
+  userId?: string,
+  date?: Date,
+  enabled: boolean = true,
+  planId?: string | null
+) => {
   const dateKey = date ? formatLocalDateYMD(date) : undefined;
-  const cacheKey = enabled && userId && dateKey ? `${userId}:${dateKey}` : undefined;
+  const cacheKey =
+    enabled && userId && dateKey ? `${userId}:${dateKey}:${planId ?? 'none'}` : undefined;
 
   const [mealsState, setMealsState] = useState<TodayMealsResult>(() =>
     cacheKey && cache.has(cacheKey) ? cache.get(cacheKey)! : emptyMealsState()
@@ -101,7 +120,7 @@ export const useTodayMeals = (userId?: string, date?: Date, enabled = true) => {
     setIsLoading(true);
     setError(null);
     try {
-      const latest = await getTodayMeals(userId, dateKey);
+      const latest = await getTodayMeals(userId, dateKey, planId ?? null);
       if (cacheKey) cache.set(cacheKey, latest);
       setMealsState(latest);
     } catch (err: any) {
@@ -110,7 +129,7 @@ export const useTodayMeals = (userId?: string, date?: Date, enabled = true) => {
     } finally {
       setIsLoading(false);
     }
-  }, [cacheKey, dateKey, enabled, userId]);
+  }, [cacheKey, dateKey, enabled, planId, userId]);
 
   useEffect(() => {
     if (!cacheKey) return;
@@ -127,13 +146,13 @@ export const useTodayMeals = (userId?: string, date?: Date, enabled = true) => {
       throw new Error('Missing user or date');
     }
     if (mealsState.dailyMeal) return mealsState.dailyMeal;
-    const created = await ensureDailyMealForDate(userId, dateKey);
+    const created = await ensureDailyMealForDate(userId, dateKey, planId ?? null);
     setMealsState((prev) => ({
       dailyMeal: created,
       mealsByType: prev.mealsByType,
     }));
     return created;
-  }, [dateKey, mealsState.dailyMeal, userId]);
+  }, [dateKey, mealsState.dailyMeal, planId, userId]);
 
   const addEntry = useCallback(
     async ({ mealType, foodName, calories, protein, carbs, fats }: AddEntryPayload) => {
@@ -158,6 +177,29 @@ export const useTodayMeals = (userId?: string, date?: Date, enabled = true) => {
         }));
       } catch (err) {
         console.error('Failed to add meal entry', err);
+        throw err;
+      } finally {
+        setIsMutating(false);
+      }
+    },
+    [dateKey, ensureDailyMeal, userId]
+  );
+
+  const addEntryFromFood = useCallback(
+    async (mealType: string, food: FoodItem) => {
+      if (!userId || !dateKey) {
+        throw new Error('Missing user or date');
+      }
+      setIsMutating(true);
+      try {
+        const dailyMeal = await ensureDailyMeal();
+        const created = await addMealEntryFromFood(dailyMeal.id, mealType, food);
+        setMealsState((prev) => ({
+          dailyMeal,
+          mealsByType: addEntryToMap(prev.mealsByType, created),
+        }));
+      } catch (err) {
+        console.error('Failed to add food entry', err);
         throw err;
       } finally {
         setIsMutating(false);
@@ -216,9 +258,10 @@ export const useTodayMeals = (userId?: string, date?: Date, enabled = true) => {
       try {
         const dailyMeal = await ensureDailyMeal();
         const updated = await setDailyMealsCompleted(dailyMeal.id, completed);
+        await setDailyMealEntriesDone(dailyMeal.id, completed);
         setMealsState((prev) => ({
           dailyMeal: updated,
-          mealsByType: prev.mealsByType,
+          mealsByType: updateEntriesCompletion(prev.mealsByType, completed),
         }));
       } catch (err) {
         console.error('Failed to toggle meal completion', err);
@@ -240,6 +283,7 @@ export const useTodayMeals = (userId?: string, date?: Date, enabled = true) => {
     error,
     refetch: loadMeals,
     addEntry,
+    addEntryFromFood,
     editEntry,
     removeEntry,
     toggleDayCompleted,
