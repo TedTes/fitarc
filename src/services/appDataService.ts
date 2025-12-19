@@ -82,8 +82,12 @@ const formatMealTypeLabel = (raw?: string | null) => {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
+const normalizeDateString = (value?: string | null): string =>
+  value?.includes('T') ? value.split('T')[0] : value || '';
+
 const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
   if (row.meal_date) {
+    const normalizedDate = normalizeDateString(row.meal_date);
     const dayCompleted = Boolean(row.completed);
     const grouped: Record<string, MealPlanMeal> = {};
     (row.meal_entries || []).forEach((entry: any) => {
@@ -106,7 +110,7 @@ const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
     const meals = Object.values(grouped);
     return {
       id: row.id,
-      date: row.meal_date,
+      date: normalizedDate,
       phasePlanId: phasePlanId || row.plan_id || 'phase',
       meals,
       completed: dayCompleted,
@@ -121,7 +125,7 @@ const mapMealPlanRow = (row: any, phasePlanId?: string): DailyMealPlan => {
   }));
   return {
     id: row.id,
-    date: row.date,
+    date: normalizeDateString(row.date),
     phasePlanId: phasePlanId || row.plan_id || 'phase',
     meals,
     completed:
@@ -324,15 +328,17 @@ export const fetchPhaseWorkoutSessions = async (
 export const fetchMealPlansForRange = async (
   userId: string,
   fromDate: string,
-  toDate: string
+  toDate: string,
+  planId?: string
 ): Promise<DailyMealPlan[]> => {
-  const { data, error } = await supabase
+  let query = supabase
     .from('fitarc_daily_meals')
     .select(
       `
       id,
       user_id,
       plan_id,
+      meal_plan_id,
       meal_date,
       completed,
       notes,
@@ -351,6 +357,12 @@ export const fetchMealPlansForRange = async (
     .gte('meal_date', fromDate)
     .lte('meal_date', toDate)
     .order('meal_date', { ascending: true });
+
+  if (planId) {
+    query = query.eq('plan_id', planId);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return (data || []).map((row: any) => mapMealPlanRow(row));
