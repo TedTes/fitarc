@@ -13,7 +13,6 @@ import {
 } from '../types/domain';
 import {
   createSessionForDate,
-  toggleExerciseCompletion,
   sessionToWorkoutLog,
 } from '../utils/workoutPlanner';
 import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
@@ -27,6 +26,8 @@ import {
   ensureSetsForExercises,
 } from '../services/supabaseWorkoutService';
 import { getAppTimeZone } from '../utils/time';
+import { formatLocalDateYMD } from '../utils/date';
+import { fetchMealPlansForRange } from '../services/appDataService';
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
@@ -201,6 +202,36 @@ export const useAppState = () => {
       } catch (err) {
         console.error('Failed to load workouts from Supabase:', err);
         setError('Failed to load workouts from Supabase');
+      }
+    },
+    []
+  );
+
+  const loadMealPlansFromSupabase = useCallback(
+    async (userId: string, planId?: string | null) => {
+      try {
+        const today = new Date();
+        const start = new Date(today);
+        start.setDate(start.getDate() - 14);
+        const end = new Date(today);
+        end.setDate(end.getDate() + 7);
+        const startKey = formatLocalDateYMD(start);
+        const endKey = formatLocalDateYMD(end);
+        const remotePlans = await fetchMealPlansForRange(
+          userId,
+          startKey,
+          endKey,
+          planId ?? undefined
+        );
+        setState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            mealPlans: remotePlans,
+          };
+        });
+      } catch (err) {
+        console.error('Failed to load meals from Supabase:', err);
       }
     },
     []
@@ -449,6 +480,7 @@ export const useAppState = () => {
     schedulePhotoReminder,
     toggleMealCompletion,
     loadWorkoutSessionsFromSupabase,
+    loadMealPlansFromSupabase,
     createWorkoutSession,
     saveCustomWorkoutSession,
     deleteWorkoutSession,

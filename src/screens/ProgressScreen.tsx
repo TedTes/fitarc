@@ -164,7 +164,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       });
   }, [recentMealPlans]);
   const showSyncNotice = isLoading && sessions.length === 0;
-  
   const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const tabOptions: { key: 'workouts' | 'meals'; label: string }[] = [
     { key: 'workouts', label: 'Workouts' },

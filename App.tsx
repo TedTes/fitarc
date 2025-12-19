@@ -79,6 +79,7 @@ function AppContent() {
     clearAllData,
     loadWorkoutSessionsFromSupabase,
     hydrateFromRemote,
+    loadMealPlansFromSupabase,
   } = useAppState();
   
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
@@ -168,6 +169,7 @@ function AppContent() {
         await hydrateFromRemote({ workoutSessions: seededSessions });
       }
       await loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id);
+      await loadMealPlansFromSupabase(authUser.id, remotePhase.id);
       
       console.log('✅ Sessions loaded successfully');
       
@@ -221,6 +223,7 @@ function AppContent() {
           // Load workout sessions if there's an active phase
           if (homeData.phase?.id) {
             await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);
+            await loadMealPlansFromSupabase(authUser.id, homeData.phase.id);
           }
           setOnboardingStep('complete');
         } else {
@@ -243,6 +246,7 @@ function AppContent() {
     updateUser,
     hydrateFromRemote,
     loadWorkoutSessionsFromSupabase,
+    loadMealPlansFromSupabase,
   ]);
 
   const handleStartPhaseFromDashboard = () => {
