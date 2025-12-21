@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   TodayMealsResult,
   MealsByType,
@@ -33,7 +33,38 @@ type EditEntryPayload = {
   fats?: number | null;
 };
 
+export const DUPLICATE_MEAL_ENTRY_ERROR = 'DUPLICATE_MEAL_ENTRY';
+
 const cache = new Map<string, TodayMealsResult>();
+const listeners = new Map<string, Map<symbol, (state: TodayMealsResult) => void>>();
+
+const notifyListeners = (key: string, state: TodayMealsResult, originId?: symbol | null) => {
+  const map = listeners.get(key);
+  if (!map) return;
+  map.forEach((listener, id) => {
+    if (originId && id === originId) return;
+    listener(state);
+  });
+};
+
+const subscribeToMealsState = (
+  key: string,
+  subscriberId: symbol,
+  listener: (state: TodayMealsResult) => void
+) => {
+  if (!listeners.has(key)) {
+    listeners.set(key, new Map());
+  }
+  listeners.get(key)!.set(subscriberId, listener);
+  return () => {
+    const map = listeners.get(key);
+    if (!map) return;
+    map.delete(subscriberId);
+    if (map.size === 0) {
+      listeners.delete(key);
+    }
+  };
+};
 
 const emptyMealsState = (): TodayMealsResult => ({
   dailyMeal: null,
@@ -98,6 +129,35 @@ const updateEntriesCompletion = (map: MealsByType, completed: boolean): MealsByT
   return next;
 };
 
+const normalizeFoodName = (value: string): string =>
+  value
+    ?.replace(/\(.*?\)/g, '')
+    .replace(/•/g, '')
+    .replace(/\b\d+(?:\.\d+)?\s*(?:kcal|cal|g|grams?|protein|carbs?|fat|fats?|p|c|f)\b/gi, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .toLowerCase() || '';
+
+const getEntriesForMealType = (map: MealsByType, mealType: string): MealEntry[] => {
+  if (map[mealType]) return map[mealType];
+  const normalizedType = mealType.trim().toLowerCase();
+  const matchingKey = Object.keys(map).find(
+    (type) => type.trim().toLowerCase() === normalizedType
+  );
+  return matchingKey ? map[matchingKey] : [];
+};
+
+const getFoodDisplayName = (food: FoodItem): string =>
+  food.brand ? `${food.name} (${food.brand})` : food.name;
+
+const hasDuplicateEntry = (map: MealsByType, mealType: string, foodName: string) => {
+  const normalizedName = normalizeFoodName(foodName);
+  if (!normalizedName) return false;
+  return getEntriesForMealType(map, mealType).some(
+    (entry) => normalizeFoodName(entry.foodName) === normalizedName
+  );
+};
+
 export const useTodayMeals = (
   userId?: string,
   date?: Date,
@@ -107,6 +167,7 @@ export const useTodayMeals = (
   const dateKey = date ? formatLocalDateYMD(date) : undefined;
   const cacheKey =
     enabled && userId && dateKey ? `${userId}:${dateKey}:${planId ?? 'none'}` : undefined;
+  const subscriberIdRef = useRef<symbol>();
 
   const [mealsState, setMealsState] = useState<TodayMealsResult>(() =>
     cacheKey && cache.has(cacheKey) ? cache.get(cacheKey)! : emptyMealsState()
@@ -122,23 +183,42 @@ export const useTodayMeals = (
     try {
       const latest = await getTodayMeals(userId, dateKey, planId ?? null);
       if (cacheKey) cache.set(cacheKey, latest);
-      setMealsState(latest);
+      updateMealsState(latest);
     } catch (err: any) {
       console.error('Failed to fetch today meals', err);
       setError(err?.message || 'Unable to load meals');
     } finally {
       setIsLoading(false);
     }
-  }, [cacheKey, dateKey, enabled, planId, userId]);
+  }, [cacheKey, dateKey, enabled, planId, updateMealsState, userId]);
 
   useEffect(() => {
     if (!cacheKey) return;
     if (cache.has(cacheKey)) {
       setMealsState(cache.get(cacheKey)!);
       setIsLoading(false);
-      return;
+    } else {
+      loadMeals();
     }
-    loadMeals();
+    if (!cacheKey) return;
+    if (!subscriberIdRef.current) {
+      subscriberIdRef.current = Symbol('meals-subscriber');
+    }
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = subscribeToMealsState(cacheKey, subscriberIdRef.current, (state) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      timeout = setTimeout(() => {
+        setMealsState(state);
+      }, 0);
+    });
+    return () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      unsubscribe();
+    };
   }, [cacheKey, loadMeals]);
 
   const ensureDailyMeal = useCallback(async () => {
@@ -147,17 +227,41 @@ export const useTodayMeals = (
     }
     if (mealsState.dailyMeal) return mealsState.dailyMeal;
     const created = await ensureDailyMealForDate(userId, dateKey, planId ?? null);
-    setMealsState((prev) => ({
+    updateMealsState((prev) => ({
       dailyMeal: created,
       mealsByType: prev.mealsByType,
     }));
     return created;
-  }, [dateKey, mealsState.dailyMeal, planId, userId]);
+  }, [dateKey, mealsState.dailyMeal, planId, updateMealsState, userId]);
+
+  const updateMealsState = useCallback(
+    (
+      updater:
+        | TodayMealsResult
+        | ((prev: TodayMealsResult) => TodayMealsResult)
+    ) => {
+      setMealsState((prev) => {
+        const next =
+          typeof updater === 'function'
+            ? (updater as (p: TodayMealsResult) => TodayMealsResult)(prev)
+            : updater;
+        if (cacheKey) {
+          cache.set(cacheKey, next);
+          notifyListeners(cacheKey, next, subscriberIdRef.current);
+        }
+        return next;
+      });
+    },
+    [cacheKey]
+  );
 
   const addEntry = useCallback(
     async ({ mealType, foodName, calories, protein, carbs, fats }: AddEntryPayload) => {
       if (!userId || !dateKey) {
         throw new Error('Missing user or date');
+      }
+      if (hasDuplicateEntry(mealsState.mealsByType, mealType, foodName)) {
+        throw new Error(DUPLICATE_MEAL_ENTRY_ERROR);
       }
       setIsMutating(true);
       try {
@@ -171,7 +275,7 @@ export const useTodayMeals = (
           carbs,
           fats,
         });
-        setMealsState((prev) => ({
+        updateMealsState((prev) => ({
           dailyMeal,
           mealsByType: addEntryToMap(prev.mealsByType, created),
         }));
@@ -182,7 +286,7 @@ export const useTodayMeals = (
         setIsMutating(false);
       }
     },
-    [dateKey, ensureDailyMeal, userId]
+    [dateKey, ensureDailyMeal, mealsState.mealsByType, userId]
   );
 
   const addEntryFromFood = useCallback(
@@ -190,11 +294,15 @@ export const useTodayMeals = (
       if (!userId || !dateKey) {
         throw new Error('Missing user or date');
       }
+      const displayName = getFoodDisplayName(food);
+      if (hasDuplicateEntry(mealsState.mealsByType, mealType, displayName)) {
+        throw new Error(DUPLICATE_MEAL_ENTRY_ERROR);
+      }
       setIsMutating(true);
       try {
         const dailyMeal = await ensureDailyMeal();
         const created = await addMealEntryFromFood(dailyMeal.id, mealType, food);
-        setMealsState((prev) => ({
+        updateMealsState((prev) => ({
           dailyMeal,
           mealsByType: addEntryToMap(prev.mealsByType, created),
         }));
@@ -205,7 +313,7 @@ export const useTodayMeals = (
         setIsMutating(false);
       }
     },
-    [dateKey, ensureDailyMeal, userId]
+    [dateKey, ensureDailyMeal, mealsState.mealsByType, userId]
   );
 
   const editEntry = useCallback(
@@ -221,7 +329,7 @@ export const useTodayMeals = (
           carbs,
           fats,
         });
-        setMealsState((prev) => ({
+        updateMealsState((prev) => ({
           dailyMeal: prev.dailyMeal,
           mealsByType: updateEntryInMap(prev.mealsByType, entryId, updated),
         }));
@@ -239,7 +347,7 @@ export const useTodayMeals = (
     setIsMutating(true);
     try {
       await deleteMealEntry(entryId);
-      setMealsState((prev) => ({
+      updateMealsState((prev) => ({
         dailyMeal: prev.dailyMeal,
         mealsByType: removeEntryFromMap(prev.mealsByType, entryId),
       }));
@@ -259,7 +367,7 @@ export const useTodayMeals = (
         const dailyMeal = await ensureDailyMeal();
         const updated = await setDailyMealsCompleted(dailyMeal.id, completed);
         await setDailyMealEntriesDone(dailyMeal.id, completed);
-        setMealsState((prev) => ({
+        updateMealsState((prev) => ({
           dailyMeal: updated,
           mealsByType: updateEntriesCompletion(prev.mealsByType, completed),
         }));

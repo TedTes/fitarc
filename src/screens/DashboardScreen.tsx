@@ -15,6 +15,7 @@ import {
   MuscleGroup,
 } from '../types/domain';
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
+import { useMealPlans } from '../hooks/useMealPlans';
 import { useTodayMeals } from '../hooks/useTodayMeals';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { MealEntry } from '../services/supabaseMealService';
@@ -25,14 +26,11 @@ import {
   formatMacroSummaryLine,
   formatMealEntryMacros,
 } from '../utils/mealMacros';
-
 const MEAL_TYPE_EMOJI: Record<string, string> = {
   Breakfast: '🥚',
   Lunch: '🥗',
   Dinner: '🍽️',
 };
-
-const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner'];
 
 const getMealTypeEmoji = (mealType: string): string => {
   const key = mealType.trim();
@@ -98,6 +96,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [localCompleted, setLocalCompleted] = useState<Set<string>>(new Set());
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
+  const activePhaseId = resolvedPhase?.id ?? null;
   const resolvedSessions = phaseSessions.length
     ? phaseSessions
     : workoutSessions.length
@@ -211,25 +210,29 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     isMutating: isMealsMutating,
     error: todayMealsError,
     toggleDayCompleted,
-  } = useTodayMeals(phase ? user.id : undefined, today, Boolean(phase), phase?.id ?? null);
-  
-  const hasDailyMeal = Boolean(dailyMeal);
-  const totalMealEntries = Object.values(mealsByType).reduce(
-    (sum, entries) => sum + entries.length,
-    0
+  } = useTodayMeals(
+    resolvedPhase ? user.id : undefined,
+    resolvedPhase ? today : undefined,
+    Boolean(resolvedPhase),
+    activePhaseId
   );
+  const { mealPlansByDate } = useMealPlans(
+    resolvedPhase ? user.id : undefined,
+    resolvedPhase ? todayStr : undefined,
+    resolvedPhase ? todayStr : undefined,
+    activePhaseId
+  );
+  const baseMealTypes = useMemo(() => Object.keys(mealsByType), [mealsByType]);
+  const mealGroups = useMemo(() => {
+    return baseMealTypes
+      .map((mealType) => ({
+        mealType,
+        entries: mealsByType[mealType] ?? [],
+      }))
+      .filter((group) => group.entries.length > 0);
+  }, [baseMealTypes, mealsByType]);
+
   const dayMealsCompleted = Boolean(dailyMeal?.completed);
-  
-  const allMealTypes = useMemo(() => {
-    const dynamicTypes = Object.keys(mealsByType).filter((type) => !!type);
-    const ordered = [...DEFAULT_MEAL_TYPES];
-    dynamicTypes.forEach((type) => {
-      if (!ordered.includes(type)) {
-        ordered.push(type);
-      }
-    });
-    return ordered;
-  }, [mealsByType]);
 
   const canLogWorkouts = !!resolvedPhase && !!onToggleWorkoutExercise;
   const totalWorkoutCount = displayExercises.length;
@@ -237,9 +240,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const pendingWorkoutCount = visibleWorkoutCards.length;
   const allWorkoutsCompleted = totalWorkoutCount > 0 && completedWorkoutCount === totalWorkoutCount;
 
-  const totalMealCount = hasDailyMeal ? allMealTypes.length : 0;
+  const totalMealCount = mealGroups.length;
   const completedMealCount = dayMealsCompleted ? totalMealCount : 0;
-  const allMealsCompleted = totalMealCount > 0 && dayMealsCompleted;
+
   const showWorkoutCompletionButton =
     activeTab === 'workouts' &&
     canLogWorkouts &&
@@ -288,9 +291,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
   };
 
-  const renderMealGroup = (mealType: string) => {
-    const entries = mealsByType[mealType] ?? [];
-    if (!entries.length) return null;
+  const renderMealGroup = (group: { mealType: string; entries: MealEntry[] }) => {
+    const { mealType, entries } = group;
+    if (entries.length === 0) return null;
+
     const totals = computeEntriesMacroTotals(entries);
     const macroSummary = formatMacroSummaryLine(totals);
     const totalCount = entries.length;
@@ -307,7 +311,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <Text style={styles.mealMeta}>
               {totalCount
                 ? `${totalCount} item${totalCount > 1 ? 's' : ''} · ${macroSummary}`
-                : 'No items'}
+                : 'Suggested by your plan'}
             </Text>
           </View>
         </View>
@@ -532,7 +536,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <Text style={styles.emptyTitle}>Meals unlock soon</Text>
           <Text style={styles.emptyText}>Complete onboarding first.</Text>
         </View>
-      ) : !hasDailyMeal && totalMealEntries === 0 ? (
+      ) : isMealsLoading ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyEmoji}>⏳</Text>
+          <Text style={styles.emptyTitle}>Loading meals</Text>
+          <Text style={styles.emptyText}>Fetching today’s plan.</Text>
+        </View>
+      ) : mealGroups.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>🍽️</Text>
           <Text style={styles.emptyTitle}>No meals for today</Text>
@@ -540,7 +550,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </View>
       ) : (
         <View style={styles.verticalList}>
-          {allMealTypes.map((mealType) => renderMealGroup(mealType))}
+          {mealGroups.map((group) => renderMealGroup(group))}
         </View>
       )}
     </View>
@@ -1153,6 +1163,28 @@ const styles = StyleSheet.create({
   mealMeta: {
     fontSize: 13,
     color: '#8B93B0',
+  },
+  mealTemplateList: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.04)',
+    gap: 6,
+  },
+  mealTemplateItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mealTemplateBullet: {
+    color: '#6B7390',
+    fontWeight: '700',
+  },
+  mealTemplateText: {
+    flex: 1,
+    color: '#8B93B0',
+    fontStyle: 'italic',
+    fontSize: 13,
   },
   mealEntry: {
     paddingTop: 12,
