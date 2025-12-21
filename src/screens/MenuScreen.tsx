@@ -19,7 +19,7 @@ import { useMealPlans } from '../hooks/useMealPlans';
 import { formatLocalDateYMD } from '../utils/date';
 import { useTodayMeals } from '../hooks/useTodayMeals';
 import { MealEntry } from '../services/supabaseMealService';
-import { FoodItem, createUserFood, searchFoods } from '../services/foodCatalogService';
+import { FoodItem, createUserFood, fetchStoredFoods, searchFoods } from '../services/foodCatalogService';
 import {
   computeEntriesMacroTotals,
   formatMacroSummaryLine,
@@ -49,7 +49,7 @@ const COLORS = {
   borderStrong: 'rgba(255,255,255,0.12)',
 };
 
-const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner'] as const;
+const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snack'] as const;
 
 type WeeklyMenu = {
   dateStr: string;
@@ -134,7 +134,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const [mealModalVisible, setMealModalVisible] = useState(false);
   const [mealModalMode, setMealModalMode] = useState<'add' | 'edit'>('add');
   const [mealModalType, setMealModalType] = useState('');
-  const [mealTypeLocked, setMealTypeLocked] = useState(false);
+  const [isCustomMealType, setIsCustomMealType] = useState(false);
+  const [lastSelectedMealType, setLastSelectedMealType] = useState<string>(DEFAULT_MEAL_TYPES[0]);
+  const [lastSelectedIsCustom, setLastSelectedIsCustom] = useState(false);
+  const [lastCustomMealType, setLastCustomMealType] = useState('');
   const [mealForm, setMealForm] = useState({
     foodName: '',
     calories: '',
@@ -158,15 +161,58 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     fats: '',
   });
   const [isCreatingFood, setIsCreatingFood] = useState(false);
+  const [mealDetailModal, setMealDetailModal] = useState<{
+    mealType: string;
+    entries: MealEntry[];
+  } | null>(null);
+  const [storedFoods, setStoredFoods] = useState<FoodItem[]>([]);
+  const [isLoadingStoredFoods, setIsLoadingStoredFoods] = useState(false);
+  const [storedFoodsError, setStoredFoodsError] = useState<string | null>(null);
   const foodSearchCache = useRef<Map<string, FoodItem[]>>(new Map());
-
-  const getCurrentMealType = useCallback(
-    () => (mealModalType || '').trim() || 'Meal',
-    [mealModalType]
+  const storedFoodsLoadedRef = useRef(false);
+  const loadStoredFoods = useCallback(async () => {
+    try {
+      setStoredFoodsError(null);
+      setIsLoadingStoredFoods(true);
+      const foods = await fetchStoredFoods(user.id);
+      setStoredFoods(foods);
+      storedFoodsLoadedRef.current = true;
+    } catch (err) {
+      console.error('Failed to load stored foods', err);
+      setStoredFoodsError('Unable to load foods.');
+    } finally {
+      setIsLoadingStoredFoods(false);
+    }
+  }, [user.id]);
+  useEffect(() => {
+    storedFoodsLoadedRef.current = false;
+    setStoredFoods([]);
+  }, [user.id]);
+  useEffect(() => {
+    if (mealModalVisible && !storedFoodsLoadedRef.current) {
+      loadStoredFoods();
+    }
+  }, [mealModalVisible, loadStoredFoods]);
+  const mealDetailSummary = useMemo(
+    () => (mealDetailModal ? computeEntriesMacroTotals(mealDetailModal.entries) : null),
+    [mealDetailModal]
   );
+
+  const getCurrentMealType = useCallback(() => {
+    const raw = (mealModalType || '').trim();
+    if (!raw) return '';
+    const canonicalTypes = [
+      ...DEFAULT_MEAL_TYPES,
+      ...Object.keys(mealsByType),
+    ];
+    const match = canonicalTypes.find(
+      (type) => (type || '').trim().toLowerCase() === raw.toLowerCase()
+    );
+    return match ? match.trim() : raw;
+  }, [mealModalType, mealsByType]);
   const resetMealModal = useCallback(() => {
     setMealModalType('');
-    setMealTypeLocked(false);
+    setIsCustomMealType(false);
     setMealForm({
       foodName: '',
       calories: '',
@@ -195,10 +241,22 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     resetMealModal();
   }, [resetMealModal]);
 
-  const openAddMealModal = (mealType?: string) => {
-    setMealModalMode('add');
-    setMealModalType(mealType || '');
-    setMealTypeLocked(Boolean(mealType));
+  const openAddMealModal = useCallback(
+    (mealType?: string) => {
+      setMealModalMode('add');
+      const requestedType =
+        mealType ??
+        (lastSelectedIsCustom ? lastCustomMealType : lastSelectedMealType);
+      const normalized = (requestedType || '').trim();
+      const resolvedType = normalized || DEFAULT_MEAL_TYPES[0];
+      const shouldUseCustom =
+        mealType != null
+          ? isCustomMealTypeValue(mealType)
+          : lastSelectedIsCustom && Boolean((lastCustomMealType || '').trim());
+      const finalCustomFlag =
+        shouldUseCustom && isCustomMealTypeValue(resolvedType);
+      setMealModalType(resolvedType);
+      setIsCustomMealType(finalCustomFlag);
     setMealForm({
       foodName: '',
       calories: '',
@@ -220,31 +278,66 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       carbs: '',
       fats: '',
     });
-    setMealModalVisible(true);
-  };
+      setMealModalVisible(true);
+    },
+    [
+      lastCustomMealType,
+      lastSelectedIsCustom,
+      lastSelectedMealType,
+      isCustomMealTypeValue,
+    ]
+  );
 
-  const openEditMealModal = (mealType: string, entry: MealEntry) => {
-    setMealModalMode('edit');
-    setMealModalType(mealType);
-    setMealTypeLocked(false);
-    setMealForm({
-      foodName: entry.foodName,
-      calories: entry.calories != null ? String(entry.calories) : '',
-      protein: entry.protein != null ? String(entry.protein) : '',
-      carbs: entry.carbs != null ? String(entry.carbs) : '',
-      fats: entry.fats != null ? String(entry.fats) : '',
-    });
-    setEditingMealEntryId(entry.id);
-    setFoodQuery('');
-    setFoodSuggestions([]);
-    setFoodSearchError(null);
-    setShowNewFoodForm(false);
-    setMealModalVisible(true);
-  };
+  const openMealDetailModal = useCallback(
+    (mealType: string, entries: MealEntry[]) => {
+      if (!entries.length) return;
+      setMealDetailModal({ mealType, entries });
+    },
+    []
+  );
+
+  const closeMealDetailModal = useCallback(() => {
+    setMealDetailModal(null);
+  }, []);
+
+  const rememberMealTypeSelection = useCallback(
+    (type: string) => {
+      if (!type) return;
+      const normalized = type.trim();
+      const isCustom = isCustomMealTypeValue(normalized);
+      setLastSelectedMealType(normalized);
+      setLastSelectedIsCustom(isCustom);
+      if (isCustom) {
+        setLastCustomMealType(normalized);
+      }
+    },
+    [isCustomMealTypeValue]
+  );
 
   const handleMealFormChange = (field: keyof typeof mealForm, value: string) => {
     setMealForm((prev) => ({ ...prev, [field]: value }));
   };
+
+  const handleMealTypeSelect = useCallback(
+    (type: string) => {
+      setMealModalType(type);
+      setIsCustomMealType(false);
+      rememberMealTypeSelection(type);
+    },
+    [rememberMealTypeSelection]
+  );
+
+  const handleMealTypeCustomSelect = useCallback(() => {
+    setIsCustomMealType(true);
+    setMealModalType((prev) => {
+      const nextValue = prev || lastCustomMealType || '';
+      if (nextValue) {
+        rememberMealTypeSelection(nextValue);
+      }
+      return nextValue;
+    });
+    setLastSelectedIsCustom(true);
+  }, [lastCustomMealType, rememberMealTypeSelection]);
 
   const parseNumberField = (value: string): number | null => {
     const trimmed = value.trim();
@@ -265,7 +358,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   useEffect(() => {
     if (!mealModalVisible) return;
     const trimmed = foodQuery.trim();
-    if (trimmed.length < 2) {
+    if (trimmed.length < 1) {
       setFoodSuggestions([]);
       setIsSearchingFoods(false);
       return;
@@ -295,8 +388,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
 
   const handleSelectFoodSuggestion = async (food: FoodItem) => {
     try {
-      await addFoodEntry(getCurrentMealType(), food);
+      const currentMealType = getCurrentMealType();
+      if (!currentMealType) {
+        Alert.alert('Meals', 'Select a meal type first.');
+        return;
+      }
+      await addFoodEntry(currentMealType, food);
       await refreshMealPlans();
+      await loadStoredFoods();
+      rememberMealTypeSelection(currentMealType);
       closeMealModal();
     } catch (err) {
       console.error('Failed to add food entry', err);
@@ -322,6 +422,11 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       Alert.alert('Meals', 'Enter a food name to save.');
       return;
     }
+    const currentMealType = getCurrentMealType();
+    if (!currentMealType) {
+      Alert.alert('Meals', 'Select a meal type first.');
+      return;
+    }
     try {
       setIsCreatingFood(true);
       const food = await createUserFood(user.id, {
@@ -333,8 +438,9 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
         carbs: parseNumberField(customFoodForm.carbs) ?? undefined,
         fats: parseNumberField(customFoodForm.fats) ?? undefined,
       });
-      await addFoodEntry(getCurrentMealType(), food);
+      await addFoodEntry(currentMealType, food);
       await refreshMealPlans();
+      rememberMealTypeSelection(currentMealType);
       closeMealModal();
     } catch (err) {
       console.error('Failed to create custom food', err);
@@ -347,6 +453,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const handleMealModalSave = async () => {
     const typeLabel = getCurrentMealType();
     const foodName = mealForm.foodName.trim();
+    if (!typeLabel) {
+      Alert.alert('Meals', 'Select a meal type first.');
+      return;
+    }
     if (!foodName) {
       Alert.alert('Meals', 'Please enter a food name.');
       return;
@@ -359,17 +469,18 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       carbs: parseNumberField(mealForm.carbs),
       fats: parseNumberField(mealForm.fats),
     };
-    try {
-      if (mealModalMode === 'add') {
-        await addEntry(payload);
-      } else if (editingMealEntryId) {
-        await editEntry({
-          entryId: editingMealEntryId,
-          ...payload,
-        });
-      }
-      await refreshMealPlans();
-      closeMealModal();
+      try {
+        if (mealModalMode === 'add') {
+          await addEntry(payload);
+        } else if (editingMealEntryId) {
+          await editEntry({
+            entryId: editingMealEntryId,
+            ...payload,
+          });
+        }
+        await refreshMealPlans();
+        rememberMealTypeSelection(typeLabel);
+        closeMealModal();
     } catch (err: any) {
       Alert.alert('Meals', err?.message || 'Failed to save meal item.');
     }
@@ -440,17 +551,60 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     () => Object.values(mealsByType).reduce((sum, entries) => sum + entries.length, 0),
     [mealsByType]
   );
-  const hasDailyMeal = Boolean(dailyMeal) || totalMealEntries > 0;
+  const hasLoggedMeals = Boolean(dailyMeal) || totalMealEntries > 0;
   const dayMealsCompleted = Boolean(dailyMeal?.completed);
-  const allMealTypes = useMemo((): string[] => {
-    const ordered: string[] = [...DEFAULT_MEAL_TYPES];
-    Object.keys(mealsByType).forEach((type) => {
-      if (type && !ordered.includes(type)) {
-        ordered.push(type);
-      }
+  const planMealsByType = useMemo(() => {
+    const map: Record<string, DailyMealPlan['meals'][number]> = {};
+    (selectedPlan?.meals || []).forEach((meal) => {
+      if (!meal?.title) return;
+      map[meal.title] = meal;
     });
+    return map;
+  }, [selectedPlan]);
+
+  const existingMealTypesSet = useMemo(() => {
+    const set = new Set<string>();
+    Object.keys(mealsByType).forEach((type) => {
+      const normalized = (type || '').trim().toLowerCase();
+      if (normalized) set.add(normalized);
+    });
+    Object.keys(planMealsByType).forEach((type) => {
+      const normalized = (type || '').trim().toLowerCase();
+      if (normalized) set.add(normalized);
+    });
+    return set;
+  }, [mealsByType, planMealsByType]);
+
+  const isCustomMealTypeValue = useCallback(
+    (value: string) => {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized) return false;
+      if (DEFAULT_MEAL_TYPES.some((type) => type.toLowerCase() === normalized)) {
+        return false;
+      }
+      return !existingMealTypesSet.has(normalized);
+    },
+    [existingMealTypesSet]
+  );
+
+  const allMealTypes = useMemo((): string[] => {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    const pushType = (type?: string) => {
+      const normalized = (type || '').trim();
+      if (!normalized) return;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) return;
+      ordered.push(normalized);
+      seen.add(key);
+    };
+    DEFAULT_MEAL_TYPES.forEach((type) => pushType(type));
+    Object.keys(planMealsByType).forEach((type) => pushType(type));
+    Object.keys(mealsByType).forEach((type) => pushType(type));
     return ordered;
-  }, [mealsByType]);
+  }, [planMealsByType, mealsByType]);
+  const hasPlanMeals = (selectedPlan?.meals?.length ?? 0) > 0;
+  const normalizedMealType = (mealModalType || '').trim();
 
   if (!phase) {
     return (
@@ -468,12 +622,19 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
 
   const renderMealGroup = (mealType: string) => {
     const entries = mealsByType[mealType] ?? [];
-    if (!entries.length) return null;
+    const planMeal = planMealsByType[mealType];
+    const planItems = planMeal?.items ?? [];
+    const totalSources = planItems.length + entries.length;
+    if (!totalSources) return null;
     const totals = computeEntriesMacroTotals(entries);
-    const summaryLine = formatMacroSummaryLine(totals);
-    const totalCount = entries.length;
+    const caloriesLabel = `${Math.round(totals.calories) || 0} kcal`;
     return (
-      <View key={mealType} style={styles.mealGroupCard}>
+      <TouchableOpacity
+        key={mealType}
+        style={styles.mealGroupCard}
+        activeOpacity={0.9}
+        onPress={() => (entries.length > 0 ? openMealDetailModal(mealType, entries) : undefined)}
+      >
         <View style={styles.mealGroupHeader}>
           <View style={styles.mealGroupInfo}>
             <View style={styles.mealGroupIcon}>
@@ -481,19 +642,20 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
             </View>
             <View>
               <Text style={styles.mealGroupTitle}>{mealType}</Text>
-              <Text style={styles.mealGroupMeta}>
-                {`${totalCount} item${totalCount > 1 ? 's' : ''} · ${summaryLine}`}
-              </Text>
+              <Text style={styles.mealGroupMeta}>{caloriesLabel}</Text>
             </View>
           </View>
-          <TouchableOpacity
-            style={styles.mealGroupAddButton}
-            onPress={() => openAddMealModal(mealType)}
-            disabled={isMealsMutating}
-          >
-            <Text style={styles.mealGroupAddText}>＋</Text>
-          </TouchableOpacity>
         </View>
+        {planItems.length > 0 && (
+          <View style={styles.mealPlanItems}>
+            {planItems.map((item, index) => (
+              <View key={`${mealType}-plan-${index}`} style={styles.planItemChip}>
+                <Text style={styles.planItemBullet}>•</Text>
+                <Text style={styles.planItemText}>{item}</Text>
+              </View>
+            ))}
+          </View>
+        )}
         {entries.map((entry) => (
           <View key={entry.id} style={styles.mealEntryCard}>
             <View style={styles.mealEntryInfo}>
@@ -507,49 +669,42 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                 </View>
               )}
               <TouchableOpacity
-                style={styles.mealEntryAction}
-                onPress={() => openEditMealModal(mealType, entry)}
-                disabled={isMealsMutating}
-              >
-                <Text style={styles.mealEntryActionText}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.mealEntryAction, styles.mealEntryActionDanger]}
+                style={styles.mealEntryCloseButton}
                 onPress={() => confirmDeleteEntry(entry.id)}
                 disabled={isMealsMutating}
               >
-                <Text style={[styles.mealEntryActionText, styles.mealEntryActionDangerText]}>
-                  Delete
-                </Text>
+                <Text style={styles.mealEntryCloseText}>x</Text>
               </TouchableOpacity>
             </View>
           </View>
         ))}
-      </View>
+      </TouchableOpacity>
     );
   };
 
-const renderMeals = () => {
-    if (!hasDailyMeal && !isMealsLoading) {
-      return (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyCardIcon}>🥗</Text>
-          <Text style={styles.emptyCardTitle}>No meals logged</Text>
-          <Text style={styles.emptyCardSubtitle}>
-            Tap “+” to start planning this day’s nutrition.
-          </Text>
-        </View>
-      );
-    }
-
+  const renderMeals = () => {
+    const showEmptyState = !hasLoggedMeals && !hasPlanMeals && !isMealsLoading;
     return (
       <View style={styles.mealsCard}>
+        <View style={styles.mealAddRow}>
+          <Text style={styles.mealAddRowLabel}>Log meal items</Text>
+          <TouchableOpacity style={styles.mealAddRowButton} onPress={() => openAddMealModal()}>
+            <Text style={styles.mealAddRowButtonText}>＋</Text>
+          </TouchableOpacity>
+        </View>
         {isMealsLoading && !hasDailyMeal ? (
           <Text style={styles.detailEmptyText}>Loading meals...</Text>
+        ) : showEmptyState ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyCardIcon}>🥗</Text>
+            <Text style={styles.emptyCardTitle}>No meals logged</Text>
+            <Text style={styles.emptyCardSubtitle}>
+              Tap “＋” to start planning this day’s nutrition.
+            </Text>
+          </View>
         ) : (
           allMealTypes.map((mealType) => renderMealGroup(mealType))
         )}
-
         {todayMealsError && <Text style={styles.errorText}>{todayMealsError}</Text>}
       </View>
     );
@@ -573,8 +728,8 @@ const renderMeals = () => {
               </View>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.weekStrip}>
-              {weeklyMenus.map((plan) => {
-                const { weekday, day } = formatDayLabel(plan.dateStr);
+        {weeklyMenus.map((plan) => {
+                const { weekday } = formatDayLabel(plan.dateStr);
                 const isActive = plan.dateStr === selectedDate;
                 const hasMeals = plan.meals.length > 0;
                 return (
@@ -584,68 +739,15 @@ const renderMeals = () => {
                     onPress={() => setSelectedDate(plan.dateStr)}
                   >
                     <Text style={[styles.dayChipLabel, isActive && styles.dayChipLabelActive]}>{weekday}</Text>
-                    <Text style={[styles.dayChipNumber, isActive && styles.dayChipNumberActive]}>{day}</Text>
                     <View style={[styles.dayStatusDot, hasMeals && styles.dayStatusDotVisible]} />
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
-            <View style={styles.completionRow}>
-              <View>
-                <Text style={styles.completionLabel}>
-                  {dayMealsCompleted ? 'Meals completed' : 'Mark meals complete'}
-                </Text>
-                <Text style={styles.completionMeta}>
-                  {totalMealEntries} item{totalMealEntries === 1 ? '' : 's'} planned
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.completionButton,
-                  dayMealsCompleted && styles.completionButtonActive,
-                ]}
-                onPress={() => toggleDayCompleted(!dayMealsCompleted)}
-                disabled={isMealsMutating}
-              >
-                <Text
-                  style={[
-                    styles.completionButtonText,
-                    dayMealsCompleted && styles.completionButtonTextActive,
-                  ]}
-                >
-                  {dayMealsCompleted ? 'Completed' : 'Mark'}
-                </Text>
-              </TouchableOpacity>
-            </View>
           </View>
 
           <View style={styles.content}>
-            <View style={styles.dayHeader}>
-              <View>
-                <Text style={styles.dayTitle}>
-                  {selectedPlan
-                    ? `${selectedPlan.weekday}, ${selectedPlan.displayDate}`
-                    : 'No date selected'}
-                </Text>
-                <Text style={styles.daySubtitle}>
-                  {selectedPlan?.meals.length ? `${selectedPlan.meals.length} planned meals` : 'No meals logged'}
-                </Text>
-              </View>
-              <View style={styles.dayActions}>
-                <TouchableOpacity
-                  style={styles.inlineAddMealButton}
-                  onPress={() => openAddMealModal()}
-                  disabled={isMealsMutating}
-                >
-                  <Text style={styles.inlineAddMealText}>＋</Text>
-                </TouchableOpacity>
-                {selectedPlan?.isToday && (
-                  <View style={styles.todayBadge}>
-                    <Text style={styles.todayBadgeText}>Today</Text>
-                  </View>
-                )}
-              </View>
-            </View>
+            <View style={styles.dayHeaderSpacer} />
             {renderMeals()}
           </View>
         </ScrollView>
@@ -676,27 +778,6 @@ const renderMeals = () => {
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.modalForm}
               >
-                {!mealTypeLocked ? (
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Meal type</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="e.g. Breakfast, Snack"
-                      placeholderTextColor={COLORS.textTertiary}
-                      value={mealModalType}
-                      onChangeText={setMealModalType}
-                    />
-                  </View>
-                ) : (
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Meal type</Text>
-                    <TextInput
-                      style={[styles.modalInput, styles.modalInputDisabled]}
-                      value={mealModalType}
-                      editable={false}
-                    />
-                  </View>
-                )}
                 <View style={styles.modalSection}>
                   <Text style={styles.modalLabel}>Search foods</Text>
                   <TextInput
@@ -706,23 +787,85 @@ const renderMeals = () => {
                     value={foodQuery}
                     onChangeText={handleFoodQueryChange}
                   />
-                  {foodSearchError && <Text style={styles.errorText}>{foodSearchError}</Text>}
-                  {isSearchingFoods && (
-                    <Text style={styles.helperText}>Searching foods...</Text>
-                  )}
-                  {foodSuggestions.map((food) => (
-                    <TouchableOpacity
-                      key={food.id}
-                      style={styles.foodSuggestion}
-                      onPress={() => handleSelectFoodSuggestion(food)}
-                      disabled={isMealsMutating}
+                  <View style={styles.mealCategorySection}>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.mealTypeChipsRow}
                     >
-                      <View>
-                        <Text style={styles.foodSuggestionName}>{formatFoodDisplayName(food)}</Text>
-                        <Text style={styles.foodSuggestionMeta}>{formatFoodMacroSummary(food)}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
+                      {allMealTypes.map((type) => {
+                        const isActive = !isCustomMealType && mealModalType === type;
+                        return (
+                          <TouchableOpacity
+                            key={`meal-type-${type}`}
+                            style={[
+                              styles.mealTypeChip,
+                              isActive && styles.mealTypeChipActive,
+                            ]}
+                            onPress={() => handleMealTypeSelect(type)}
+                          >
+                            <Text
+                              style={[
+                                styles.mealTypeChipText,
+                                isActive && styles.mealTypeChipTextActive,
+                              ]}
+                            >
+                              {type}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <TouchableOpacity
+                        style={[
+                          styles.mealTypeChip,
+                          isCustomMealType && styles.mealTypeChipActive,
+                        ]}
+                        onPress={handleMealTypeCustomSelect}
+                      >
+                        <Text
+                          style={[
+                            styles.mealTypeChipText,
+                            isCustomMealType && styles.mealTypeChipTextActive,
+                          ]}
+                        >
+                          ＋
+                        </Text>
+                      </TouchableOpacity>
+                    </ScrollView>
+                    {isCustomMealType && (
+                      <TextInput
+                        style={styles.modalInput}
+                        placeholder="Custom meal name"
+                        placeholderTextColor={COLORS.textTertiary}
+                        value={mealModalType}
+                        onChangeText={(value) => {
+                          setMealModalType(value);
+                          setLastCustomMealType(value);
+                          setLastSelectedMealType(value);
+                          setLastSelectedIsCustom(true);
+                        }}
+                      />
+                    )}
+                  </View>
+                  <View style={styles.foodResultsList}>
+                    {foodSearchError && <Text style={styles.errorText}>{foodSearchError}</Text>}
+                    {isSearchingFoods && (
+                      <Text style={styles.helperText}>Searching foods...</Text>
+                    )}
+                    {foodSuggestions.map((food) => (
+                      <TouchableOpacity
+                        key={food.id}
+                        style={styles.foodSuggestion}
+                        onPress={() => handleSelectFoodSuggestion(food)}
+                        disabled={isMealsMutating}
+                      >
+                        <View>
+                          <Text style={styles.foodSuggestionName}>{formatFoodDisplayName(food)}</Text>
+                          <Text style={styles.foodSuggestionMeta}>{formatFoodMacroSummary(food)}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   {foodQuery.trim().length >= 2 &&
                     !isSearchingFoods &&
                     !foodSuggestions.length &&
@@ -808,7 +951,10 @@ const renderMeals = () => {
                         </View>
                       </View>
                       <TouchableOpacity
-                        style={[styles.addCustomFoodSaveButton, isCreatingFood && styles.modalSaveButtonDisabled]}
+                        style={[
+                          styles.addCustomFoodSaveButton,
+                          isCreatingFood && styles.modalSaveButtonDisabled,
+                        ]}
                         onPress={handleAddCustomFood}
                         disabled={isCreatingFood}
                       >
@@ -818,70 +964,44 @@ const renderMeals = () => {
                       </TouchableOpacity>
                     </View>
                   )}
-                </View>
-                <View style={styles.manualSection}>
-                  <View style={styles.manualHeader}>
-                    <Text style={styles.modalLabel}>Manual entry</Text>
-                    <Text style={styles.manualHint}>Use when macros aren’t known</Text>
-                  </View>
-                  <View style={styles.modalField}>
-                    <Text style={styles.modalLabel}>Food name</Text>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="Food or recipe name"
-                      placeholderTextColor={COLORS.textTertiary}
-                      value={mealForm.foodName}
-                      onChangeText={(value) => handleMealFormChange('foodName', value)}
-                    />
-                  </View>
-                  <View style={styles.modalRow}>
-                    <View style={styles.modalField}>
-                      <Text style={styles.modalLabel}>Calories</Text>
-                      <TextInput
-                        style={styles.modalInput}
-                        placeholder="kcal"
-                        keyboardType="number-pad"
-                        placeholderTextColor={COLORS.textTertiary}
-                        value={mealForm.calories}
-                        onChangeText={(value) => handleMealFormChange('calories', value)}
-                      />
+                  {!foodQuery.trim() && (
+                    <View style={styles.savedFoodsSection}>
+                      <View style={styles.savedFoodsHeader}>
+                        <Text style={styles.modalLabel}>Stored foods</Text>
+                        {isLoadingStoredFoods && (
+                          <Text style={styles.helperText}>Loading…</Text>
+                        )}
+                      </View>
+                      <ScrollView
+                        style={styles.savedFoodsScroll}
+                        contentContainerStyle={styles.savedFoodsList}
+                      >
+                        {storedFoodsError && (
+                          <Text style={styles.errorText}>{storedFoodsError}</Text>
+                        )}
+                        {!isLoadingStoredFoods && !storedFoodsError && !storedFoods.length && (
+                          <Text style={styles.helperText}>No foods saved yet.</Text>
+                        )}
+                        {storedFoods.map((food) => (
+                          <TouchableOpacity
+                            key={`stored-${food.id}`}
+                            style={styles.foodSuggestion}
+                            onPress={() => handleSelectFoodSuggestion(food)}
+                            disabled={isMealsMutating}
+                          >
+                            <View>
+                              <Text style={styles.foodSuggestionName}>
+                                {formatFoodDisplayName(food)}
+                              </Text>
+                              <Text style={styles.foodSuggestionMeta}>
+                                {formatFoodMacroSummary(food)}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
                     </View>
-                    <View style={styles.modalField}>
-                      <Text style={styles.modalLabel}>Protein (g)</Text>
-                      <TextInput
-                        style={styles.modalInput}
-                        placeholder="0"
-                        keyboardType="number-pad"
-                        placeholderTextColor={COLORS.textTertiary}
-                        value={mealForm.protein}
-                        onChangeText={(value) => handleMealFormChange('protein', value)}
-                      />
-                    </View>
-                  </View>
-                  <View style={styles.modalRow}>
-                    <View style={styles.modalField}>
-                      <Text style={styles.modalLabel}>Carbs (g)</Text>
-                      <TextInput
-                        style={styles.modalInput}
-                        placeholder="0"
-                        keyboardType="number-pad"
-                        placeholderTextColor={COLORS.textTertiary}
-                        value={mealForm.carbs}
-                        onChangeText={(value) => handleMealFormChange('carbs', value)}
-                      />
-                    </View>
-                    <View style={styles.modalField}>
-                      <Text style={styles.modalLabel}>Fats (g)</Text>
-                      <TextInput
-                        style={styles.modalInput}
-                        placeholder="0"
-                        keyboardType="number-pad"
-                        placeholderTextColor={COLORS.textTertiary}
-                        value={mealForm.fats}
-                        onChangeText={(value) => handleMealFormChange('fats', value)}
-                      />
-                    </View>
-                  </View>
+                  )}
                 </View>
                 <View style={styles.modalActions}>
                   <TouchableOpacity
@@ -902,6 +1022,53 @@ const renderMeals = () => {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+      <Modal
+        transparent
+        animationType="fade"
+        visible={Boolean(mealDetailModal)}
+        onRequestClose={closeMealDetailModal}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdrop} onPress={closeMealDetailModal} />
+          <View style={styles.detailModalContent}>
+            <View style={styles.detailModalHeader}>
+              <View>
+                <Text style={styles.detailModalTitle}>{mealDetailModal?.mealType}</Text>
+                {mealDetailSummary && (
+                  <Text style={styles.detailModalSubtitle}>
+                    {formatMacroSummaryLine(mealDetailSummary)}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={styles.detailModalCloseButton}
+                onPress={closeMealDetailModal}
+              >
+                <Text style={styles.detailModalCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.detailEntriesList}
+            >
+              {mealDetailModal?.entries?.map((entry) => (
+                <View key={entry.id} style={styles.detailEntryRow}>
+                  <View style={styles.detailEntryInfo}>
+                    <Text style={styles.detailEntryName}>{entry.foodName}</Text>
+                    <Text style={styles.detailEntryMeta}>{formatMealEntryMacros(entry)}</Text>
+                  </View>
+                  <Text style={styles.detailEntryCalories}>
+                    {typeof entry.calories === 'number' ? `${entry.calories} kcal` : '—'}
+                  </Text>
+                </View>
+              ))}
+              {!mealDetailModal?.entries?.length && (
+                <Text style={styles.detailEmptyText}>No meal items logged.</Text>
+              )}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -953,82 +1120,34 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 8,
   },
-  completionRow: {
-    marginTop: 12,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-  },
-  completionLabel: {
-    fontSize: 13,
-    color: COLORS.textPrimary,
-    fontWeight: '600',
-  },
-  completionMeta: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-  },
-  completionButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-  },
-  completionButtonActive: {
-    borderColor: COLORS.success,
-    backgroundColor: 'rgba(0,245,160,0.12)',
-  },
-  completionButtonText: {
-    color: COLORS.textPrimary,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  completionButtonTextActive: {
-    color: COLORS.success,
-  },
   dayChip: {
-    minWidth: 52,
     paddingVertical: 10,
-    borderRadius: 12,
-    alignItems: 'center',
+    paddingHorizontal: 14,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: 'transparent',
     backgroundColor: 'transparent',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   dayChipActive: {
     backgroundColor: COLORS.accent,
     borderColor: COLORS.accent,
   },
   dayChipLabel: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
     color: COLORS.textTertiary,
   },
   dayChipLabelActive: {
     color: COLORS.textPrimary,
   },
-  dayChipNumber: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  dayChipNumberActive: {
-    color: COLORS.textPrimary,
-  },
   dayStatusDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: COLORS.success,
-    marginTop: 4,
     opacity: 0,
   },
   dayStatusDotVisible: {
@@ -1038,52 +1157,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 24,
   },
-  dayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  dayActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dayTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  daySubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-  },
-  todayBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: COLORS.accentDim,
-  },
-  todayBadgeText: {
-    color: COLORS.accent,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  inlineAddMealButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  inlineAddMealText: {
-    color: COLORS.textPrimary,
-    fontSize: 20,
-    fontWeight: '700',
+  dayHeaderSpacer: {
+    height: 12,
   },
   mealsCard: {
     backgroundColor: COLORS.card,
@@ -1093,6 +1168,32 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     marginBottom: 24,
   },
+  mealAddRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  mealAddRowLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  mealAddRowButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.elevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mealAddRowButtonText: {
+    color: COLORS.textPrimary,
+    fontSize: 22,
+    fontWeight: '700',
+  },
   mealGroupCard: {
     marginTop: 16,
     padding: 16,
@@ -1101,6 +1202,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     gap: 12,
+  },
+  mealPlanItems: {
+    gap: 6,
+    marginTop: 8,
+  },
+  planItemChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  planItemBullet: {
+    color: COLORS.accent,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  planItemText: {
+    color: COLORS.textPrimary,
+    fontSize: 13,
+    flex: 1,
   },
   mealGroupHeader: {
     flexDirection: 'row',
@@ -1133,21 +1259,6 @@ const styles = StyleSheet.create({
   mealGroupMeta: {
     color: COLORS.textSecondary,
     fontSize: 12,
-  },
-  mealGroupAddButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.elevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mealGroupAddText: {
-    color: COLORS.textPrimary,
-    fontSize: 20,
-    fontWeight: '700',
   },
   detailEmptyText: {
     color: COLORS.textSecondary,
@@ -1194,24 +1305,23 @@ const styles = StyleSheet.create({
   },
   mealEntryActions: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  mealEntryAction: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
+  mealEntryCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
     backgroundColor: COLORS.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  mealEntryActionText: {
-    color: COLORS.textPrimary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  mealEntryActionDanger: {
-    backgroundColor: 'rgba(239,68,68,0.12)',
-  },
-  mealEntryActionDangerText: {
-    color: '#ef4444',
+  mealEntryCloseText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
   },
   errorText: {
     marginTop: 12,
@@ -1261,6 +1371,74 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     fontSize: 20,
   },
+  detailModalContent: {
+    marginHorizontal: 16,
+    marginBottom: 24,
+    padding: 20,
+    borderRadius: 24,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  detailModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  detailModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  detailModalSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  detailModalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.elevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailModalCloseText: {
+    color: COLORS.textPrimary,
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  detailEntriesList: {
+    paddingBottom: 8,
+  },
+  detailEntryRow: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  detailEntryInfo: {
+    flex: 1,
+  },
+  detailEntryName: {
+    color: COLORS.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  detailEntryMeta: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  detailEntryCalories: {
+    color: COLORS.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'right',
+  },
   modalForm: {
     paddingBottom: 40,
     gap: 16,
@@ -1294,6 +1472,39 @@ const styles = StyleSheet.create({
   modalInputDisabled: {
     opacity: 0.5,
   },
+  mealCategorySection: {
+    marginTop: 16,
+    gap: 8,
+  },
+  mealTypeChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    paddingRight: 12,
+  },
+  mealTypeChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mealTypeChipActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  mealTypeChipText: {
+    color: COLORS.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  mealTypeChipTextActive: {
+    color: COLORS.bgPrimary,
+  },
   modalRow: {
     flexDirection: 'row',
     gap: 12,
@@ -1318,6 +1529,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.textSecondary,
     marginTop: 2,
+  },
+  foodResultsList: {
+    marginTop: 8,
+    gap: 4,
+  },
+  savedFoodsSection: {
+    marginTop: 12,
+    gap: 8,
+    maxHeight: 220,
+  },
+  savedFoodsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  savedFoodsScroll: {
+    borderRadius: 12,
+  },
+  savedFoodsList: {
+    gap: 6,
+    paddingBottom: 8,
   },
   addCustomFoodButton: {
     marginTop: 8,
@@ -1350,19 +1582,6 @@ const styles = StyleSheet.create({
   addCustomFoodSaveText: {
     color: COLORS.textPrimary,
     fontWeight: '600',
-  },
-  manualSection: {
-    gap: 10,
-    marginTop: 8,
-  },
-  manualHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  manualHint: {
-    fontSize: 12,
-    color: COLORS.textTertiary,
   },
   modalSaveButton: {
     borderRadius: 12,

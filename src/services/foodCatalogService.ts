@@ -107,6 +107,25 @@ export const createUserFood = async (
   return mapFoodRow(data);
 };
 
+export const fetchStoredFoods = async (
+  userId: string,
+  limit = 20
+): Promise<FoodItem[]> => {
+  const { data, error } = await supabase
+    .from('fitarc_foods')
+    .select(FOOD_FIELDS)
+    .or(`user_id.is.null,user_id.eq.${userId}`)
+    .order('name', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  const rows = (data || []).map(mapFoodRow);
+  return rows.sort((a, b) => {
+    if (a.userId && !b.userId) return -1;
+    if (!a.userId && b.userId) return 1;
+    return a.name.localeCompare(b.name);
+  });
+};
+
 const buildFoodDisplayName = (food: FoodItem) =>
   food.brand ? `${food.name} (${food.brand})` : food.name;
 

@@ -132,6 +132,50 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     ? Math.round((completedSessions / plannedSessions) * 100)
     : 0;
   
+  // Calculate streak
+  const calculateStreak = () => {
+    const logDates = [...new Set(workoutLogs.map(log => log.date))].sort();
+    if (logDates.length === 0) return 0;
+    
+    let streak = 0;
+    const todayStr = today.toISOString().split('T')[0];
+    let currentDate = new Date(today);
+    
+    for (let i = 0; i < 365; i++) {
+      const dateStr = currentDate.toISOString().split('T')[0];
+      if (logDates.includes(dateStr)) {
+        streak++;
+        currentDate.setDate(currentDate.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+    return streak;
+  };
+  
+  const currentStreak = calculateStreak();
+  
+  // Generate last 7 days for weekly overview
+  const last7Days = useMemo(() => {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const iso = date.toISOString().split('T')[0];
+      const label = date.toLocaleDateString(undefined, { weekday: 'narrow' });
+      days.push({ iso, label });
+    }
+    return days;
+  }, []);
+  
+  const workoutCompletionMap = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    workoutLogs.forEach(log => {
+      map[log.date] = true;
+    });
+    return map;
+  }, [workoutLogs]);
+  
   const nutritionWindowCutoff = new Date();
   nutritionWindowCutoff.setDate(nutritionWindowCutoff.getDate() - 6);
   const recentMealPlans = mealPlans.filter(
@@ -170,37 +214,67 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     { key: 'meals', label: 'Meals' },
   ];
 
-  // ✨ Render mini sparkline for strength trends
-  const renderSparkline = (weights: number[]) => {
-    if (weights.length < 2) return '━━━';
-    const hasGrowth = weights[weights.length - 1] > weights[0];
-    return hasGrowth ? '📈' : '━';
+  // Helper: Get heat color based on intensity
+  const getHeatColor = (intensity: number) => {
+    if (intensity >= 0.8) return '#00F5A0';
+    if (intensity >= 0.5) return '#6C63FF';
+    if (intensity >= 0.3) return '#8B93B0';
+    return '#2A2F4F';
   };
 
   const renderStatsContent = () => (
     <>
-      {/* ✨  Overview Stats Card */}
+      {/* ✨ Weekly Activity Calendar */}
+      <View style={styles.weekOverview}>
+        {last7Days.map(day => {
+          const hasActivity = workoutCompletionMap[day.iso];
+          return (
+            <View key={day.iso} style={styles.dayCell}>
+              <Text style={styles.dayLabel}>{day.label}</Text>
+              <View style={[
+                styles.dayDot,
+                hasActivity && styles.dayDotActive
+              ]} />
+            </View>
+          );
+        })}
+      </View>
+
+      {/* ✨ Overview Stats Card with Streak Banner */}
       <View style={styles.overviewCard}>
+        {currentStreak > 0 && (
+          <View style={styles.streakBanner}>
+            <Text style={styles.streakEmoji}>🔥</Text>
+            <View style={styles.streakInfo}>
+              <Text style={styles.streakCount}>{currentStreak} day streak</Text>
+              <Text style={styles.streakSubtext}>Keep it going!</Text>
+            </View>
+          </View>
+        )}
+        
         <Text style={styles.overviewTitle}>Phase Overview</Text>
         <View style={styles.overviewGrid}>
           <View style={styles.overviewItem}>
+            <Text style={styles.statEmoji}>📊</Text>
             <Text style={styles.overviewValue}>{progressPercent}%</Text>
             <Text style={styles.overviewLabel}>Complete</Text>
           </View>
           <View style={styles.overviewDivider} />
           <View style={styles.overviewItem}>
+            <Text style={styles.statEmoji}>📅</Text>
             <Text style={styles.overviewValue}>{daysActive}</Text>
             <Text style={styles.overviewLabel}>Days Active</Text>
           </View>
           <View style={styles.overviewDivider} />
           <View style={styles.overviewItem}>
+            <Text style={styles.statEmoji}>✅</Text>
             <Text style={styles.overviewValue}>{consistencyPercent}%</Text>
             <Text style={styles.overviewLabel}>Consistency</Text>
           </View>
         </View>
       </View>
 
-      {/* ✨ Compact Strength Trends */}
+      {/* ✨ Strength Trends with Visual Sparklines */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Strength Trends</Text>
@@ -208,29 +282,68 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         </View>
         
         {strengthTrends.length > 0 ? (
-          strengthTrends.slice(0, 3).map((trend: StrengthTrendView) => (
-            <View key={trend.lift} style={styles.trendRow}>
-              <View style={styles.trendLeft}>
-                <Text style={styles.trendIcon}>{renderSparkline(trend.weights)}</Text>
-                <View>
-                  <Text style={styles.trendLift}>{trend.lift}</Text>
-                  <Text style={styles.trendProgress}>
-                    {trend.weights[0]} → {trend.weights[trend.weights.length - 1]} lbs
-                  </Text>
+          strengthTrends.slice(0, 3).map((trend: StrengthTrendView) => {
+            const maxWeight = Math.max(...trend.weights);
+            return (
+              <View key={trend.lift} style={styles.trendRow}>
+                <View style={styles.trendLeft}>
+                  {/* Visual Sparkline */}
+                  <View style={styles.trendSparkline}>
+                    {trend.weights.map((weight, idx) => {
+                      const height = (weight / maxWeight) * 30;
+                      return (
+                        <View 
+                          key={idx}
+                          style={[
+                            styles.sparklineBar,
+                            { 
+                              height,
+                              backgroundColor: idx === trend.weights.length - 1 
+                                ? '#00F5A0' 
+                                : '#6C63FF'
+                            }
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
+                  <View style={styles.trendDetails}>
+                    <Text style={styles.trendLift}>{trend.lift}</Text>
+                    <View style={styles.trendProgressRow}>
+                      <Text style={styles.trendStart}>{trend.weights[0]}</Text>
+                      <Text style={styles.trendArrow}>→</Text>
+                      <Text style={styles.trendCurrent}>
+                        {trend.weights[trend.weights.length - 1]} lbs
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.trendRight}>
+                  <View style={styles.trendBadge}>
+                    <Text style={styles.trendDelta}>+{trend.deltaLbs}</Text>
+                  </View>
+                  <Text style={styles.trendPercent}>+{trend.deltaPercent}%</Text>
                 </View>
               </View>
-              <View style={styles.trendRight}>
-                <Text style={styles.trendDelta}>+{trend.deltaLbs}</Text>
-                <Text style={styles.trendPercent}>+{trend.deltaPercent}%</Text>
-              </View>
-            </View>
-          ))
+            );
+          })
         ) : (
-          <Text style={styles.emptyText}>Start logging workouts to track strength gains</Text>
+          <View style={styles.emptyStateCard}>
+            <Text style={styles.emptyStateEmoji}>💪</Text>
+            <Text style={styles.emptyStateTitle}>Your strength journey starts here</Text>
+            <Text style={styles.emptyStateText}>
+              Complete a few workouts to see your progress trends
+            </Text>
+            <View style={styles.emptyStateDots}>
+              <View style={styles.emptyStateDot} />
+              <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
+              <View style={styles.emptyStateDot} />
+            </View>
+          </View>
         )}
       </View>
 
-      {/* ✨  Compact Volume Card */}
+      {/* ✨ Training Volume - Heat Map Style */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Training Volume</Text>
@@ -238,32 +351,39 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         </View>
         
         {weeklyVolume.length > 0 ? (
-          weeklyVolume.map((entry: VolumeEntryView) => {
-            const maxSets = weeklyVolume[0]?.sets || 1;
-            const progress = (entry.sets / maxSets) * 100;
-            return (
-              <View key={entry.group} style={styles.volumeRow}>
-                <Text style={styles.volumeLabel}>{entry.group}</Text>
-                <View style={styles.volumeBarContainer}>
-                  <View style={styles.volumeBarTrack}>
-                    <View 
-                      style={[
-                        styles.volumeBarFill, 
-                        { width: `${Math.min(100, progress)}%` }
-                      ]} 
-                    />
+          <View style={styles.volumeHeatMap}>
+            {weeklyVolume.map((entry: VolumeEntryView) => {
+              const maxSets = weeklyVolume[0]?.sets || 1;
+              const intensity = entry.sets / maxSets;
+              const heatColor = getHeatColor(intensity);
+              
+              return (
+                <View key={entry.group} style={styles.volumeBlock}>
+                  <View style={[styles.volumeBar, { backgroundColor: heatColor }]}>
+                    <Text style={styles.volumeSetCount}>{entry.sets}</Text>
                   </View>
-                  <Text style={styles.volumeValue}>{entry.sets}</Text>
+                  <Text style={styles.volumeLabel}>{entry.group}</Text>
                 </View>
-              </View>
-            );
-          })
+              );
+            })}
+          </View>
         ) : (
-          <Text style={styles.emptyText}>Volume data will appear after logging workouts</Text>
+          <View style={styles.emptyStateCard}>
+            <Text style={styles.emptyStateEmoji}>📊</Text>
+            <Text style={styles.emptyStateTitle}>Volume tracking starts soon</Text>
+            <Text style={styles.emptyStateText}>
+              Log workouts to see your training volume breakdown
+            </Text>
+            <View style={styles.emptyStateDots}>
+              <View style={styles.emptyStateDot} />
+              <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
+              <View style={styles.emptyStateDot} />
+            </View>
+          </View>
         )}
       </View>
 
-      {/* ✨ Movement Balance - More Visual */}
+      {/* ✨ Movement Balance */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>Movement Balance</Text>
@@ -290,11 +410,22 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             })}
           </View>
         ) : (
-          <Text style={styles.emptyText}>Movement patterns tracked after workouts</Text>
+          <View style={styles.emptyStateCard}>
+            <Text style={styles.emptyStateEmoji}>🎯</Text>
+            <Text style={styles.emptyStateTitle}>Balance your training</Text>
+            <Text style={styles.emptyStateText}>
+              Movement patterns appear after tracking workouts
+            </Text>
+            <View style={styles.emptyStateDots}>
+              <View style={styles.emptyStateDot} />
+              <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
+              <View style={styles.emptyStateDot} />
+            </View>
+          </View>
         )}
       </View>
 
-      {/* ✨Top Lifts Compact View */}
+      {/* ✨ Personal Records - Trophy Style */}
       {bestLiftRows.length > 0 && (
         <View style={styles.compactCard}>
           <View style={styles.cardHeader}>
@@ -302,22 +433,34 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             <Text style={styles.cardSubtitle}>This phase</Text>
           </View>
           
-          {bestLiftRows.map((row, index) => (
-            <View key={row.lift} style={styles.prRow}>
-              <View style={styles.prRank}>
-                <Text style={styles.prRankText}>#{index + 1}</Text>
-              </View>
-              <View style={styles.prInfo}>
-                <Text style={styles.prLift}>{row.lift}</Text>
-                <Text style={styles.prWeight}>{row.current} lbs</Text>
-              </View>
-              {row.delta > 0 && (
-                <View style={styles.prBadge}>
-                  <Text style={styles.prBadgeText}>+{row.delta} lbs</Text>
+          {bestLiftRows.map((row, index) => {
+            const rankStyle = 
+              index === 0 ? styles.prRank1 :
+              index === 1 ? styles.prRank2 :
+              index === 2 ? styles.prRank3 : styles.prRank;
+            const rankEmoji = 
+              index === 0 ? '🥇' :
+              index === 1 ? '🥈' :
+              index === 2 ? '🥉' : '💪';
+            
+            return (
+              <View key={row.lift} style={styles.prRow}>
+                <View style={[styles.prRank, rankStyle]}>
+                  <Text style={styles.prRankEmoji}>{rankEmoji}</Text>
                 </View>
-              )}
-            </View>
-          ))}
+                <View style={styles.prInfo}>
+                  <Text style={styles.prLift}>{row.lift}</Text>
+                  <Text style={styles.prWeight}>{row.current} lbs</Text>
+                </View>
+                {row.delta > 0 && (
+                  <View style={styles.prBadgeImproved}>
+                    <Text style={styles.prArrow}>↑</Text>
+                    <Text style={styles.prBadgeText}>{row.delta} lbs</Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
         </View>
       )}
     </>
@@ -374,7 +517,18 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             })}
           </>
         ) : (
-          <Text style={styles.emptyText}>Log meals to see daily adherence</Text>
+          <View style={styles.emptyStateCard}>
+            <Text style={styles.emptyStateEmoji}>🍽️</Text>
+            <Text style={styles.emptyStateTitle}>Track your nutrition</Text>
+            <Text style={styles.emptyStateText}>
+              Log meals to see your daily adherence
+            </Text>
+            <View style={styles.emptyStateDots}>
+              <View style={styles.emptyStateDot} />
+              <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
+              <View style={styles.emptyStateDot} />
+            </View>
+          </View>
         )}
       </View>
     </>
@@ -387,7 +541,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         style={styles.gradient}
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* ✨  Compact Header */}
+          {/* ✨ Compact Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Progress</Text>
             <Text style={styles.subtitle}>
@@ -401,7 +555,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </Text>
           )}
 
-          {/* ✨ IMPROVED: Compact Tab Switcher */}
+          {/* ✨ Compact Tab Switcher */}
           <View style={styles.tabSwitcher}>
             {tabOptions.map((tab) => (
               <TouchableOpacity
@@ -446,7 +600,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   
-  // ✨ IMPROVED: Compact Header
+  // ✨ Header
   header: {
     marginBottom: 8,
   },
@@ -461,7 +615,7 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // ✨ IMPROVED: Compact Tab Switcher
+  // ✨ Tab Switcher
   tabSwitcher: {
     flexDirection: 'row',
     backgroundColor: '#151932',
@@ -489,13 +643,68 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   
-  // ✨ NEW: Overview Card
+  // ✨ Weekly Activity Calendar
+  weekOverview: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#151932',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  dayCell: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  dayLabel: {
+    fontSize: 11,
+    color: '#A0A3BD',
+    fontWeight: '500',
+  },
+  dayDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#2A2F4F',
+  },
+  dayDotActive: {
+    backgroundColor: '#00F5A0',
+  },
+  
+  // ✨ Overview Card with Streak Banner
   overviewCard: {
     backgroundColor: '#151932',
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
     borderColor: '#2A2F4F',
+  },
+  streakBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+  },
+  streakEmoji: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  streakInfo: {
+    flex: 1,
+  },
+  streakCount: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  streakSubtext: {
+    fontSize: 12,
+    color: '#A0A3BD',
   },
   overviewTitle: {
     fontSize: 16,
@@ -510,6 +719,10 @@ const styles = StyleSheet.create({
   overviewItem: {
     flex: 1,
     alignItems: 'center',
+  },
+  statEmoji: {
+    fontSize: 20,
+    marginBottom: 8,
   },
   overviewValue: {
     fontSize: 28,
@@ -527,7 +740,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#2A2F4F',
   },
   
-  // ✨ IMPROVED: Compact Card Style
+  // ✨ Compact Card Style
   compactCard: {
     backgroundColor: '#151932',
     borderRadius: 14,
@@ -549,7 +762,7 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // ✨ IMPROVED: Compact Trend Row
+  // ✨ Strength Trends - Visual Sparklines
   trendRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -564,24 +777,56 @@ const styles = StyleSheet.create({
     gap: 12,
     flex: 1,
   },
-  trendIcon: {
-    fontSize: 20,
+  trendSparkline: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 3,
+    height: 30,
+    width: 50,
+  },
+  sparklineBar: {
+    flex: 1,
+    borderRadius: 2,
+    minHeight: 4,
+  },
+  trendDetails: {
+    flex: 1,
   },
   trendLift: {
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  trendProgress: {
-    fontSize: 12,
-    color: '#A0A3BD',
+  trendProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     marginTop: 2,
+  },
+  trendStart: {
+    fontSize: 11,
+    color: '#8B93B0',
+  },
+  trendArrow: {
+    fontSize: 10,
+    color: '#6C63FF',
+  },
+  trendCurrent: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   trendRight: {
     alignItems: 'flex-end',
   },
+  trendBadge: {
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
   trendDelta: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
     color: '#00F5A0',
   },
@@ -591,45 +836,36 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   
-  // ✨ IMPROVED: Compact Volume Rows
-  volumeRow: {
+  // ✨ Volume Heat Map
+  volumeHeatMap: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  volumeLabel: {
-    width: 80,
-    fontSize: 13,
-    color: '#FFFFFF',
-    fontWeight: '500',
-  },
-  volumeBarContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 10,
   },
-  volumeBarTrack: {
-    flex: 1,
-    height: 8,
-    backgroundColor: '#1E2340',
-    borderRadius: 4,
-    overflow: 'hidden',
+  volumeBlock: {
+    alignItems: 'center',
+    width: '30%',
   },
-  volumeBarFill: {
-    height: '100%',
-    backgroundColor: '#6C63FF',
-    borderRadius: 4,
+  volumeBar: {
+    width: '100%',
+    height: 60,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
   },
-  volumeValue: {
-    width: 35,
-    textAlign: 'right',
+  volumeSetCount: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#0A0E27',
+  },
+  volumeLabel: {
+    fontSize: 11,
     color: '#A0A3BD',
-    fontSize: 13,
-    fontWeight: '600',
+    textAlign: 'center',
   },
   
-  // ✨ NEW: Movement Grid
+  // ✨ Movement Grid
   movementGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -660,7 +896,7 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // ✨ NEW: PR (Personal Records) Rows
+  // ✨ Personal Records - Trophy Style
   prRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -670,17 +906,24 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1E2340',
   },
   prRank: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#6C63FF',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#6C63FF',
   },
-  prRankText: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
+  prRank1: {
+    backgroundColor: '#FFD700',
+  },
+  prRank2: {
+    backgroundColor: '#C0C0C0',
+  },
+  prRank3: {
+    backgroundColor: '#CD7F32',
+  },
+  prRankEmoji: {
+    fontSize: 20,
   },
   prInfo: {
     flex: 1,
@@ -695,11 +938,18 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
     marginTop: 2,
   },
-  prBadge: {
+  prBadgeImproved: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: 'rgba(0, 245, 160, 0.15)',
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 12,
+    gap: 4,
+  },
+  prArrow: {
+    fontSize: 14,
+    color: '#00F5A0',
   },
   prBadgeText: {
     fontSize: 11,
@@ -707,7 +957,7 @@ const styles = StyleSheet.create({
     color: '#00F5A0',
   },
   
-  // ✨ Meal Tracking Rows
+  // ✨ Meal Tracking
   mealTrackingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -784,7 +1034,44 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
   },
   
-  // Empty States
+  // ✨ Empty States
+  emptyStateCard: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+  },
+  emptyStateEmoji: {
+    fontSize: 48,
+    marginBottom: 12,
+    opacity: 0.7,
+  },
+  emptyStateTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  emptyStateText: {
+    fontSize: 13,
+    color: '#8B93B0',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  emptyStateDots: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  emptyStateDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#2A2F4F',
+  },
+  emptyStateDotActive: {
+    backgroundColor: '#6C63FF',
+  },
   emptyText: {
     fontSize: 13,
     color: '#A0A3BD',
