@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, PhasePlan, WorkoutSessionEntry, WorkoutSessionExercise, MuscleGroup } from '../types/domain';
-import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { ExerciseCatalogEntry } from '../services/exerciseCatalogService';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
@@ -60,7 +59,6 @@ const formatDateLabel = (dateStr: string) => {
   const date = parseLocalDateFromYMD(dateStr);
   return {
     weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
-    day: date.getDate(),
   };
 };
 
@@ -104,31 +102,24 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   user,
   phase,
   workoutSessions,
-  workoutDataVersion,
   onSaveCustomSession,
   onDeleteSession,
   onToggleExercise,
 }) => {
 
-  // Load sessions from database based on plan_id
-  const {
-    sessions: remoteSessions,
-    isLoading: sessionsLoading,
-    refresh: refreshSessions,
-  } = useWorkoutSessions(user.id, phase?.id ?? undefined);
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
   
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
   const [exerciseModalVisible, setExerciseModalVisible] = useState(false);
-  const [duplicateModalVisible, setDuplicateModalVisible] = useState(false);
   const [exerciseSearch, setExerciseSearch] = useState('');
   const [muscleFilter, setMuscleFilter] = useState<(typeof MUSCLE_FILTERS)[number]>('All');
-  const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
-  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [completionMap, setCompletionMap] = useState<Record<string, boolean>>({});
+  const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Use database sessions (remoteSessions) - no fallback to static data
-  const resolvedSessions = remoteSessions;
+  const resolvedSessions = useMemo(() => {
+    if (!phase?.id) return workoutSessions;
+    return workoutSessions.filter((session) => session.phasePlanId === phase.id);
+  }, [phase?.id, workoutSessions]);
 
   const convertCatalogExercise = useCallback(
     (entry: ExerciseCatalogEntry): WorkoutSessionExercise => {
@@ -207,8 +198,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       return;
     }
 
-    // Only update if we're not in the middle of editing
-    if (isDirty && lastSyncedKeyRef.current === planSyncKey) {
+    if (lastSyncedKeyRef.current === planSyncKey) {
       return;
     }
 
@@ -217,24 +207,14 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       setEditingExercises(createSessionExercises(selectedPlan.session.exercises));
       setIsDirty(false);
       lastSyncedKeyRef.current = planSyncKey;
-    } else {
-      // No session exists - clear exercises
-      setEditingExercises([]);
-      setIsDirty(false);
-      lastSyncedKeyRef.current = planSyncKey;
+      return;
     }
-  }, [planSyncKey, selectedPlan, isDirty]);
 
-  useEffect(() => {
-    if (!phase?.id) return;
-    refreshSessions();
-  }, [phase?.id, workoutDataVersion, refreshSessions]);
-
-  useEffect(() => {
-    if (!editingExercises.length) {
-      setOverflowMenuOpen(false);
-    }
-  }, [editingExercises.length]);
+    // No session exists - clear exercises
+    setEditingExercises([]);
+    setIsDirty(false);
+    lastSyncedKeyRef.current = planSyncKey;
+  }, [planSyncKey, selectedPlan]);
 
   useEffect(() => {
     if (!user.id || !weekStart || !weekEnd) return;
@@ -280,11 +260,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const selectedDayInfo = useMemo(() => {
     if (!selectedPlan) return null;
     const date = parseLocalDateFromYMD(selectedPlan.dateStr);
-    const fullDate = date.toLocaleDateString(undefined, {
-      weekday: 'long',
-      month: 'short',
-      day: 'numeric',
-    });
+    const fullDate = date.toLocaleDateString(undefined, { weekday: 'long' });
     const totalExercises = editingExercises.length;
     const completedCount = editingExercises.filter((exercise) => exercise.completed).length;
     const isFuture = selectedPlan.dateStr > todayKey;
@@ -298,10 +274,36 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     return { fullDate, meta };
   }, [selectedPlan, editingExercises, completionMap, todayKey]);
 
-  const handleSelectDate = (dateStr: string) => {
+  const saveCurrentSession = useCallback(
+    async (plan: typeof selectedPlan, exercises: WorkoutSessionExercise[]) => {
+      if (!plan) return;
+      if (!onSaveCustomSession && !onDeleteSession) return;
+      if (!exercises.length) {
+        await onDeleteSession?.(plan.dateStr);
+        return;
+      }
+      await persistSession(plan.dateStr, exercises);
+    },
+    [onDeleteSession, onSaveCustomSession, persistSession]
+  );
+
+  const flushAutosave = useCallback(async () => {
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current);
+      autosaveTimeoutRef.current = null;
+    }
+    if (!selectedPlan || !isDirty) return;
+    try {
+      await saveCurrentSession(selectedPlan, editingExercises);
+      setIsDirty(false);
+    } catch (err) {
+      console.error('Failed to autosave workout session', err);
+    }
+  }, [editingExercises, isDirty, saveCurrentSession, selectedPlan]);
+
+  const handleSelectDate = async (dateStr: string) => {
+    await flushAutosave();
     setSelectedDate(dateStr);
-    setOverflowMenuOpen(false);
-    refreshSessions();
   };
 
   const handleAddExercise = (entry: ExerciseCatalogEntry) => {
@@ -316,36 +318,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setIsDirty(true);
   };
 
-  const handleDuplicateTo = async (targetDate: string) => {
-    if (!selectedPlan) return;
-    const source =
-      selectedPlan.session && selectedPlan.session.exercises.length
-        ? createSessionExercises(selectedPlan.session.exercises)
-        : editingExercises;
-    if (!source.length) return;
-    await persistSession(targetDate, source);
-    setDuplicateTarget(null);
-    setDuplicateModalVisible(false);
-  };
-
-  const isFutureSelected = selectedPlan ? selectedPlan.dateStr > todayKey : false;
-  const canToggleCompletion = Boolean(onToggleExercise && selectedPlan?.session && !isFutureSelected);
-
-  const handleToggleExerciseCompletion = useCallback(
-    (index: number) => {
-      if (!canToggleCompletion || !selectedPlan) return;
-      setEditingExercises((prev) => {
-        const target = prev[index];
-        if (!target) return prev;
-        onToggleExercise?.(selectedPlan.dateStr, target.name);
-        setIsDirty(true);
-        return prev.map((exercise, idx) =>
-          idx === index ? { ...exercise, completed: !exercise.completed } : exercise
-        );
-      });
-    },
-    [canToggleCompletion, onToggleExercise, selectedPlan]
-  );
+ 
+ 
 
   const handleChangeSets = (index: number, value: string) => {
     const numeric = parseInt(value, 10);
@@ -366,24 +340,34 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setIsDirty(true);
   };
 
-  const handleSaveEditedExercises = async () => {
-    if (!selectedPlan) return;
-    if (!editingExercises.length) {
-      await onDeleteSession?.(selectedPlan.dateStr);
-      setIsDirty(false);
-      return;
+  useEffect(() => {
+    if (!selectedPlan || !isDirty) return;
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current);
     }
-    await persistSession(selectedPlan.dateStr, editingExercises);
-    setIsDirty(false);
-    setOverflowMenuOpen(false);
-  };
+    autosaveTimeoutRef.current = setTimeout(() => {
+      (async () => {
+        try {
+          await saveCurrentSession(selectedPlan, editingExercises);
+          setIsDirty(false);
+        } catch (err) {
+          console.error('Failed to autosave workout session', err);
+        }
+      })();
+    }, 600);
+    return () => {
+      if (autosaveTimeoutRef.current) {
+        clearTimeout(autosaveTimeoutRef.current);
+        autosaveTimeoutRef.current = null;
+      }
+    };
+  }, [editingExercises, isDirty, saveCurrentSession, selectedPlan]);
 
-  const handleClearSession = useCallback(async () => {
-    if (!selectedPlan) return;
-    await onDeleteSession?.(selectedPlan.dateStr);
-    setEditingExercises([]);
-    setIsDirty(false);
-  }, [onDeleteSession, selectedPlan]);
+  useEffect(() => {
+    return () => {
+      void flushAutosave();
+    };
+  }, [flushAutosave]);
 
   const filteredCatalog = useMemo(() => {
     const term = exerciseSearch.trim().toLowerCase();
@@ -486,13 +470,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         <TouchableOpacity style={styles.addExerciseButton} onPress={() => setExerciseModalVisible(true)}>
           <Text style={styles.addExerciseText}>+ Add exercise</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.saveButton, (!isDirty || !editingExercises.length) && styles.saveButtonDisabled]}
-          disabled={!editingExercises.length || !isDirty}
-          onPress={handleSaveEditedExercises}
-        >
-          <Text style={styles.saveButtonText}>{isDirty ? 'Save session' : 'Saved'}</Text>
-        </TouchableOpacity>
       </View>
     );
   };
@@ -500,10 +477,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   return (
 
     <View style={styles.container}>
-      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-        {overflowMenuOpen && (
-          <Pressable style={styles.menuBackdrop} onPress={() => setOverflowMenuOpen(false)} />
-        )}
+        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
         <ScrollView
           stickyHeaderIndices={[0]}
           contentContainerStyle={styles.scrollContent}
@@ -522,7 +496,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               contentContainerStyle={styles.weekStrip}
             >
               {weekPlans.map((plan) => {
-              const { weekday, day } = formatDateLabel(plan.dateStr);
+              const { weekday } = formatDateLabel(plan.dateStr);
               const isActive = plan.dateStr === selectedDate;
               const hasWorkout = plan.session && plan.session.exercises.length > 0;
               const isFutureDay = plan.dateStr > todayKey;
@@ -538,7 +512,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                     onPress={() => handleSelectDate(plan.dateStr)}
                   >
                     <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>{weekday}</Text>
-                    <Text style={[styles.dayNumber, isActive && styles.dayNumberActive]}>{day}</Text>
                     <View
                       style={[
                         styles.dayDot,
@@ -559,52 +532,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                 <Text style={styles.dayTitle}>{selectedDayInfo?.fullDate ?? '—'}</Text>
                 <Text style={styles.dayMeta}>{selectedDayInfo?.meta ?? 'No workout logged'}</Text>
               </View>
-              {editingExercises.length > 0 && (
-                <View style={styles.overflowWrapper}>
-                  <TouchableOpacity
-                    style={styles.overflowButton}
-                    onPress={(event) => {
-                      event.stopPropagation();
-                      setOverflowMenuOpen((prev) => !prev);
-                    }}
-                  >
-                    <Text style={styles.overflowButtonText}>⋯</Text>
-                  </TouchableOpacity>
-                  {overflowMenuOpen && (
-                    <View style={styles.overflowMenu}>
-                      <TouchableOpacity
-                        style={styles.overflowItem}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          setDuplicateTarget(null);
-                          setDuplicateModalVisible(true);
-                          setOverflowMenuOpen(false);
-                        }}
-                      >
-                        <Text style={styles.overflowItemText}>Duplicate workout</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.overflowItem, styles.overflowItemDanger]}
-                        onPress={async (event) => {
-                          event.stopPropagation();
-                          setOverflowMenuOpen(false);
-                          await handleClearSession();
-                        }}
-                      >
-                        <Text style={[styles.overflowItemText, styles.overflowItemDangerText]}>Delete workout</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-              )}
             </View>
-            {sessionsLoading ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptySubtitle}>Loading...</Text>
-              </View>
-            ) : (
-              renderSession()
-            )}
+            {renderSession()}
           </View>
         </ScrollView>
       </LinearGradient>
@@ -674,44 +603,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </View>
         </View>
       </Modal>
-
-      <Modal transparent animationType="fade" visible={duplicateModalVisible} onRequestClose={() => setDuplicateModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdropPress} onPress={() => setDuplicateModalVisible(false)} />
-          <View style={styles.sheet}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Duplicate to…</Text>
-              <TouchableOpacity style={styles.closeButton} onPress={() => setDuplicateModalVisible(false)}>
-                <Text style={styles.closeButtonText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.duplicateGrid}>
-              {weekPlans.map((plan) => {
-                const { weekday, day } = formatDateLabel(plan.dateStr);
-                const isSelected = duplicateTarget === plan.dateStr;
-                return (
-                  <TouchableOpacity
-                    key={`duplicate-${plan.dateStr}`}
-                    style={[styles.duplicateDay, isSelected && styles.duplicateDaySelected]}
-                    onPress={() => setDuplicateTarget(plan.dateStr)}
-                  >
-                    <Text style={[styles.duplicateLabel, isSelected && styles.duplicateLabelSelected]}>{weekday}</Text>
-                    <Text style={[styles.duplicateNumber, isSelected && styles.duplicateNumberSelected]}>{day}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-            <TouchableOpacity
-              style={[styles.saveButton, !duplicateTarget && styles.saveButtonDisabled]}
-              disabled={!duplicateTarget}
-              onPress={() => duplicateTarget && handleDuplicateTo(duplicateTarget)}
-            >
-              <Text style={styles.saveButtonText}>Duplicate workout</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 };
@@ -729,12 +620,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
-  },
-  menuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'transparent',
-    zIndex: 10,
-    position: 'absolute',
   },
   scrollContent: {
     paddingBottom: 80,
@@ -771,17 +656,18 @@ const styles = StyleSheet.create({
     color: COLORS.textTertiary,
   },
   weekStrip: {
-    paddingVertical: 12,
+    paddingVertical: 4,
     gap: 8,
   },
   dayChip: {
-    minWidth: 52,
-    paddingVertical: 10,
-    borderRadius: 12,
+    minWidth: 70,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
     position: 'relative',
   },
   dayChipActive: {
@@ -792,19 +678,11 @@ const styles = StyleSheet.create({
     borderColor: COLORS.success,
   },
   dayLabel: {
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '600',
     color: COLORS.textTertiary,
   },
   dayLabelActive: {
-    color: COLORS.textPrimary,
-  },
-  dayNumber: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  dayNumberActive: {
     color: COLORS.textPrimary,
   },
   dayDot: {
@@ -853,53 +731,6 @@ const styles = StyleSheet.create({
   dayMeta: {
     fontSize: 13,
     color: COLORS.textSecondary,
-  },
-  overflowWrapper: {
-    position: 'relative',
-    zIndex: 20,
-  },
-  overflowButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.elevated,
-  },
-  overflowButtonText: {
-    fontSize: 20,
-    color: COLORS.textSecondary,
-  },
-  overflowMenu: {
-    position: 'absolute',
-    top: 48,
-    right: 0,
-    backgroundColor: COLORS.elevated,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    minWidth: 180,
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-    zIndex: 20,
-  },
-  overflowItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  overflowItemText: {
-    color: COLORS.textPrimary,
-    fontSize: 15,
-  },
-  overflowItemDanger: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderStrong,
-  },
-  overflowItemDangerText: {
-    color: '#EF4444',
   },
   workoutCard: {
     backgroundColor: COLORS.card,
@@ -1022,25 +853,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.textSecondary,
-  },
-  saveButton: {
-    marginTop: 16,
-    borderRadius: 14,
-    backgroundColor: COLORS.accent,
-    paddingVertical: 16,
-    alignItems: 'center',
-    shadowColor: COLORS.accent,
-    shadowOpacity: 0.4,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-  },
-  saveButtonDisabled: {
-    opacity: 0.5,
-  },
-  saveButtonText: {
-    color: COLORS.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
   },
   emptyCard: {
     backgroundColor: COLORS.card,
@@ -1243,44 +1055,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: COLORS.textSecondary,
     paddingVertical: 32,
-  },
-  duplicateGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 20,
-  },
-  duplicateDay: {
-    width: '22%',
-    aspectRatio: 1,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.elevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  duplicateDaySelected: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  duplicateLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-  },
-  duplicateLabelSelected: {
-    color: COLORS.accent,
-  },
-  duplicateNumber: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  duplicateNumberSelected: {
-    color: COLORS.accent,
   },
 });
 
