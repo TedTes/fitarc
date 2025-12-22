@@ -467,9 +467,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
             </View>
           ))}
         </View>
-        <TouchableOpacity style={styles.addExerciseButton} onPress={() => setExerciseModalVisible(true)}>
-          <Text style={styles.addExerciseText}>+ Add exercise</Text>
-        </TouchableOpacity>
       </View>
     );
   };
@@ -477,7 +474,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   return (
 
     <View style={styles.container}>
-        <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
         <ScrollView
           stickyHeaderIndices={[0]}
           contentContainerStyle={styles.scrollContent}
@@ -537,6 +534,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </View>
         </ScrollView>
       </LinearGradient>
+      <TouchableOpacity
+        style={styles.fabButton}
+        onPress={() => setExerciseModalVisible(true)}
+        activeOpacity={0.9}
+      >
+        <Text style={styles.fabButtonText}>+</Text>
+      </TouchableOpacity>
 
       <Modal transparent animationType="fade" visible={exerciseModalVisible} onRequestClose={() => setExerciseModalVisible(false)}>
         <View style={styles.modalOverlay}>
@@ -840,19 +844,26 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#FF7B7B',
   },
-  addExerciseButton: {
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    paddingVertical: 16,
+  fabButton: {
+    position: 'absolute',
+    bottom: 30,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: COLORS.accent,
     alignItems: 'center',
-    marginTop: 16,
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  addExerciseText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
+  fabButtonText: {
+    fontSize: 32,
+    fontWeight: '300',
+    color: COLORS.textPrimary,
   },
   emptyCard: {
     backgroundColor: COLORS.card,
