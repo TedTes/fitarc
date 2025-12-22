@@ -6,7 +6,6 @@ import {
   PhasePlan,
   User,
   WorkoutSessionEntry,
-  DailyMealPlan,
   WorkoutLog,
   StrengthSnapshot,
 } from '../types/domain';
@@ -25,7 +24,6 @@ type ProgressScreenProps = {
   phase: PhasePlan;
   workoutDataVersion: number;
   workoutSessions: WorkoutSessionEntry[];
-  mealPlans: DailyMealPlan[];
   workoutLogs: WorkoutLog[];
   strengthSnapshots: StrengthSnapshot[];
 };
@@ -35,7 +33,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   phase,
   workoutDataVersion,
   workoutSessions: sessionFallback,
-  mealPlans: mealPlanFallback,
   workoutLogs: workoutLogFallback,
   strengthSnapshots: snapshotFallback,
 }) => {
@@ -61,16 +58,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     return Array.from(map.values());
   }, [sessionFallback, data?.sessions]);
 
-  const mergedMeals = useMemo(() => {
-    const map = new Map(
-      mealPlanFallback.map((plan) => [`${plan.phasePlanId}:${plan.date}`, plan])
-    );
-    (data?.mealPlans || []).forEach((plan) => {
-      map.set(`${plan.phasePlanId}:${plan.date}`, plan);
-    });
-    return Array.from(map.values());
-  }, [mealPlanFallback, data?.mealPlans]);
-
   const mergedWorkoutLogs = useMemo(() => {
     const map = new Map(
       workoutLogFallback.map((log) => [`${log.phasePlanId}:${log.date}`, log])
@@ -90,7 +77,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   }, [snapshotFallback, data?.strengthSnapshots]);
 
   const sessions = mergedSessions;
-  const mealPlans = mergedMeals;
   const workoutLogs = mergedWorkoutLogs;
   const strengthSnapshots = mergedSnapshots;
 
@@ -132,87 +118,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     ? Math.round((completedSessions / plannedSessions) * 100)
     : 0;
   
-  // Calculate streak
-  const calculateStreak = () => {
-    const logDates = [...new Set(workoutLogs.map(log => log.date))].sort();
-    if (logDates.length === 0) return 0;
-    
-    let streak = 0;
-    const todayStr = today.toISOString().split('T')[0];
-    let currentDate = new Date(today);
-    
-    for (let i = 0; i < 365; i++) {
-      const dateStr = currentDate.toISOString().split('T')[0];
-      if (logDates.includes(dateStr)) {
-        streak++;
-        currentDate.setDate(currentDate.getDate() - 1);
-      } else {
-        break;
-      }
-    }
-    return streak;
-  };
-  
-  const currentStreak = calculateStreak();
-  
-  // Generate last 7 days for weekly overview
-  const last7Days = useMemo(() => {
-    const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const iso = date.toISOString().split('T')[0];
-      const label = date.toLocaleDateString(undefined, { weekday: 'narrow' });
-      days.push({ iso, label });
-    }
-    return days;
-  }, []);
-  
-  const workoutCompletionMap = useMemo(() => {
-    const map: Record<string, boolean> = {};
-    workoutLogs.forEach(log => {
-      map[log.date] = true;
-    });
-    return map;
-  }, [workoutLogs]);
-  
-  const nutritionWindowCutoff = new Date();
-  nutritionWindowCutoff.setDate(nutritionWindowCutoff.getDate() - 6);
-  const recentMealPlans = mealPlans.filter(
-    (plan) => new Date(plan.date) >= nutritionWindowCutoff && plan.phasePlanId === resolvedPhase.id
-  );
-  const totalMeals = recentMealPlans.reduce((sum, plan) => sum + plan.meals.length, 0);
-  const completedMeals = recentMealPlans.reduce(
-    (sum, plan) => sum + plan.meals.filter((meal) => meal.completed).length,
-    0
-  );
-  const mealCompliance = totalMeals ? Math.round((completedMeals / totalMeals) * 100) : 0;
-  const mealTrackingRows = useMemo(() => {
-    return [...recentMealPlans]
-      .sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-      )
-      .map((plan) => {
-        const completed = plan.meals.filter((meal) => meal.completed).length;
-        const label = new Date(plan.date).toLocaleDateString(undefined, {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-        });
-        return {
-          date: plan.date,
-          label,
-          completed,
-          total: plan.meals.length,
-        };
-      });
-  }, [recentMealPlans]);
   const showSyncNotice = isLoading && sessions.length === 0;
-  const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
-  const tabOptions: { key: 'workouts' | 'meals'; label: string }[] = [
-    { key: 'workouts', label: 'Workouts' },
-    { key: 'meals', label: 'Meals' },
-  ];
 
   // Helper: Get heat color based on intensity
   const getHeatColor = (intensity: number) => {
@@ -222,56 +128,112 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     return '#2A2F4F';
   };
 
+  const [showAllVolume, setShowAllVolume] = useState(false);
+  const [volumeLayout, setVolumeLayout] = useState({ y: 0, height: 0 });
+  const maxVolumeRows = 6;
+  const hasExtraVolume = weeklyVolume.length > maxVolumeRows;
+  const visibleVolume = showAllVolume ? weeklyVolume : weeklyVolume.slice(0, maxVolumeRows);
+
+  const handleScroll = useCallback(
+    (event: any) => {
+      if (!showAllVolume) return;
+      const scrollY = event.nativeEvent.contentOffset.y;
+      const collapsePoint = volumeLayout.y + volumeLayout.height;
+      if (collapsePoint > 0 && scrollY > collapsePoint) {
+        setShowAllVolume(false);
+      }
+    },
+    [showAllVolume, volumeLayout]
+  );
+
   const renderStatsContent = () => (
     <>
-      {/* ✨ Weekly Activity Calendar */}
-      <View style={styles.weekOverview}>
-        {last7Days.map(day => {
-          const hasActivity = workoutCompletionMap[day.iso];
-          return (
-            <View key={day.iso} style={styles.dayCell}>
-              <Text style={styles.dayLabel}>{day.label}</Text>
-              <View style={[
-                styles.dayDot,
-                hasActivity && styles.dayDotActive
-              ]} />
-            </View>
-          );
-        })}
-      </View>
-
       {/* ✨ Overview Stats Card with Streak Banner */}
       <View style={styles.overviewCard}>
-        {currentStreak > 0 && (
-          <View style={styles.streakBanner}>
-            <Text style={styles.streakEmoji}>🔥</Text>
-            <View style={styles.streakInfo}>
-              <Text style={styles.streakCount}>{currentStreak} day streak</Text>
-              <Text style={styles.streakSubtext}>Keep it going!</Text>
-            </View>
-          </View>
-        )}
-        
-        <Text style={styles.overviewTitle}>Phase Overview</Text>
+        <Text style={styles.overviewTitle}>Plan Overview</Text>
         <View style={styles.overviewGrid}>
           <View style={styles.overviewItem}>
-            <Text style={styles.statEmoji}>📊</Text>
             <Text style={styles.overviewValue}>{progressPercent}%</Text>
             <Text style={styles.overviewLabel}>Complete</Text>
           </View>
           <View style={styles.overviewDivider} />
           <View style={styles.overviewItem}>
-            <Text style={styles.statEmoji}>📅</Text>
             <Text style={styles.overviewValue}>{daysActive}</Text>
             <Text style={styles.overviewLabel}>Days Active</Text>
           </View>
           <View style={styles.overviewDivider} />
           <View style={styles.overviewItem}>
-            <Text style={styles.statEmoji}>✅</Text>
             <Text style={styles.overviewValue}>{consistencyPercent}%</Text>
             <Text style={styles.overviewLabel}>Consistency</Text>
           </View>
         </View>
+      </View>
+
+      {/* ✨ Training Volume - Heat Map Style */}
+      <View
+        style={styles.compactCard}
+        onLayout={(event) =>
+          setVolumeLayout({
+            y: event.nativeEvent.layout.y,
+            height: event.nativeEvent.layout.height,
+          })
+        }
+      >
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Training Volume</Text>
+          <Text style={styles.cardSubtitle}>Last 4 weeks</Text>
+        </View>
+        
+        {visibleVolume.length > 0 ? (
+          <View style={styles.volumeBars}>
+            {visibleVolume.map((entry: VolumeEntryView) => {
+              const maxSets = weeklyVolume[0]?.sets || 1;
+              const percent = Math.max(0, Math.min(100, (entry.sets / maxSets) * 100));
+              const intensity = entry.sets / maxSets;
+              const barColor = getHeatColor(intensity);
+              return (
+                <View key={entry.group} style={styles.volumeRow}>
+                  <View style={styles.volumeRowHeader}>
+                    <Text style={styles.volumeLabel}>{entry.group}</Text>
+                    <Text style={styles.volumeValue}>{entry.sets}</Text>
+                  </View>
+                  <View style={styles.volumeTrack}>
+                    <View
+                      style={[
+                        styles.volumeFill,
+                        { width: `${percent}%`, backgroundColor: barColor },
+                      ]}
+                    />
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.emptyStateCard}>
+            <Text style={styles.emptyStateEmoji}>📊</Text>
+            <Text style={styles.emptyStateTitle}>Volume tracking starts soon</Text>
+            <Text style={styles.emptyStateText}>
+              Log workouts to see your training volume breakdown
+            </Text>
+            <View style={styles.emptyStateDots}>
+              <View style={styles.emptyStateDot} />
+              <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
+              <View style={styles.emptyStateDot} />
+            </View>
+          </View>
+        )}
+        {hasExtraVolume && !showAllVolume && (
+          <TouchableOpacity
+            style={styles.volumeToggle}
+            onPress={() => setShowAllVolume((prev) => !prev)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.volumeToggleText}>
+              Show more
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ✨ Strength Trends with Visual Sparklines */}
@@ -342,47 +304,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           </View>
         )}
       </View>
-
-      {/* ✨ Training Volume - Heat Map Style */}
-      <View style={styles.compactCard}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Training Volume</Text>
-          <Text style={styles.cardSubtitle}>Last 4 weeks</Text>
-        </View>
-        
-        {weeklyVolume.length > 0 ? (
-          <View style={styles.volumeHeatMap}>
-            {weeklyVolume.map((entry: VolumeEntryView) => {
-              const maxSets = weeklyVolume[0]?.sets || 1;
-              const intensity = entry.sets / maxSets;
-              const heatColor = getHeatColor(intensity);
-              
-              return (
-                <View key={entry.group} style={styles.volumeBlock}>
-                  <View style={[styles.volumeBar, { backgroundColor: heatColor }]}>
-                    <Text style={styles.volumeSetCount}>{entry.sets}</Text>
-                  </View>
-                  <Text style={styles.volumeLabel}>{entry.group}</Text>
-                </View>
-              );
-            })}
-          </View>
-        ) : (
-          <View style={styles.emptyStateCard}>
-            <Text style={styles.emptyStateEmoji}>📊</Text>
-            <Text style={styles.emptyStateTitle}>Volume tracking starts soon</Text>
-            <Text style={styles.emptyStateText}>
-              Log workouts to see your training volume breakdown
-            </Text>
-            <View style={styles.emptyStateDots}>
-              <View style={styles.emptyStateDot} />
-              <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
-              <View style={styles.emptyStateDot} />
-            </View>
-          </View>
-        )}
-      </View>
-
       {/* ✨ Movement Balance */}
       <View style={styles.compactCard}>
         <View style={styles.cardHeader}>
@@ -466,81 +387,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     </>
   );
 
-  const renderMealsDetailContent = () => (
-    <>
-      <View style={styles.compactCard}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Meal Tracking</Text>
-          <Text style={styles.cardSubtitle}>Last 7 days</Text>
-        </View>
-
-        {mealTrackingRows.length > 0 ? (
-          <>
-            <View style={styles.mealSummaryRow}>
-              <View style={styles.mealSummaryStat}>
-                <Text style={styles.mealSummaryValue}>{mealCompliance}%</Text>
-                <Text style={styles.mealSummaryLabel}>Compliance</Text>
-              </View>
-              <View style={styles.mealSummaryDivider} />
-              <View style={styles.mealSummaryStat}>
-                <Text style={styles.mealSummaryValue}>{completedMeals}</Text>
-                <Text style={styles.mealSummaryLabel}>Meals complete</Text>
-              </View>
-              <View style={styles.mealSummaryDivider} />
-              <View style={styles.mealSummaryStat}>
-                <Text style={styles.mealSummaryValue}>{totalMeals}</Text>
-                <Text style={styles.mealSummaryLabel}>Meals logged</Text>
-              </View>
-            </View>
-
-            {mealTrackingRows.map((row) => {
-              const percent = row.total ? Math.round((row.completed / row.total) * 100) : 0;
-              return (
-                <View key={row.date} style={styles.mealTrackingRow}>
-                  <View style={styles.mealTrackingInfo}>
-                    <Text style={styles.mealTrackingDay}>{row.label}</Text>
-                    <Text style={styles.mealTrackingMeta}>
-                      {row.completed}/{row.total} meals
-                    </Text>
-                  </View>
-                  <View style={styles.mealTrackingBar}>
-                    <View
-                      style={[
-                        styles.mealTrackingFill,
-                        { width: `${Math.min(100, percent)}%` },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.mealTrackingPercent}>{percent}%</Text>
-                </View>
-              );
-            })}
-          </>
-        ) : (
-          <View style={styles.emptyStateCard}>
-            <Text style={styles.emptyStateEmoji}>🍽️</Text>
-            <Text style={styles.emptyStateTitle}>Track your nutrition</Text>
-            <Text style={styles.emptyStateText}>
-              Log meals to see your daily adherence
-            </Text>
-            <View style={styles.emptyStateDots}>
-              <View style={styles.emptyStateDot} />
-              <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
-              <View style={styles.emptyStateDot} />
-            </View>
-          </View>
-        )}
-      </View>
-    </>
-  );
-
   return (
     <View style={styles.container}>
       <LinearGradient
         colors={['#0A0E27', '#151932', '#1E2340']}
         style={styles.gradient}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={styles.scrollContent} onScroll={handleScroll} scrollEventThrottle={16}>
           {/* ✨ Compact Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Progress</Text>
@@ -555,30 +408,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </Text>
           )}
 
-          {/* ✨ Compact Tab Switcher */}
-          <View style={styles.tabSwitcher}>
-            {tabOptions.map((tab) => (
-              <TouchableOpacity
-                key={tab.key}
-                style={[
-                  styles.tabButton,
-                  activeTab === tab.key && styles.tabButtonActive,
-                ]}
-                onPress={() => setActiveTab(tab.key)}
-              >
-                <Text
-                  style={[
-                    styles.tabButtonText,
-                    activeTab === tab.key && styles.tabButtonTextActive,
-                  ]}
-                >
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {activeTab === 'workouts' ? renderStatsContent() : renderMealsDetailContent()}
+          {renderStatsContent()}
         </ScrollView>
       </LinearGradient>
     </View>
@@ -615,129 +445,47 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
   },
   
-  // ✨ Tab Switcher
-  tabSwitcher: {
-    flexDirection: 'row',
-    backgroundColor: '#151932',
-    borderRadius: 12,
-    padding: 3,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  tabButtonActive: {
-    backgroundColor: '#6C63FF',
-  },
-  tabButtonText: {
-    color: '#A0A3BD',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  tabButtonTextActive: {
-    color: '#FFFFFF',
-  },
-  
-  // ✨ Weekly Activity Calendar
-  weekOverview: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#151932',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  dayCell: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  dayLabel: {
-    fontSize: 11,
-    color: '#A0A3BD',
-    fontWeight: '500',
-  },
-  dayDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#2A2F4F',
-  },
-  dayDotActive: {
-    backgroundColor: '#00F5A0',
-  },
-  
   // ✨ Overview Card with Streak Banner
   overviewCard: {
     backgroundColor: '#151932',
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: '#2A2F4F',
   },
-  streakBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.3)',
-  },
-  streakEmoji: {
-    fontSize: 24,
-    marginRight: 12,
-  },
-  streakInfo: {
-    flex: 1,
-  },
-  streakCount: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  streakSubtext: {
-    fontSize: 12,
-    color: '#A0A3BD',
-  },
   overviewTitle: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 16,
+    color: '#8B93B0',
+    marginBottom: 6,
   },
   overviewGrid: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
   overviewItem: {
     flex: 1,
     alignItems: 'center',
   },
-  statEmoji: {
-    fontSize: 20,
-    marginBottom: 8,
-  },
   overviewValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#00F5A0',
-    marginBottom: 4,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#C7CBFF',
+    marginBottom: 2,
   },
   overviewLabel: {
-    fontSize: 12,
-    color: '#A0A3BD',
+    fontSize: 9,
+    color: '#7B809B',
+    fontWeight: '500',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   overviewDivider: {
     width: 1,
-    height: 40,
-    backgroundColor: '#2A2F4F',
+    height: 32,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   
   // ✨ Compact Card Style
@@ -836,33 +584,55 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   
-  // ✨ Volume Heat Map
-  volumeHeatMap: {
+  // ✨ Volume Bars
+  volumeBars: {
+    gap: 12,
+  },
+  volumeRow: {
+    gap: 8,
+  },
+  volumeRowHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  volumeBlock: {
     alignItems: 'center',
-    width: '30%',
-  },
-  volumeBar: {
-    width: '100%',
-    height: 60,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  volumeSetCount: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#0A0E27',
+    justifyContent: 'space-between',
   },
   volumeLabel: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#A0A3BD',
-    textAlign: 'center',
+    fontWeight: '600',
+  },
+  volumeValue: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  volumeTrack: {
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: '#10142A',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  volumeFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  volumeToggle: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+  },
+  volumeToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#C7CBFF',
+    letterSpacing: 0.2,
   },
   
   // ✨ Movement Grid
@@ -955,83 +725,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: 'bold',
     color: '#00F5A0',
-  },
-  
-  // ✨ Meal Tracking
-  mealTrackingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 10,
-  },
-  mealTrackingInfo: {
-    width: 110,
-    gap: 2,
-  },
-  mealTrackingDay: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  mealTrackingMeta: {
-    fontSize: 12,
-    color: '#A0A3BD',
-  },
-  mealTrackingBar: {
-    flex: 1,
-    height: 10,
-    borderRadius: 6,
-    backgroundColor: '#10142A',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-    overflow: 'hidden',
-  },
-  mealTrackingFill: {
-    height: '100%',
-    borderRadius: 6,
-    backgroundColor: '#6C63FF',
-  },
-  mealTrackingPercent: {
-    width: 50,
-    textAlign: 'right',
-    fontSize: 13,
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  mealSummaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#10142A',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#1E2340',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 12,
-  },
-  mealSummaryStat: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 4,
-  },
-  mealSummaryValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  mealSummaryLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#A0A3BD',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  mealSummaryDivider: {
-    width: 1,
-    height: 36,
-    backgroundColor: '#1E2340',
-    marginHorizontal: 10,
   },
   
   // ✨ Empty States

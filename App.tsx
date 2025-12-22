@@ -530,7 +530,6 @@ function AppContent() {
                   phase={state.currentPhase}
                   workoutDataVersion={state.workoutDataVersion}
                   workoutSessions={state.workoutSessions}
-                  mealPlans={state.mealPlans}
                   workoutLogs={state.workoutLogs}
                   strengthSnapshots={state.strengthSnapshots}
                 />
