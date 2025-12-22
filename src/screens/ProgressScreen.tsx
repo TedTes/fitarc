@@ -80,19 +80,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const workoutLogs = mergedWorkoutLogs;
   const strengthSnapshots = mergedSnapshots;
 
-  const sessionDates = new Set(sessions.map((session) => session.date));
-  const today = new Date();
-  const phaseStart = new Date(resolvedPhase.startDate);
-  const daysActive = Math.max(
-    0,
-    Math.floor((today.getTime() - phaseStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
-  );
-  const daysLogged = sessionDates.size;
-  const expectedDays = Math.max(resolvedPhase.expectedWeeks * 7 || daysActive || 1, 1);
-  const progressPercent = expectedDays
-    ? Math.min(100, Math.round((daysLogged / expectedDays) * 100))
-    : 0;
-
   const strengthTrends = buildStrengthTrends(strengthSnapshots);
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs);
   const movementBalance = buildMovementBalanceSummary(workoutLogs);
@@ -112,12 +99,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     cutoff.setDate(cutoff.getDate() - 28);
     return new Date(log.date) >= cutoff;
   });
-  const completedSessions = recentSessions.length;
-  const plannedSessions = Math.max(12, completedSessions || 12);
-  const consistencyPercent = plannedSessions
-    ? Math.round((completedSessions / plannedSessions) * 100)
-    : 0;
-  
   const showSyncNotice = isLoading && sessions.length === 0;
 
   // Helper: Get heat color based on intensity
@@ -148,27 +129,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const renderStatsContent = () => (
     <>
-      {/* ✨ Overview Stats Card with Streak Banner */}
-      <View style={styles.overviewCard}>
-        <Text style={styles.overviewTitle}>Plan Overview</Text>
-        <View style={styles.overviewGrid}>
-          <View style={styles.overviewItem}>
-            <Text style={styles.overviewValue}>{progressPercent}%</Text>
-            <Text style={styles.overviewLabel}>Complete</Text>
-          </View>
-          <View style={styles.overviewDivider} />
-          <View style={styles.overviewItem}>
-            <Text style={styles.overviewValue}>{daysActive}</Text>
-            <Text style={styles.overviewLabel}>Days Active</Text>
-          </View>
-          <View style={styles.overviewDivider} />
-          <View style={styles.overviewItem}>
-            <Text style={styles.overviewValue}>{consistencyPercent}%</Text>
-            <Text style={styles.overviewLabel}>Consistency</Text>
-          </View>
-        </View>
-      </View>
-
       {/* ✨ Training Volume - Heat Map Style */}
       <View
         style={styles.compactCard}
@@ -443,49 +403,6 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: '#A0A3BD',
-  },
-  
-  // ✨ Overview Card with Streak Banner
-  overviewCard: {
-    backgroundColor: '#151932',
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-  },
-  overviewTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#8B93B0',
-    marginBottom: 6,
-  },
-  overviewGrid: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  overviewItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  overviewValue: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#C7CBFF',
-    marginBottom: 2,
-  },
-  overviewLabel: {
-    fontSize: 9,
-    color: '#7B809B',
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  overviewDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   
   // ✨ Compact Card Style

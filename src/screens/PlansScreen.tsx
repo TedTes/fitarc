@@ -39,13 +39,13 @@ const COLORS = {
   elevated: '#151A2E',
   surface: '#0C1021',
   textPrimary: '#FFFFFF',
-  textSecondary: '#A0A3BD',
-  textTertiary: '#7B80A0',
+  textSecondary: '#A3A7B7',
+  textTertiary: '#6B6F7B',
   accent: '#6C63FF',
   accentDim: 'rgba(108,99,255,0.15)',
   accentGlow: 'rgba(108,99,255,0.3)',
-  border: '#1E2340',
-  borderStrong: '#2A2F4F',
+  border: 'rgba(255,255,255,0.06)',
+  borderStrong: 'rgba(255,255,255,0.12)',
   success: '#00F5A0',
 };
 const MAX_LIBRARY_ITEMS = 30;
@@ -172,6 +172,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [isDirty, setIsDirty] = useState(false);
   const editingExercisesRef = useRef<WorkoutSessionExercise[]>([]);
   const lastExerciseCountRef = useRef(0);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastSyncedKeyRef = useRef<string | null>(null);
   const sessionFingerprint =
     selectedPlan?.session?.exercises
@@ -263,21 +264,15 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     return `${goal} · Week ${week}`;
   }, [phase]);
 
-  const selectedDayInfo = useMemo(() => {
+  const selectedDayMeta = useMemo(() => {
     if (!selectedPlan) return null;
-    const date = parseLocalDateFromYMD(selectedPlan.dateStr);
-    const fullDate = date.toLocaleDateString(undefined, { weekday: 'long' });
     const totalExercises = editingExercises.length;
     const completedCount = editingExercises.filter((exercise) => exercise.completed).length;
     const isFuture = selectedPlan.dateStr > todayKey;
-    const meta = !totalExercises
-      ? 'No workout scheduled'
-      : isFuture
-      ? 'Scheduled workout'
-      : completionMap[selectedPlan.dateStr]
-      ? 'Completed'
-      : `${completedCount}/${totalExercises} exercises`;
-    return { fullDate, meta };
+    if (!totalExercises) return 'No workout scheduled';
+    if (isFuture) return 'Scheduled workout';
+    if (completionMap[selectedPlan.dateStr]) return null;
+    return `${completedCount}/${totalExercises} exercises`;
   }, [selectedPlan, editingExercises, completionMap, todayKey]);
 
   const saveCurrentSession = useCallback(
@@ -293,6 +288,15 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     [onDeleteSession, onSaveCustomSession, persistSession]
   );
 
+  const enqueueSave = useCallback(
+    (plan: typeof selectedPlan, exercises: WorkoutSessionExercise[]) => {
+      const run = () => saveCurrentSession(plan, exercises);
+      saveQueueRef.current = saveQueueRef.current.then(run, run);
+      return saveQueueRef.current;
+    },
+    [saveCurrentSession]
+  );
+
   const flushAutosave = useCallback(async () => {
     if (autosaveTimeoutRef.current) {
       clearTimeout(autosaveTimeoutRef.current);
@@ -300,12 +304,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
     if (!selectedPlan || !isDirty) return;
     try {
-      await saveCurrentSession(selectedPlan, editingExercisesRef.current);
+      await enqueueSave(selectedPlan, editingExercisesRef.current);
       setIsDirty(false);
     } catch (err) {
       console.error('Failed to autosave workout session', err);
     }
-  }, [isDirty, saveCurrentSession, selectedPlan]);
+  }, [enqueueSave, isDirty, selectedPlan]);
 
   const handleSelectDate = async (dateStr: string) => {
     await flushAutosave();
@@ -317,7 +321,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setEditingExercises((prev) => {
       const next = [...prev, convertCatalogExercise(entry)];
       editingExercisesRef.current = next;
-      void saveCurrentSession(selectedPlan, next);
+      void enqueueSave(selectedPlan, next);
       return next;
     });
     setIsDirty(true);
@@ -329,7 +333,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       const next = prev.filter((_, idx) => idx !== index);
       editingExercisesRef.current = next;
       if (selectedPlan) {
-        void saveCurrentSession(selectedPlan, next);
+        void enqueueSave(selectedPlan, next);
       }
       return next;
     });
@@ -366,7 +370,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     autosaveTimeoutRef.current = setTimeout(() => {
       (async () => {
         try {
-          await saveCurrentSession(selectedPlan, editingExercisesRef.current);
+          await enqueueSave(selectedPlan, editingExercisesRef.current);
           setIsDirty(false);
         } catch (err) {
           console.error('Failed to autosave workout session', err);
@@ -449,14 +453,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           <Text style={styles.emptyIcon}>💪</Text>
           <Text style={styles.emptyTitle}>No workout planned</Text>
           <Text style={styles.emptySubtitle}>
-            Start today’s session from the Dashboard tab, then it will appear here.
+            Start today's session from the Dashboard tab, then it will appear here.
           </Text>
         </View>
       );
     }
 
     return (
-
       <View style={styles.workoutCard}>
         <View style={styles.exerciseList}>
           {editingExercises.map((exercise, idx) => (
@@ -481,26 +484,30 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                   )}
                 </View>
               </View>
-              <View style={styles.exerciseTags}>
-                <Text style={styles.exerciseTag}>{exercise.bodyParts.join(' • ') || 'Full body'}</Text>
-                <Text style={styles.exerciseTag}>{`${exercise.sets} sets × ${exercise.reps}`}</Text>
-              </View>
               <View style={styles.exerciseInputs}>
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Sets</Text>
                   <TextInput
-                    style={styles.inputField}
+                    style={[
+                      styles.inputField,
+                      exercise.completed && styles.inputFieldDisabled,
+                    ]}
                     keyboardType="number-pad"
                     value={String(exercise.sets ?? '')}
                     onChangeText={(value) => handleChangeSets(idx, value)}
+                    editable={!exercise.completed}
                   />
                 </View>
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Reps</Text>
                   <TextInput
-                    style={styles.inputField}
+                    style={[
+                      styles.inputField,
+                      exercise.completed && styles.inputFieldDisabled,
+                    ]}
                     value={exercise.reps}
                     onChangeText={(value) => handleChangeReps(idx, value)}
+                    editable={!exercise.completed}
                   />
                 </View>
               </View>
@@ -566,8 +573,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           <View style={styles.content}>
             <View style={styles.dayHeader}>
               <View style={styles.dayInfo}>
-                <Text style={styles.dayTitle}>{selectedDayInfo?.fullDate ?? '—'}</Text>
-                <Text style={styles.dayMeta}>{selectedDayInfo?.meta ?? 'No workout logged'}</Text>
+                {selectedDayMeta ? <Text style={styles.dayMeta}>{selectedDayMeta}</Text> : null}
               </View>
             </View>
             {renderSession()}
@@ -671,7 +677,7 @@ const styles = StyleSheet.create({
   stickyHeader: {
     paddingTop: 60,
     paddingBottom: 16,
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     backgroundColor: COLORS.bgPrimary,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
@@ -680,13 +686,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   headerTitle: {
     fontSize: 32,
-    fontWeight: '800',
+    fontWeight: '700',
     color: COLORS.textPrimary,
-    letterSpacing: -1,
   },
   phaseChip: {
     paddingHorizontal: 12,
@@ -724,17 +729,17 @@ const styles = StyleSheet.create({
   dayLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.textTertiary,
+    color: COLORS.textSecondary,
   },
   dayLabelActive: {
     color: COLORS.textPrimary,
   },
   dayDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: COLORS.success,
-    marginTop: 6,
+    marginTop: 4,
     opacity: 0,
   },
   dayDotVisible: {
@@ -753,8 +758,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   content: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingTop: 1,
   },
   dayHeader: {
     flexDirection: 'row',
@@ -765,41 +770,34 @@ const styles = StyleSheet.create({
   dayInfo: {
     flex: 1,
   },
-  dayTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-    letterSpacing: -0.3,
-  },
   dayMeta: {
     fontSize: 13,
     color: COLORS.textSecondary,
   },
   workoutCard: {
-    backgroundColor: COLORS.card,
+    backgroundColor: 'transparent',
     borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    padding: 0,
+    borderWidth: 0,
+    borderColor: 'transparent',
     marginBottom: 24,
   },
   exerciseList: {
-    gap: 12,
+    gap: 8,
   },
   exerciseCard: {
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: COLORS.elevated,
-    padding: 16,
-    gap: 10,
+    backgroundColor: COLORS.surface,
+    padding: 18,
+    gap: 12,
   },
   exerciseHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
     gap: 12,
   },
   exerciseHeaderInfo: {
@@ -828,24 +826,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  exerciseTags: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 12,
-  },
-  exerciseTag: {
-    backgroundColor: COLORS.surface,
-    color: COLORS.textTertiary,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    fontSize: 11,
-    fontWeight: '500',
-  },
   exerciseInputs: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   inputGroup: {
     flex: 1,
@@ -861,13 +844,16 @@ const styles = StyleSheet.create({
   inputField: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.card,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.elevated,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     color: COLORS.textPrimary,
     fontSize: 15,
     fontWeight: '600',
+  },
+  inputFieldDisabled: {
+    opacity: 0.5,
   },
   iconButton: {
     width: 36,
@@ -906,20 +892,18 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   emptyCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
+    backgroundColor: COLORS.surface,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 32,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
-    marginHorizontal: 24,
-    marginVertical: 32,
   },
   emptyCardCentered: {
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
+    backgroundColor: COLORS.surface,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 36,
@@ -929,13 +913,12 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   emptyIcon: {
-    fontSize: 56,
-    opacity: 0.3,
-    color: COLORS.textPrimary,
+    fontSize: 48,
+    marginBottom: 8,
   },
   emptyTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     color: COLORS.textPrimary,
   },
   emptySubtitle: {
@@ -943,40 +926,9 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textAlign: 'center',
   },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 16,
-    width: '100%',
-  },
-  actionButton: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryButton: {
-    backgroundColor: COLORS.accent,
-    shadowColor: COLORS.accent,
-    shadowOpacity: 0.35,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-  },
-  secondaryButton: {
-    backgroundColor: COLORS.elevated,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-  },
-  actionButtonText: {
-    color: COLORS.textPrimary,
-    fontSize: 15,
-    fontWeight: '600',
-  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
   },
   modalBackdropPress: {
@@ -986,9 +938,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 32,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 40,
     minHeight: '70%',
     maxHeight: '90%',
   },
@@ -1020,14 +972,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   closeButtonText: {
-    fontSize: 26,
+    fontSize: 28,
     color: COLORS.textSecondary,
+    fontWeight: '300',
   },
   searchInput: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.elevated,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.surface,
     paddingVertical: 14,
     paddingHorizontal: 16,
     color: COLORS.textPrimary,
@@ -1043,9 +996,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.surface,
@@ -1054,7 +1007,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   filterChipActive: {
-    backgroundColor: COLORS.accent,
+    backgroundColor: COLORS.accentDim,
     borderColor: COLORS.accent,
   },
   filterText: {
@@ -1063,7 +1016,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   filterTextActive: {
-    color: COLORS.textPrimary,
+    color: COLORS.accent,
   },
   catalogList: {
     flex: 1,
@@ -1084,6 +1037,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.textPrimary,
+    marginBottom: 4,
   },
   catalogMeta: {
     fontSize: 12,

@@ -28,22 +28,22 @@ type MenuScreenProps = {
   phase: PhasePlan | null;
 };
 
-const SCREEN_GRADIENT = ['#0A0A0A', '#0E1014', '#14161C'] as const;
+const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 const COLORS = {
-  bgPrimary: '#0A0A0A',
-  card: '#1A1C21',
-  elevated: '#1F2229',
-  surface: '#15171D',
+  bgPrimary: '#0A0E27',
+  card: '#101427',
+  elevated: '#151A2E',
+  surface: '#0C1021',
   textPrimary: '#FFFFFF',
-  textSecondary: '#A3A7B7',
-  textTertiary: '#6B6F7B',
+  textSecondary: '#A0A3BD',
+  textTertiary: '#7B80A0',
   accent: '#6C63FF',
   accentDim: 'rgba(108,99,255,0.15)',
-  accentGlow: 'rgba(108,99,255,0.2)',
+  accentGlow: 'rgba(108,99,255,0.3)',
   success: '#00F5A0',
   successDim: 'rgba(0,245,160,0.15)',
-  border: 'rgba(255,255,255,0.06)',
-  borderStrong: 'rgba(255,255,255,0.12)',
+  border: '#1E2340',
+  borderStrong: '#2A2F4F',
 };
 
 const parseLocalDateFromYMD = (dateStr: string) => {
@@ -414,7 +414,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           </View>
         </View>
 
-        {/* Template suggestions (read-only chips) */}
+        {/* Logged meal entries */}
         <View style={styles.loggedEntriesContainer}>
           {entries.map((entry) => (
             <View key={entry.id} style={styles.mealEntryCard}>
@@ -859,7 +859,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   mealsContainer: {
-    gap: 16,
+    gap: 8,
   },
   loadingContainer: {
     flexDirection: 'row',
@@ -874,7 +874,7 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     padding: 32,
-    borderRadius: 20,
+    borderRadius: 12,
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -897,11 +897,11 @@ const styles = StyleSheet.create({
   },
   mealGroupCard: {
     padding: 18,
-    borderRadius: 20,
+    borderRadius: 12,
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
-    gap: 14,
+    gap: 12,
   },
   mealGroupHeader: {
     flexDirection: 'row',
@@ -932,51 +932,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.textSecondary,
   },
-  templateItemsContainer: {
-    gap: 8,
-  },
-  templateLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  templateItems: {
-    gap: 6,
-  },
-  templateChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: COLORS.elevated,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-  },
-  templateBullet: {
-    color: COLORS.textTertiary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  templateText: {
-    color: COLORS.textTertiary,
-    fontSize: 13,
-    flex: 1,
-    fontStyle: 'italic',
-  },
   loggedEntriesContainer: {
-    gap: 8,
+    gap: 6,
   },
   mealEntryCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,245,160,0.06)',
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: COLORS.elevated,
     borderWidth: 1,
     borderColor: COLORS.borderStrong,
     gap: 12,
