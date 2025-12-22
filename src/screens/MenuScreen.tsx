@@ -976,9 +976,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 14,
     borderRadius: 12,
-    backgroundColor: COLORS.elevated,
+    backgroundColor: 'rgba(0,245,160,0.06)',
     borderWidth: 1,
-    borderColor: COLORS.success,
+    borderColor: COLORS.borderStrong,
     gap: 12,
   },
   mealEntryInfo: {

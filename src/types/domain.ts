@@ -9,17 +9,11 @@ export type TrainingSplit =
 
 export type EatingMode = 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
 
-export type MuscleGroup = 'chest' | 'back' | 'legs' | 'shoulders' | 'arms' | 'core';
+export type MuscleGroup = string;
 
-export type MovementPattern =
-  | 'squat'
-  | 'hinge'
-  | 'horizontal_push'
-  | 'vertical_push'
-  | 'horizontal_pull'
-  | 'vertical_pull';
+export type MovementPattern = string;
 
-export type LiftId = 'bench_press' | 'squat' | 'deadlift';
+export type LiftId = string;
 export type HabitType = 'steps' | 'sleep' | 'hydration';
 
 export type WorkoutSetEntry = {
@@ -35,6 +29,7 @@ export type WorkoutSessionExercise = {
   exerciseId?: string;
   name: string;
   bodyParts: MuscleGroup[];
+  movementPattern?: MovementPattern;
   sets?: number;
   reps?: string;
   completed?: boolean; 

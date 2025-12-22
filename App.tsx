@@ -484,10 +484,8 @@ function AppContent() {
                   user={state.user}
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
-                  workoutDataVersion={state.workoutDataVersion}
                   onSaveCustomSession={saveCustomWorkoutSession}
                   onDeleteSession={deleteWorkoutSession}
-                  onToggleExercise={toggleWorkoutExercise}
                 />
               ) : (
                 <TabPlaceholder

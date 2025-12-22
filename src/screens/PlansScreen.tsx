@@ -8,9 +8,16 @@ import {
   Modal,
   TextInput,
   Pressable,
+  AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { User, PhasePlan, WorkoutSessionEntry, WorkoutSessionExercise, MuscleGroup } from '../types/domain';
+import {
+  User,
+  PhasePlan,
+  WorkoutSessionEntry,
+  WorkoutSessionExercise,
+  MuscleGroup,
+} from '../types/domain';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { ExerciseCatalogEntry } from '../services/exerciseCatalogService';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
@@ -21,10 +28,8 @@ type PlansScreenProps = {
   user: User;
   phase: PhasePlan | null;
   workoutSessions: WorkoutSessionEntry[];
-  workoutDataVersion?: number;
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
   onDeleteSession?: (date: string) => void;
-  onToggleExercise?: (date: string, exerciseName: string) => void;
 };
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
@@ -104,7 +109,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   workoutSessions,
   onSaveCustomSession,
   onDeleteSession,
-  onToggleExercise,
 }) => {
 
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
@@ -166,6 +170,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const [editingExercises, setEditingExercises] = useState<WorkoutSessionExercise[]>([]);
   const [isDirty, setIsDirty] = useState(false);
+  const editingExercisesRef = useRef<WorkoutSessionExercise[]>([]);
+  const lastExerciseCountRef = useRef(0);
   const lastSyncedKeyRef = useRef<string | null>(null);
   const sessionFingerprint =
     selectedPlan?.session?.exercises
@@ -294,12 +300,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
     if (!selectedPlan || !isDirty) return;
     try {
-      await saveCurrentSession(selectedPlan, editingExercises);
+      await saveCurrentSession(selectedPlan, editingExercisesRef.current);
       setIsDirty(false);
     } catch (err) {
       console.error('Failed to autosave workout session', err);
     }
-  }, [editingExercises, isDirty, saveCurrentSession, selectedPlan]);
+  }, [isDirty, saveCurrentSession, selectedPlan]);
 
   const handleSelectDate = async (dateStr: string) => {
     await flushAutosave();
@@ -308,13 +314,25 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const handleAddExercise = (entry: ExerciseCatalogEntry) => {
     if (!selectedPlan) return;
-    setEditingExercises((prev) => [...prev, convertCatalogExercise(entry)]);
+    setEditingExercises((prev) => {
+      const next = [...prev, convertCatalogExercise(entry)];
+      editingExercisesRef.current = next;
+      void saveCurrentSession(selectedPlan, next);
+      return next;
+    });
     setIsDirty(true);
     setExerciseModalVisible(false);
   };
 
   const handleRemoveExercise = (index: number) => {
-    setEditingExercises((prev) => prev.filter((_, idx) => idx !== index));
+    setEditingExercises((prev) => {
+      const next = prev.filter((_, idx) => idx !== index);
+      editingExercisesRef.current = next;
+      if (selectedPlan) {
+        void saveCurrentSession(selectedPlan, next);
+      }
+      return next;
+    });
     setIsDirty(true);
   };
 
@@ -348,7 +366,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     autosaveTimeoutRef.current = setTimeout(() => {
       (async () => {
         try {
-          await saveCurrentSession(selectedPlan, editingExercises);
+          await saveCurrentSession(selectedPlan, editingExercisesRef.current);
           setIsDirty(false);
         } catch (err) {
           console.error('Failed to autosave workout session', err);
@@ -364,8 +382,30 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   }, [editingExercises, isDirty, saveCurrentSession, selectedPlan]);
 
   useEffect(() => {
+    editingExercisesRef.current = editingExercises;
+  }, [editingExercises]);
+
+  useEffect(() => {
+    if (lastExerciseCountRef.current === editingExercises.length) return;
+    lastExerciseCountRef.current = editingExercises.length;
+    if (!isDirty) return;
+    void flushAutosave();
+  }, [editingExercises.length, flushAutosave, isDirty]);
+
+  useEffect(() => {
     return () => {
       void flushAutosave();
+    };
+  }, [flushAutosave]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') {
+        void flushAutosave();
+      }
+    });
+    return () => {
+      subscription.remove();
     };
   }, [flushAutosave]);
 

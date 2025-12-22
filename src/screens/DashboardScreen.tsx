@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,7 @@ import {
   formatMacroSummaryLine,
   formatMealEntryMacros,
 } from '../utils/mealMacros';
+
 const MEAL_TYPE_EMOJI: Record<string, string> = {
   Breakfast: '🥚',
   Lunch: '🥗',
@@ -93,7 +94,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const { sessions: phaseSessions } = useWorkoutSessions(user.id, derivedPhaseId);
   const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const [isMarkingAll, setIsMarkingAll] = useState(false);
-  const [localCompleted, setLocalCompleted] = useState<Set<string>>(new Set());
+  const [localCompletionOverrides, setLocalCompletionOverrides] = useState<Record<string, boolean>>(
+    {}
+  );
+  const pendingToggleRef = useRef<Map<string, number>>(new Map());
+  const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastActiveTabRef = useRef<'workouts' | 'meals'>('workouts');
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const activePhaseId = resolvedPhase?.id ?? null;
@@ -114,11 +120,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     `${exercise.name}-${exercise.sets ?? ''}-${exercise.reps ?? ''}`;
 
   useEffect(() => {
-    setLocalCompleted(new Set());
+    setLocalCompletionOverrides({});
+    pendingToggleRef.current.clear();
+    if (toggleFlushTimeoutRef.current) {
+      clearTimeout(toggleFlushTimeoutRef.current);
+      toggleFlushTimeoutRef.current = null;
+    }
   }, [todaySession?.id]);
 
-  const visibleWorkoutCards = displayExercises.filter(
-    (exercise) => !exercise.completed && !localCompleted.has(getExerciseKey(exercise))
+  const isExerciseMarked = useCallback(
+    (exercise: WorkoutSessionEntry['exercises'][number]) => {
+      const key = getExerciseKey(exercise);
+      const override = localCompletionOverrides[key];
+      return override ?? exercise.completed;
+    },
+    [localCompletionOverrides]
+  );
+
+  const visibleWorkoutCards = useMemo(
+    () => displayExercises.filter((exercise) => !isExerciseMarked(exercise)),
+    [displayExercises, isExerciseMarked]
   );
   
   const hasSyncedWorkout = displayExercises.length > 0;
@@ -170,7 +191,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!selectedActivityMeta) return;
     const timeout = setTimeout(() => {
       setSelectedActivityMeta(null);
-    }, 2500); // Increased timeout for better UX
+    }, 2500);
     return () => clearTimeout(timeout);
   }, [selectedActivityMeta]);
 
@@ -195,6 +216,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
     return columns;
   }, [activityCells]);
+
 
   const getActivityLevelStyle = (level: number) => {
     if (level >= 3) return styles.activityLevel3;
@@ -232,16 +254,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       .filter((group) => group.entries.length > 0);
   }, [baseMealTypes, mealsByType]);
 
-  const dayMealsCompleted = Boolean(dailyMeal?.completed);
-
   const canLogWorkouts = !!resolvedPhase && !!onToggleWorkoutExercise;
   const totalWorkoutCount = displayExercises.length;
-  const completedWorkoutCount = totalWorkoutCount - visibleWorkoutCards.length;
   const pendingWorkoutCount = visibleWorkoutCards.length;
-  const allWorkoutsCompleted = totalWorkoutCount > 0 && completedWorkoutCount === totalWorkoutCount;
+  const allWorkoutsCompleted = totalWorkoutCount > 0 && pendingWorkoutCount === 0;
 
   const totalMealCount = mealGroups.length;
-  const completedMealCount = dayMealsCompleted ? totalMealCount : 0;
 
   const showWorkoutCompletionButton =
     activeTab === 'workouts' &&
@@ -250,18 +268,60 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     hasSyncedWorkout &&
     pendingWorkoutCount > 0;
 
-  const handleSwipeExercise = (exerciseName: string) => {
-    if (!canLogWorkouts || !onToggleWorkoutExercise) return;
-    onToggleWorkoutExercise(todayStr, exerciseName);
-    setLocalCompleted((prev) => {
-      const next = new Set(prev);
+  const flushPendingToggles = useCallback(async () => {
+    if (toggleFlushTimeoutRef.current) {
+      clearTimeout(toggleFlushTimeoutRef.current);
+      toggleFlushTimeoutRef.current = null;
+    }
+    if (!onToggleWorkoutExercise) return;
+    const pending = pendingToggleRef.current;
+    if (!pending.size) return;
+    const entries = Array.from(pending.entries());
+    pending.clear();
+    await Promise.all(
+      entries
+        .filter(([, count]) => count % 2 === 1)
+        .map(([exerciseName]) => onToggleWorkoutExercise(todayStr, exerciseName))
+    );
+  }, [onToggleWorkoutExercise, todayStr]);
+
+  const handleToggleExercise = (exerciseName: string) => {
+    if (!canLogWorkouts) return;
+    setLocalCompletionOverrides((prev) => {
       const target = displayExercises.find((exercise) => exercise.name === exerciseName);
-      if (target) {
-        next.add(getExerciseKey(target));
+      if (!target) return prev;
+      const key = getExerciseKey(target);
+      const current = prev[key] ?? target.completed;
+      const nextValue = !current;
+      if (nextValue === target.completed) {
+        const { [key]: _removed, ...rest } = prev;
+        return rest;
       }
-      return next;
+      return { ...prev, [key]: nextValue };
     });
+
+    const pending = pendingToggleRef.current;
+    pending.set(exerciseName, (pending.get(exerciseName) ?? 0) + 1);
+    if (toggleFlushTimeoutRef.current) {
+      clearTimeout(toggleFlushTimeoutRef.current);
+    }
+    toggleFlushTimeoutRef.current = setTimeout(() => {
+      void flushPendingToggles();
+    }, 700);
   };
+
+  useEffect(() => {
+    if (lastActiveTabRef.current !== activeTab && activeTab === 'meals') {
+      void flushPendingToggles();
+    }
+    lastActiveTabRef.current = activeTab;
+  }, [activeTab, flushPendingToggles]);
+
+  useEffect(() => {
+    return () => {
+      void flushPendingToggles();
+    };
+  }, [flushPendingToggles]);
 
   const handleMarkAllComplete = async () => {
     if (isMarkingAll) return;
@@ -278,9 +338,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         if (onMarkAllWorkoutsComplete) {
           await onMarkAllWorkoutsComplete(todayStr);
         }
-        const next = new Set(localCompleted);
-        visibleWorkoutCards.forEach((exercise) => next.add(getExerciseKey(exercise)));
-        setLocalCompleted(next);
+        setLocalCompletionOverrides((prev) => {
+          const next = { ...prev };
+          visibleWorkoutCards.forEach((exercise) => {
+            next[getExerciseKey(exercise)] = true;
+          });
+          return next;
+        });
       } else if (toggleDayCompleted) {
         await toggleDayCompleted(true);
       }
@@ -462,63 +526,47 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </View>
       ) : (
         <View style={styles.verticalList}>
-          {visibleWorkoutCards.map((exercise, index) => {
-            const isCompleted = exercise.completed;
+          {displayExercises.map((exercise, index) => {
+            const isMarked = isExerciseMarked(exercise);
             return (
               <LinearGradient
                 key={`${todayStr}-${exercise.name}-${index}`}
-                colors={isCompleted ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
-                style={[styles.exerciseCard, isCompleted && styles.exerciseCardCompleted]}
+                colors={isMarked ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
+                style={[
+                  styles.exerciseCard,
+                  isMarked && styles.exerciseCardCompleted,
+                ]}
               >
-                {isCompleted && <View style={styles.completedTopBar} />}
+                {isMarked && <View style={styles.completedTopBar} />}
                 
-                <View style={styles.cardHeader}>
-                  <View style={styles.exerciseBadge}>
-                    <Text style={styles.exerciseBadgeText}>#{index + 1}</Text>
-                  </View>
-                </View>
+                <View style={styles.exerciseCardRow}>
+                  <View style={styles.exerciseCardMain}>
+                    <View style={styles.cardHeader}>
+                      <View style={styles.exerciseHeaderText}>
+                        <Text style={styles.exerciseName}>{exercise.name}</Text>
+                        <Text style={styles.exerciseMetaLine}>
+                          {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
+                        </Text>
+                      </View>
 
-                <Text style={styles.exerciseName}>{exercise.name}</Text>
-                <Text style={styles.exerciseBodyParts}>
-                  {formatBodyPartList(exercise.bodyParts)}
-                </Text>
-
-                <View style={styles.metaRow}>
-                  <View style={styles.exerciseStats}>
-                    <View style={styles.inlineStat}>
-                      <Text style={styles.inlineStatValue}>
-                        {exercise.sets ?? '—'}
-                      </Text>
-                      <Text style={styles.inlineStatLabel}>sets</Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.checkBox,
+                          !canLogWorkouts && styles.checkBoxDisabled,
+                          isMarked && styles.checkBoxActive,
+                        ]}
+                        onPress={() => canLogWorkouts && handleToggleExercise(exercise.name)}
+                        disabled={!canLogWorkouts}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.checkBoxText}>{isMarked ? '✓' : ''}</Text>
+                      </TouchableOpacity>
                     </View>
-                    <Text style={styles.inlineDot}>•</Text>
-                    <View style={styles.inlineStat}>
-                      <Text style={styles.inlineStatValue}>
-                        {exercise.reps?? '—'}
-                      </Text>
-                      <Text style={styles.inlineStatLabel}>reps</Text>
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.exerciseDoneButtonInline,
-                      !canLogWorkouts && styles.exerciseDoneButtonDisabled,
-                      isCompleted && styles.exerciseDoneButtonActive,
-                    ]}
-                    onPress={() => canLogWorkouts && handleSwipeExercise(exercise.name)}
-                    disabled={!canLogWorkouts || isCompleted}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.exerciseDoneButtonText,
-                        isCompleted && styles.exerciseDoneButtonTextActive,
-                      ]}
-                    >
-                      Done
+                    <Text style={styles.exerciseBodyParts}>
+                      {formatBodyPartList(exercise.bodyParts)}
                     </Text>
-                  </TouchableOpacity>
+                  </View>
+
                 </View>
               </LinearGradient>
             );
@@ -540,7 +588,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>⏳</Text>
           <Text style={styles.emptyTitle}>Loading meals</Text>
-          <Text style={styles.emptyText}>Fetching today’s plan.</Text>
+          <Text style={styles.emptyText}>Fetching today's plan.</Text>
         </View>
       ) : mealGroups.length === 0 ? (
         <View style={styles.emptyCard}>
@@ -649,47 +697,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </Text>
             </TouchableOpacity>
           </View>
-
-          <View style={styles.progressChip}>
-            <View style={styles.progressLeft}>
-              <View style={styles.progressDot} />
-              <Text style={styles.progressText}>
-                {activeTab === 'workouts'
-                  ? `${completedWorkoutCount}/${totalWorkoutCount} workouts`
-                  : `${completedMealCount}/${totalMealCount} meals`}
-              </Text>
-            </View>
-            {showWorkoutCompletionButton ? (
-              <TouchableOpacity 
-                style={[
-                  styles.markAllFloater, 
-                  (isMarkingAll || allWorkoutsCompleted) && styles.markAllButtonDisabled
-                ]} 
-                onPress={handleMarkAllComplete}
-                disabled={isMarkingAll || allWorkoutsCompleted}
-              >
-                <Text style={styles.markAllFloaterText}>
-                  {allWorkoutsCompleted ? 'Done' : 'Complete'}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              activeTab === 'meals' && totalMealCount > 0 && (
-                <TouchableOpacity 
-                  style={[styles.markAllButton, isMarkingAll && styles.markAllButtonDisabled]} 
-                  onPress={handleMarkAllComplete}
-                  disabled={isMarkingAll}
-                >
-                  <Text style={styles.markAllButtonText}>
-                    {isMarkingAll 
-                      ? '...' 
-                      : activeTab === 'workouts' 
-                        ? 'Mark All' 
-                        : 'Log All'}
-                  </Text>
-                </TouchableOpacity>
-              )
-            )}
-         </View>
         </View>
 
         <ScrollView
@@ -700,6 +707,29 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         >
           {activeTab === 'workouts' ? renderWorkoutsSection() : renderMealsSection()}
         </ScrollView>
+        {activeTab === 'workouts' && showWorkoutCompletionButton && (
+          <TouchableOpacity
+            style={[
+              styles.fabButton,
+              (isMarkingAll || allWorkoutsCompleted) && styles.fabButtonDisabled,
+            ]}
+            onPress={handleMarkAllComplete}
+            disabled={isMarkingAll || allWorkoutsCompleted}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.fabButtonText}>✓</Text>
+          </TouchableOpacity>
+        )}
+        {activeTab === 'meals' && totalMealCount > 0 && (
+          <TouchableOpacity
+            style={[styles.fabButton, isMarkingAll && styles.fabButtonDisabled]}
+            onPress={handleMarkAllComplete}
+            disabled={isMarkingAll}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.fabButtonText}>✓</Text>
+          </TouchableOpacity>
+        )}
       </LinearGradient>
     </View>
   );
@@ -857,7 +887,6 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 5,
   },
-
   activityDetailCard: {
     position: 'absolute',
     width: 100,
@@ -886,7 +915,31 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(108, 99, 255, 0.4)',
     transform: [{ rotate: '45deg' }],
   },
-  
+  activityTooltipCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  activityCompactStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  activityCompactIcon: {
+    fontSize: 12,
+  },
+  activityCompactValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+  },
+  activityCompactDivider: {
+    width: 1,
+    height: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
   tabs: {
     flexDirection: 'row',
     backgroundColor: 'rgba(30, 35, 64, 0.4)',
@@ -915,73 +968,29 @@ const styles = StyleSheet.create({
   tabTextActive: {
     color: '#FFFFFF',
   },
-  progressChip: {
-    flexDirection: 'row',
+  fabButton: {
+    position: 'absolute',
+    bottom: 30,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#00F5A0',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingLeft: 18,
-    paddingRight: 12,
-    backgroundColor: 'rgba(30, 35, 64, 0.6)',
-    borderWidth: 1,
-    borderColor: 'rgba(139, 147, 176, 0.3)',
-    borderRadius: 20,
-    minHeight: 48,
-  },
-  progressLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flex: 1,
-  },
-  progressDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#6C63FF',
-  },
-  progressText: {
-    fontSize: 13,
-    color: '#8B93B0',
-    fontWeight: '500',
-    flex: 1,
-  },
-  markAllButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: '#6C63FF',
-    borderRadius: 12,
-    shadowColor: '#6C63FF',
+    justifyContent: 'center',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 8,
   },
-  markAllButtonDisabled: {
+  fabButtonDisabled: {
     opacity: 0.5,
   },
-  markAllButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-  },
-  markAllFloater: {
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    backgroundColor: '#00F5A0',
-    borderRadius: 20,
-    shadowColor: '#00F5A0',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  markAllFloaterText: {
-    fontSize: 12,
-    fontWeight: '700',
+  fabButtonText: {
+    fontSize: 28,
+    fontWeight: '800',
     color: '#0A0E27',
-    letterSpacing: 0.3,
   },
   section: {
     gap: 16,
@@ -1035,12 +1044,23 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   exerciseCard: {
-    borderRadius: 20,
+    borderRadius: 4,
     padding: 20,
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.2)',
     position: 'relative',
     overflow: 'hidden',
+    aspectRatio: 5,
+    width: '100%',
+  },
+  exerciseCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  exerciseCardMain: {
+    flex: 1,
+    minWidth: 0,
   },
   exerciseCardCompleted: {
     borderColor: 'rgba(0, 245, 160, 0.4)',
@@ -1055,87 +1075,53 @@ const styles = StyleSheet.create({
   },
   cardHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    gap: 12,
+    marginBottom: 8,
   },
-  exerciseBadge: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: '#6C63FF',
-    borderRadius: 8,
+  exerciseHeaderText: {
+    flex: 1,
+    minWidth: 0,
   },
-  exerciseBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  checkBox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.4)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkBoxActive: {
+    borderColor: 'rgba(0,245,160,0.6)',
+    backgroundColor: 'rgba(0,245,160,0.15)',
+  },
+  checkBoxDisabled: {
+    opacity: 0.4,
+  },
+  checkBoxText: {
+    color: '#00F5A0',
+    fontSize: 14,
+    fontWeight: '800',
   },
   exerciseName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 6,
+    marginBottom: 4,
+  },
+  exerciseMetaLine: {
+    fontSize: 12,
+    color: '#8B93B0',
+    marginBottom: 8,
   },
   exerciseBodyParts: {
     fontSize: 13,
     color: '#A0A3BD',
     marginBottom: 12,
   },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 12,
-    gap: 16,
-  },
-  exerciseStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
-  },
-  inlineStat: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 4,
-  },
-  inlineStatValue: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  inlineStatLabel: {
-    fontSize: 12,
-    color: '#8B93B0',
-  },
-  inlineDot: {
-    color: '#8B93B0',
-    fontSize: 12,
-  },
-  exerciseDoneButtonInline: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  exerciseDoneButtonDisabled: {
-    opacity: 0.4,
-  },
-  exerciseDoneButtonActive: {
-    borderColor: 'rgba(0,245,160,0.4)',
-    backgroundColor: 'rgba(0,245,160,0.1)',
-  },
-  exerciseDoneButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    letterSpacing: 0.3,
-    fontSize: 12,
-  },
-  exerciseDoneButtonTextActive: {
-    color: '#00F5A0',
-  },
+  // MEAL STYLES
   mealCard: {
     borderRadius: 20,
     padding: 20,
@@ -1163,28 +1149,6 @@ const styles = StyleSheet.create({
   mealMeta: {
     fontSize: 13,
     color: '#8B93B0',
-  },
-  mealTemplateList: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.04)',
-    gap: 6,
-  },
-  mealTemplateItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  mealTemplateBullet: {
-    color: '#6B7390',
-    fontWeight: '700',
-  },
-  mealTemplateText: {
-    flex: 1,
-    color: '#8B93B0',
-    fontStyle: 'italic',
-    fontSize: 13,
   },
   mealEntry: {
     paddingTop: 12,
@@ -1219,36 +1183,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.3,
   },
-  mealEmptyText: {
-    fontSize: 13,
-    color: '#8B93B0',
-  },
-
-  activityTooltipCompact: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  activityCompactStat: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  activityCompactIcon: {
-    fontSize: 12,
-  },
-  activityCompactValue: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: -0.5,
-  },
-  activityCompactDivider: {
-    width: 1,
-    height: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  
-
 });
