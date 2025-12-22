@@ -98,46 +98,6 @@ const buildDateRange = (start: string, end: string): string[] => {
   return results;
 };
 
-/**
- * Basic insert helpers
- */
-
-type CreateSessionInput = {
-  userId: string;
-  performedAt: string; // ISO string
-  planId?: string | null;
-  mood?: string;
-  perceivedExertion?: number;
-  notes?: string;
-};
-
-export const createWorkoutSession = async ({
-  userId,
-  performedAt,
-  planId,
-  mood,
-  perceivedExertion,
-  notes,
-}: CreateSessionInput): Promise<SupabaseWorkoutSession> => {
-  const { data, error } = await supabase
-    .from('fitarc_workout_sessions')
-    .insert({
-      user_id: userId,
-      performed_at: performedAt,
-      plan_id: planId ?? null,
-      mood: mood ?? null,
-      perceived_exertion: perceivedExertion ?? null,
-      notes: notes ?? null,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SupabaseWorkoutSession;
-};
 
 type LogWorkoutSetInput = {
   sessionExerciseId: string;

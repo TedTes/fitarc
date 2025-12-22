@@ -72,7 +72,6 @@ function AppContent() {
     addPhotoCheckin,
     startPhase,
     toggleWorkoutExercise,
-    createWorkoutSession,
     saveCustomWorkoutSession,
     deleteWorkoutSession,
     markAllWorkoutsComplete,

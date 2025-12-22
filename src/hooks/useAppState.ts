@@ -12,7 +12,6 @@ import {
   DailyMealPlan,
 } from '../types/domain';
 import {
-  createSessionForDate,
   sessionToWorkoutLog,
 } from '../utils/workoutPlanner';
 import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
@@ -66,21 +65,6 @@ const upsertMealPlan = (plans: DailyMealPlan[], plan: DailyMealPlan): DailyMealP
     return updated;
   }
   return [...plans, plan];
-};
-
-const getOrCreateSessionEntry = (
-  sessions: WorkoutSessionEntry[],
-  user: User,
-  phasePlanId: string,
-  date: string
-): WorkoutSessionEntry => {
-  const existing = sessions.find(
-    (session) => session.date === date && session.phasePlanId === phasePlanId
-  );
-  if (existing) {
-    return existing;
-  }
-  return createSessionForDate(user, phasePlanId, date);
 };
 
 const getOrCreateMealPlan = (
@@ -301,41 +285,6 @@ export const useAppState = () => {
     },
     [loadWorkoutSessionsFromSupabase]);
 
-
-  const reorderWorkoutExercise = useCallback(
-    async (date: string, fromIndex: number, toIndex: number) => {
-      const current = stateRef.current;
-      if (!current || !current.currentPhase || !current.user) return;
-      const session = getOrCreateSessionEntry(
-        current.workoutSessions,
-        current.user,
-        current.currentPhase.id,
-        date
-      );
-      const length = session.exercises.length;
-      if (length === 0) return;
-      if (fromIndex < 0 || fromIndex >= length) return;
-      const rawTarget = Math.max(0, Math.min(toIndex, length - 1));
-      if (fromIndex === rawTarget) return;
-      const exercises = [...session.exercises];
-      const [moved] = exercises.splice(fromIndex, 1);
-      if (!moved) return;
-      const adjustedTarget = fromIndex < rawTarget ? rawTarget - 1 : rawTarget;
-      exercises.splice(adjustedTarget, 0, moved);
-      const updatedSession: WorkoutSessionEntry = {
-        ...session,
-        exercises,
-      };
-      const updatedSessions = upsertWorkoutSession(current.workoutSessions, updatedSession);
-      updateState((prev) => ({
-        ...prev,
-        workoutSessions: updatedSessions,
-        workoutDataVersion: nextWorkoutVersion(prev),
-      }));
-    },
-    [updateState]
-  );
-
   const toggleMealCompletion = useCallback(
     async (date: string, mealTitle: string) => {
       const current = stateRef.current;
@@ -369,38 +318,6 @@ export const useAppState = () => {
       updateState((prev) => ({
         ...prev,
         nextPhotoReminder: date,
-      }));
-    },
-    [updateState]
-  );
-
-  const createWorkoutSession = useCallback(
-    async (date: string) => {
-      const current = stateRef.current;
-      if (!current || !current.currentPhase || !current.user) return;
-      const existing = current.workoutSessions.find(
-        (session) =>
-          session.phasePlanId === current.currentPhase!.id && session.date === date
-      );
-      if (existing) return;
-      
-      // Generate workout exercises based on user's training split
-      const sessionEntry = createSessionForDate(current.user, current.currentPhase.id, date);
-      
-      // Save to Supabase database
-      const remoteSession = await upsertWorkoutSessionWithExercises({
-        userId: current.user.id,
-        planId: current.currentPhase.id,
-        date,
-        exercises: sessionEntry.exercises,
-      });
-
-      // Update local state with the session from Supabase (has proper IDs)
-      updateState((prev) => ({
-        ...prev,
-        workoutSessions: upsertWorkoutSession(prev.workoutSessions, remoteSession),
-        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(remoteSession)),
-        workoutDataVersion: nextWorkoutVersion(prev),
       }));
     },
     [updateState]
@@ -476,12 +393,10 @@ export const useAppState = () => {
     completePhase,
     clearAllData,
     toggleWorkoutExercise,
-    reorderWorkoutExercise,
     schedulePhotoReminder,
     toggleMealCompletion,
     loadWorkoutSessionsFromSupabase,
     loadMealPlansFromSupabase,
-    createWorkoutSession,
     saveCustomWorkoutSession,
     deleteWorkoutSession,
     hydrateFromRemote,
