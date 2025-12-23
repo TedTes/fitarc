@@ -18,11 +18,13 @@ import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
 import { createMealPlanForDate } from '../utils/dietPlanner';
 import {
   fetchWorkoutSessionEntries,
-  upsertWorkoutSessionWithExercises,
   deleteWorkoutSessionRemote,
   toggleExerciseAndCheckSession, 
   markAllExercisesComplete,
   ensureSetsForExercises,
+  addExerciseToSession,
+  updateSessionExercises,
+  deleteWorkoutSessionExercise,
 } from '../services/supabaseWorkoutService';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
@@ -327,24 +329,69 @@ export const useAppState = () => {
     async (date: string, exercises: WorkoutSessionExercise[]) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
-      const normalizedExercises = exercises.map((exercise) => ({
+      const normalizedExercises = exercises.map((exercise, index) => ({
         ...exercise,
         bodyParts: exercise.bodyParts,
         sets: exercise.sets ?? 4,
         reps: exercise.reps ?? '8-12',
+        displayOrder: exercise.displayOrder ?? index + 1,
       }));
+      const session = current.workoutSessions.find(
+        (entry) => entry.phasePlanId === current.currentPhase!.id && entry.date === date
+      );
+      if (!session) return;
 
-      const remoteSession = await upsertWorkoutSessionWithExercises({
-        userId: current.user.id,
-        planId: current.currentPhase.id,
-        date,
+      await updateSessionExercises({
+        sessionId: session.id,
         exercises: normalizedExercises,
       });
 
+      const updatedSession: WorkoutSessionEntry = {
+        ...session,
+        exercises: normalizedExercises,
+      };
+
       updateState((prev) => ({
         ...prev,
-        workoutSessions: upsertWorkoutSession(prev.workoutSessions, remoteSession),
-        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(remoteSession)),
+        workoutSessions: upsertWorkoutSession(prev.workoutSessions, updatedSession),
+        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(updatedSession)),
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
+    },
+    [updateState]
+  );
+
+  const addWorkoutExercise = useCallback(
+    async (sessionId: string, exercise: WorkoutSessionExercise) => {
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
+      const session = current.workoutSessions.find((entry) => entry.id === sessionId);
+      const displayOrder = exercise.displayOrder ?? (session?.exercises.length ?? 0) + 1;
+      const sessionExerciseId = await addExerciseToSession({
+        sessionId,
+        exercise,
+        displayOrder,
+      });
+      return sessionExerciseId;
+    },
+    []
+  );
+
+  const deleteWorkoutExercise = useCallback(
+    async (sessionId: string, sessionExerciseId: string) => {
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
+      await deleteWorkoutSessionExercise(sessionExerciseId);
+      const session = current.workoutSessions.find((entry) => entry.id === sessionId);
+      if (!session) return;
+      const updatedSession: WorkoutSessionEntry = {
+        ...session,
+        exercises: session.exercises.filter((exercise) => exercise.id !== sessionExerciseId),
+      };
+      updateState((prev) => ({
+        ...prev,
+        workoutSessions: upsertWorkoutSession(prev.workoutSessions, updatedSession),
+        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(updatedSession)),
         workoutDataVersion: nextWorkoutVersion(prev),
       }));
     },
@@ -398,6 +445,8 @@ export const useAppState = () => {
     loadWorkoutSessionsFromSupabase,
     loadMealPlansFromSupabase,
     saveCustomWorkoutSession,
+    addWorkoutExercise,
+    deleteWorkoutExercise,
     deleteWorkoutSession,
     hydrateFromRemote,
     markAllWorkoutsComplete,

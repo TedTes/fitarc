@@ -73,6 +73,8 @@ function AppContent() {
     startPhase,
     toggleWorkoutExercise,
     saveCustomWorkoutSession,
+    addWorkoutExercise,
+    deleteWorkoutExercise,
     deleteWorkoutSession,
     markAllWorkoutsComplete,
     clearAllData,
@@ -484,6 +486,8 @@ function AppContent() {
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
                   onSaveCustomSession={saveCustomWorkoutSession}
+                  onAddExercise={addWorkoutExercise}
+                  onDeleteExercise={deleteWorkoutExercise}
                   onDeleteSession={deleteWorkoutSession}
                 />
               ) : (

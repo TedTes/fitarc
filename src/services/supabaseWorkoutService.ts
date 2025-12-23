@@ -359,6 +359,126 @@ export const upsertWorkoutSessionWithExercises = async ({
   return mapSessionRow(sessionRes.data, planId, getAppTimeZone());
 };
 
+type AddExerciseToSessionInput = {
+  sessionId: string;
+  exercise: WorkoutSessionExercise;
+  displayOrder: number;
+};
+
+export const addExerciseToSession = async ({
+  sessionId,
+  exercise,
+  displayOrder,
+}: AddExerciseToSessionInput): Promise<string> => {
+  const insertExerciseRes = await supabase
+    .from('fitarc_workout_session_exercises')
+    .insert({
+      session_id: sessionId,
+      exercise_id: exercise.exerciseId ?? null,
+      user_exercise_id: null,
+      display_order: displayOrder,
+      notes: exercise.reps ?? null,
+    })
+    .select('id')
+    .single();
+  if (insertExerciseRes.error) throw insertExerciseRes.error;
+
+  const sessionExerciseId = insertExerciseRes.data.id;
+  const repsValue = parseRepsValue(exercise.reps ?? '');
+  const setCount = Math.max(0, exercise.sets ?? 0);
+  if (setCount > 0) {
+    const payload = Array.from({ length: setCount }).map((_, setIdx) => ({
+      session_exercise_id: sessionExerciseId,
+      set_number: setIdx + 1,
+      weight: null,
+      reps: repsValue,
+      rpe: null,
+      rest_seconds: null,
+    }));
+    const insertSetsRes = await supabase.from('fitarc_workout_sets').insert(payload);
+    if (insertSetsRes.error) throw insertSetsRes.error;
+  }
+
+  return sessionExerciseId;
+};
+
+type UpdateSessionExercisesInput = {
+  sessionId: string;
+  exercises: WorkoutSessionExercise[];
+};
+
+export const updateSessionExercises = async ({
+  sessionId,
+  exercises,
+}: UpdateSessionExercisesInput): Promise<void> => {
+  for (let index = 0; index < exercises.length; index += 1) {
+    const exercise = exercises[index];
+    if (!exercise.id) continue;
+    const displayOrder = exercise.displayOrder ?? index + 1;
+    const { error: updateError } = await supabase
+      .from('fitarc_workout_session_exercises')
+      .update({
+        display_order: displayOrder,
+        notes: exercise.reps ?? null,
+      })
+      .eq('id', exercise.id);
+    if (updateError) throw updateError;
+
+    const { error: deleteSetsError } = await supabase
+      .from('fitarc_workout_sets')
+      .delete()
+      .eq('session_exercise_id', exercise.id);
+    if (deleteSetsError) throw deleteSetsError;
+
+    const setRows = buildSetPayloads(exercise);
+    let payload: SupabaseWorkoutSetInsert[] = [];
+    if (setRows.length) {
+      payload = setRows.map((set, setIdx) => ({
+        session_exercise_id: exercise.id as string,
+        set_number: set.setNumber ?? setIdx + 1,
+        weight: set.weight ?? null,
+        reps: set.reps ?? null,
+        rpe: set.rpe ?? null,
+        rest_seconds: set.restSeconds ?? null,
+      }));
+    } else {
+      const repsValue = parseRepsValue(exercise.reps ?? '');
+      const setCount = Math.max(0, exercise.sets ?? 0);
+      payload = Array.from({ length: setCount }).map((_, setIdx) => ({
+        session_exercise_id: exercise.id as string,
+        set_number: setIdx + 1,
+        weight: null,
+        reps: repsValue,
+        rpe: null,
+        rest_seconds: null,
+      }));
+    }
+
+    if (payload.length) {
+      const { error: insertSetsError } = await supabase
+        .from('fitarc_workout_sets')
+        .insert(payload);
+      if (insertSetsError) throw insertSetsError;
+    }
+  }
+};
+
+export const deleteWorkoutSessionExercise = async (
+  sessionExerciseId: string
+): Promise<void> => {
+  const { error: deleteSetsError } = await supabase
+    .from('fitarc_workout_sets')
+    .delete()
+    .eq('session_exercise_id', sessionExerciseId);
+  if (deleteSetsError) throw deleteSetsError;
+
+  const { error: deleteExerciseError } = await supabase
+    .from('fitarc_workout_session_exercises')
+    .delete()
+    .eq('id', sessionExerciseId);
+  if (deleteExerciseError) throw deleteExerciseError;
+};
+
 type DeleteWorkoutSessionInput = {
   userId: string;
   planId: string;

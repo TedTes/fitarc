@@ -289,7 +289,7 @@ export const generateWeekWorkouts = async (
         exerciseCatalog,
         dayOffset
       );
-
+   
       if (!exercises.length) {
         console.warn(`⚠️ No exercises found for blueprint ${blueprint.title}`);
         continue;

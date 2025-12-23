@@ -30,6 +30,8 @@ type PlansScreenProps = {
   workoutSessions: WorkoutSessionEntry[];
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
   onDeleteSession?: (date: string) => void;
+  onAddExercise?: (sessionId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
+  onDeleteExercise?: (sessionId: string, sessionExerciseId: string) => Promise<void>;
 };
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
@@ -109,6 +111,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   workoutSessions,
   onSaveCustomSession,
   onDeleteSession,
+  onAddExercise,
+  onDeleteExercise,
 }) => {
 
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
@@ -316,28 +320,50 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setSelectedDate(dateStr);
   };
 
-  const handleAddExercise = (entry: ExerciseCatalogEntry) => {
+  const handleAddExercise = async (entry: ExerciseCatalogEntry) => {
     if (!selectedPlan) return;
-    setEditingExercises((prev) => {
-      const next = [...prev, convertCatalogExercise(entry)];
-      editingExercisesRef.current = next;
-      void enqueueSave(selectedPlan, next);
-      return next;
-    });
-    setIsDirty(true);
+    const wasDirty = isDirty;
+    const displayOrder = editingExercisesRef.current.length + 1;
+    const newExercise = { ...convertCatalogExercise(entry), displayOrder };
+    const next = [...editingExercisesRef.current, newExercise];
+    editingExercisesRef.current = next;
+    setEditingExercises(next);
     setExerciseModalVisible(false);
+    try {
+      if (selectedPlan.session?.id && onAddExercise) {
+        const sessionExerciseId = await onAddExercise(selectedPlan.session.id, newExercise);
+        if (sessionExerciseId) {
+          setEditingExercises((prev) => {
+            if (!prev.length) return prev;
+            const updated = [...prev];
+            const lastIndex = updated.length - 1;
+            updated[lastIndex] = { ...updated[lastIndex], id: sessionExerciseId };
+            editingExercisesRef.current = updated;
+            return updated;
+          });
+        }
+        setIsDirty(wasDirty);
+      }
+    } catch (err) {
+      console.error('Failed to save workout session:', err);
+    }
   };
 
-  const handleRemoveExercise = (index: number) => {
+  const handleRemoveExercise = async (index: number) => {
+    const exercise = editingExercisesRef.current[index];
     setEditingExercises((prev) => {
       const next = prev.filter((_, idx) => idx !== index);
       editingExercisesRef.current = next;
-      if (selectedPlan) {
-        void enqueueSave(selectedPlan, next);
-      }
       return next;
     });
     setIsDirty(true);
+    if (selectedPlan?.session?.id && exercise?.id && onDeleteExercise) {
+      try {
+        await onDeleteExercise(selectedPlan.session.id, exercise.id);
+      } catch (err) {
+        console.error('Failed to delete workout exercise:', err);
+      }
+    }
   };
 
  
