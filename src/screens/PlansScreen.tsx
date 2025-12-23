@@ -9,6 +9,11 @@ import {
   TextInput,
   Pressable,
   AppState,
+  Animated,
+  Easing,
+  LayoutAnimation,
+  Platform,
+  UIManager,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -23,6 +28,10 @@ import { ExerciseCatalogEntry } from '../services/exerciseCatalogService';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
 import { formatLocalDateYMD } from '../utils/date';
 import { fetchWorkoutCompletionMap } from '../services/supabaseWorkoutService';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 type PlansScreenProps = {
   user: User;
@@ -123,6 +132,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [muscleFilter, setMuscleFilter] = useState<(typeof MUSCLE_FILTERS)[number]>('All');
   const [completionMap, setCompletionMap] = useState<Record<string, boolean>>({});
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Animation values
+  const weekStripSlide = useRef(new Animated.Value(-100)).current;
+  const fabRotation = useRef(new Animated.Value(0)).current;
+  const fabScale = useRef(new Animated.Value(0)).current;
+  const exerciseCardsAnim = useRef<Map<string, Animated.Value>>(new Map()).current;
+  const modalSlideAnim = useRef(new Animated.Value(300)).current;
 
   const resolvedSessions = useMemo(() => {
     if (!phase?.id) return workoutSessions;
@@ -203,6 +218,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
  // Sync editing exercises when selected plan changes or sessions update
   useEffect(() => {
     if (!selectedPlan) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setEditingExercises([]);
       setIsDirty(false);
       lastSyncedKeyRef.current = null;
@@ -215,6 +231,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
     // Load exercises from the database session if it exists
     if (selectedPlan.session && selectedPlan.session.exercises.length > 0) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setEditingExercises(createSessionExercises(selectedPlan.session.exercises));
       setIsDirty(false);
       lastSyncedKeyRef.current = planSyncKey;
@@ -222,6 +239,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
 
     // No session exists - clear exercises
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setEditingExercises([]);
     setIsDirty(false);
     lastSyncedKeyRef.current = planSyncKey;
@@ -246,6 +264,52 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       isActive = false;
     };
   }, [user.id, weekStart, weekEnd]);
+
+  // Animate week strip entrance
+  useEffect(() => {
+    Animated.spring(weekStripSlide, {
+      toValue: 0,
+      tension: 50,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  }, [weekStripSlide]);
+
+  // FAB entrance animation
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(200),
+      Animated.spring(fabScale, {
+        toValue: 1,
+        tension: 80,
+        friction: 6,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [fabScale]);
+
+  // FAB rotation when modal opens/closes
+  useEffect(() => {
+    Animated.spring(fabRotation, {
+      toValue: exerciseModalVisible ? 1 : 0,
+      tension: 180,
+      friction: 12,
+      useNativeDriver: true,
+    }).start();
+  }, [exerciseModalVisible, fabRotation]);
+
+  useEffect(() => {
+    if (exerciseModalVisible) {
+      Animated.spring(modalSlideAnim, {
+        toValue: 0,
+        tension: 60,
+        friction: 8,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      modalSlideAnim.setValue(300);
+    }
+  }, [exerciseModalVisible, modalSlideAnim]);
 
   if (!phase) {
  
@@ -320,15 +384,73 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setSelectedDate(dateStr);
   };
 
+  const handleSelectDateAnimated = async (dateStr: string) => {
+    await flushAutosave();
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSelectedDate(dateStr);
+  };
+
+  const getExerciseAnimation = (key: string) => {
+    if (!exerciseCardsAnim.has(key)) {
+      const anim = new Animated.Value(1);
+      exerciseCardsAnim.set(key, anim);
+    }
+    return exerciseCardsAnim.get(key)!;
+  };
+
+  const animateExerciseAction = (key: string) => {
+    const anim = getExerciseAnimation(key);
+    Animated.sequence([
+      Animated.spring(anim, {
+        toValue: 0.95,
+        tension: 200,
+        friction: 10,
+        useNativeDriver: true,
+      }),
+      Animated.spring(anim, {
+        toValue: 1,
+        tension: 200,
+        friction: 10,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
   const handleAddExercise = async (entry: ExerciseCatalogEntry) => {
     if (!selectedPlan) return;
+
+    // Animate modal close first
+    setExerciseModalVisible(false);
+    
     const wasDirty = isDirty;
     const displayOrder = editingExercisesRef.current.length + 1;
     const newExercise = { ...convertCatalogExercise(entry), displayOrder };
     const next = [...editingExercisesRef.current, newExercise];
+
+    // Trigger layout animation for smooth insertion
+    LayoutAnimation.configureNext({
+      duration: 300,
+      create: {
+        type: LayoutAnimation.Types.spring,
+        property: LayoutAnimation.Properties.opacity,
+        springDamping: 0.7,
+      },
+    });
+
     editingExercisesRef.current = next;
     setEditingExercises(next);
-    setExerciseModalVisible(false);
+
+    // Animate the newly added card
+    const cardKey = `${newExercise.name}-${next.length - 1}`;
+    const cardAnim = getExerciseAnimation(cardKey);
+    cardAnim.setValue(0);
+    Animated.spring(cardAnim, {
+      toValue: 1,
+      tension: 80,
+      friction: 7,
+      useNativeDriver: true,
+    }).start();
+
     try {
       if (selectedPlan.session?.id && onAddExercise) {
         const sessionExerciseId = await onAddExercise(selectedPlan.session.id, newExercise);
@@ -351,11 +473,24 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const handleRemoveExercise = async (index: number) => {
     const exercise = editingExercisesRef.current[index];
-    setEditingExercises((prev) => {
-      const next = prev.filter((_, idx) => idx !== index);
-      editingExercisesRef.current = next;
-      return next;
+    const cardKey = `${exercise.name}-${index}`;
+    const cardAnim = getExerciseAnimation(cardKey);
+
+    // Animate out before removing
+    Animated.timing(cardAnim, {
+      toValue: 0,
+      duration: 200,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: true,
+    }).start(() => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setEditingExercises((prev) => {
+        const next = prev.filter((_, idx) => idx !== index);
+        editingExercisesRef.current = next;
+        return next;
+      });
     });
+
     setIsDirty(true);
     if (selectedPlan?.session?.id && exercise?.id && onDeleteExercise) {
       try {
@@ -488,57 +623,72 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     return (
       <View style={styles.workoutCard}>
         <View style={styles.exerciseList}>
-          {editingExercises.map((exercise, idx) => (
-            <View key={`${exercise.name}-${idx}`} style={styles.exerciseCard}>
-              <View style={styles.exerciseHeaderRow}>
-                <View style={styles.exerciseHeaderInfo}>
-                  <Text style={styles.exerciseName}>{exercise.name}</Text>
-                </View>
-                <View style={styles.exerciseHeaderActions}>
-                  {exercise.completed && (
-                    <View style={styles.planCompleteBadge}>
-                      <Text style={styles.planCompleteBadgeText}>Done</Text>
+          {editingExercises.map((exercise, idx) => {
+            const cardKey = `${exercise.name}-${idx}`;
+            const scaleAnim = getExerciseAnimation(cardKey);
+
+            return (
+              <Animated.View
+                key={cardKey}
+                style={{
+                  transform: [{ scale: scaleAnim }],
+                }}
+              >
+                <View style={styles.exerciseCard}>
+                  <View style={styles.exerciseHeaderRow}>
+                    <View style={styles.exerciseHeaderInfo}>
+                      <Text style={styles.exerciseName}>{exercise.name}</Text>
                     </View>
-                  )}
-                  {!exercise.completed && (
-                    <TouchableOpacity
-                      style={[styles.iconButton, styles.iconButtonDanger]}
-                      onPress={() => handleRemoveExercise(idx)}
-                    >
-                      <Text style={styles.iconButtonText}>×</Text>
-                    </TouchableOpacity>
-                  )}
+                    <View style={styles.exerciseHeaderActions}>
+                      {exercise.completed && (
+                        <View style={styles.planCompleteBadge}>
+                          <Text style={styles.planCompleteBadgeText}>Done</Text>
+                        </View>
+                      )}
+                      {!exercise.completed && (
+                        <TouchableOpacity
+                          style={[styles.iconButton, styles.iconButtonDanger]}
+                          onPress={() => {
+                            animateExerciseAction(cardKey);
+                            handleRemoveExercise(idx);
+                          }}
+                        >
+                          <Text style={styles.iconButtonText}>×</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                  <View style={styles.exerciseInputs}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Sets</Text>
+                      <TextInput
+                        style={[
+                          styles.inputField,
+                          exercise.completed && styles.inputFieldDisabled,
+                        ]}
+                        keyboardType="number-pad"
+                        value={String(exercise.sets ?? '')}
+                        onChangeText={(value) => handleChangeSets(idx, value)}
+                        editable={!exercise.completed}
+                      />
+                    </View>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Reps</Text>
+                      <TextInput
+                        style={[
+                          styles.inputField,
+                          exercise.completed && styles.inputFieldDisabled,
+                        ]}
+                        value={exercise.reps}
+                        onChangeText={(value) => handleChangeReps(idx, value)}
+                        editable={!exercise.completed}
+                      />
+                    </View>
+                  </View>
                 </View>
-              </View>
-              <View style={styles.exerciseInputs}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Sets</Text>
-                  <TextInput
-                    style={[
-                      styles.inputField,
-                      exercise.completed && styles.inputFieldDisabled,
-                    ]}
-                    keyboardType="number-pad"
-                    value={String(exercise.sets ?? '')}
-                    onChangeText={(value) => handleChangeSets(idx, value)}
-                    editable={!exercise.completed}
-                  />
-                </View>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Reps</Text>
-                  <TextInput
-                    style={[
-                      styles.inputField,
-                      exercise.completed && styles.inputFieldDisabled,
-                    ]}
-                    value={exercise.reps}
-                    onChangeText={(value) => handleChangeReps(idx, value)}
-                    editable={!exercise.completed}
-                  />
-                </View>
-              </View>
-            </View>
-          ))}
+              </Animated.View>
+            );
+          })}
         </View>
       </View>
     );
@@ -560,40 +710,49 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                 <Text style={styles.phaseChipText}>{phaseChipText}</Text>
               </View>
             </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.weekStrip}
+            <Animated.View
+              style={{
+                transform: [{ translateX: weekStripSlide }],
+              }}
             >
-              {weekPlans.map((plan) => {
-              const { weekday } = formatDateLabel(plan.dateStr);
-              const isActive = plan.dateStr === selectedDate;
-              const hasWorkout = plan.session && plan.session.exercises.length > 0;
-              const isFutureDay = plan.dateStr > todayKey;
-              const isCompletedDay = !isFutureDay && Boolean(completionMap[plan.dateStr]);
-              return (
-                <TouchableOpacity
-                  key={plan.dateStr}
-                  style={[
-                      styles.dayChip,
-                      isActive && styles.dayChipActive,
-                      isCompletedDay && styles.dayChipCompleted,
-                    ]}
-                    onPress={() => handleSelectDate(plan.dateStr)}
-                  >
-                    <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>{weekday}</Text>
-                    <View
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.weekStrip}
+              >
+                {weekPlans.map((plan) => {
+                  const { weekday } = formatDateLabel(plan.dateStr);
+                  const isActive = plan.dateStr === selectedDate;
+                  const hasWorkout = plan.session && plan.session.exercises.length > 0;
+                  const isFutureDay = plan.dateStr > todayKey;
+                  const isCompletedDay = !isFutureDay && Boolean(completionMap[plan.dateStr]);
+                  return (
+                    <TouchableOpacity
+                      key={plan.dateStr}
                       style={[
-                        styles.dayDot,
-                        hasWorkout && styles.dayDotVisible,
-                        isCompletedDay && styles.dayDotComplete,
+                        styles.dayChip,
+                        isActive && styles.dayChipActive,
+                        isCompletedDay && styles.dayChipCompleted,
                       ]}
-                    />
-                    {isCompletedDay && <Text style={styles.dayCheckMark}>✓</Text>}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                      onPress={() => handleSelectDateAnimated(plan.dateStr)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>
+                        {weekday}
+                      </Text>
+                      <View
+                        style={[
+                          styles.dayDot,
+                          hasWorkout && styles.dayDotVisible,
+                          isCompletedDay && styles.dayDotComplete,
+                        ]}
+                      />
+                      {isCompletedDay && <Text style={styles.dayCheckMark}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </Animated.View>
           </View>
 
           <View style={styles.content}>
@@ -606,18 +765,50 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </View>
         </ScrollView>
       </LinearGradient>
-      <TouchableOpacity
-        style={styles.fabButton}
-        onPress={() => setExerciseModalVisible(true)}
-        activeOpacity={0.9}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          bottom: 30,
+          right: 20,
+          transform: [
+            { scale: fabScale },
+            {
+              rotate: fabRotation.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['0deg', '45deg'],
+              }),
+            },
+          ],
+        }}
       >
-        <Text style={styles.fabButtonText}>+</Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.fabButton}
+          onPress={() => setExerciseModalVisible(!exerciseModalVisible)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.fabButtonText}>+</Text>
+        </TouchableOpacity>
+      </Animated.View>
 
-      <Modal transparent animationType="fade" visible={exerciseModalVisible} onRequestClose={() => setExerciseModalVisible(false)}>
+      <Modal
+        transparent
+        animationType="none"
+        visible={exerciseModalVisible}
+        onRequestClose={() => setExerciseModalVisible(false)}
+      >
         <View style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdropPress} onPress={() => setExerciseModalVisible(false)} />
-          <View style={styles.sheet}>
+          <Pressable
+            style={styles.modalBackdropPress}
+            onPress={() => setExerciseModalVisible(false)}
+          />
+          <Animated.View
+            style={[
+              styles.sheet,
+              {
+                transform: [{ translateY: modalSlideAnim }],
+              },
+            ]}
+          >
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Add Exercise</Text>
@@ -676,7 +867,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                 ))
               )}
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -897,9 +1088,6 @@ const styles = StyleSheet.create({
     color: '#FF7B7B',
   },
   fabButton: {
-    position: 'absolute',
-    bottom: 30,
-    right: 20,
     width: 60,
     height: 60,
     borderRadius: 30,

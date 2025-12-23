@@ -428,13 +428,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                     <Text style={styles.mealEntryDoneText}>✓</Text>
                   </View>
                 )}
-                <TouchableOpacity
-                  style={styles.mealEntryDeleteButton}
-                  onPress={() => confirmDeleteEntry(entry.id)}
-                  disabled={isMealsMutating}
-                >
-                  <Text style={styles.mealEntryDeleteText}>×</Text>
-                </TouchableOpacity>
+                {!entry.isDone && (
+                  <TouchableOpacity
+                    style={styles.mealEntryDeleteButton}
+                    onPress={() => confirmDeleteEntry(entry.id)}
+                    disabled={isMealsMutating}
+                  >
+                    <Text style={styles.mealEntryDeleteText}>×</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           ))}
