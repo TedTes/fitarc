@@ -63,6 +63,7 @@ export type DailyMealPlan = {
 
 export type User = {
   id: string;
+  name?: string;
   sex: 'male' | 'female' | 'other';
   age: number;
   heightCm: number;
@@ -70,6 +71,7 @@ export type User = {
   currentPhysiqueLevel: number;
   trainingSplit: TrainingSplit;
   eatingMode: EatingMode;
+  avatarUrl?: string;
   createdAt: string;
 };
 

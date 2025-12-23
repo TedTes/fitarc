@@ -185,6 +185,7 @@ function AppContent() {
   };
 
   const handleProfileSetupComplete = (profileData: {
+    name: string;
     sex: 'male' | 'female' | 'other';
     age: number;
     heightCm: number;
@@ -193,6 +194,22 @@ function AppContent() {
     eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
   }) => {
     setTempProfileData(profileData);
+    if (authUser) {
+      const newUser: User = {
+        id: authUser.id,
+        name: profileData.name,
+        sex: profileData.sex,
+        age: profileData.age,
+        heightCm: profileData.heightCm,
+        experienceLevel: profileData.experienceLevel,
+        trainingSplit: profileData.trainingSplit,
+        eatingMode: profileData.eatingMode,
+        currentPhysiqueLevel: 1,
+        createdAt: new Date().toISOString(),
+      };
+      updateUser(newUser);
+      void saveUserProfile(newUser);
+    }
     setOnboardingStep('current_physique');
   };
 

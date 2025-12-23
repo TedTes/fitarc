@@ -8,14 +8,15 @@ import {
   MuscleGroup,
   WorkoutLog,
   StrengthSnapshot,
-  WorkoutSetEntry,
+
 } from '../types/domain';
 import {
   buildWorkoutAnalytics,
-  inferMovementPatternFromName,
+
   mapMuscleNameToGroup,
 } from '../utils/workoutAnalytics';
 import { mapPhaseRow } from './phaseService';
+import { fetchExerciseDefaults } from './exerciseDefaultsService';
 import {
   formatDateInTimeZone,
   getAppTimeZone,
@@ -388,7 +389,7 @@ export const fetchProgressData = async (
   const fromIso = fromDate.toISOString().split('T')[0];
   const toIso = new Date().toISOString().split('T')[0];
 
-  const [phaseRes, sessionsRes, mealsRes, photosRes] = await Promise.all([
+  const [phaseRes, sessionsRes, mealsRes, photosRes, defaultsRes] = await Promise.all([
     supabase
       .from('fitarc_workout_plans')
       .select('*')
@@ -471,6 +472,7 @@ export const fetchProgressData = async (
       .eq('user_id', userId)
       .eq('plan_id', planId)
       .order('date', { ascending: false }),
+    fetchExerciseDefaults(userId),
   ]);
 
   if (phaseRes.error) throw phaseRes.error;
@@ -482,7 +484,13 @@ export const fetchProgressData = async (
   const mealRows = mealsRes.data || [];
 
   const sessionEntries = sessionRows.map((row: any) => mapSessionRow(row, planId, timeZone));
-  const analytics = buildWorkoutAnalytics(sessionEntries);
+  const defaultWeights = (defaultsRes || []).reduce<Record<string, number>>((acc, item) => {
+    if (item.exerciseId && typeof item.defaultWeight === 'number') {
+      acc[item.exerciseId] = item.defaultWeight;
+    }
+    return acc;
+  }, {});
+  const analytics = buildWorkoutAnalytics(sessionEntries, defaultWeights);
 
   return {
     phase: phaseRes.data ? mapPhaseRow(phaseRes.data) : null,

@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -144,7 +145,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
-  const displayName = 'Athlete';
+  const displayName = user.name?.trim() || 'Athlete';
+  const avatarLabel = displayName
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+  const avatarUrl = user.avatarUrl;
   const dateLabel = today.toLocaleDateString(undefined, {
     weekday: 'long',
     month: 'short',
@@ -614,8 +623,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <Text style={styles.dateInfo}>{dateLabel}</Text>
           </View>
           {onProfilePress && (
-            <TouchableOpacity style={styles.settingsButton} onPress={onProfilePress}>
-              <Text style={styles.settingsIcon}>⚙️</Text>
+            <TouchableOpacity style={styles.avatarButton} onPress={onProfilePress}>
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarText}>{avatarLabel || 'A'}</Text>
+              )}
             </TouchableOpacity>
           )}
         </View>
@@ -770,18 +783,26 @@ const styles = StyleSheet.create({
     color: '#6C63FF',
     fontWeight: '500',
   },
-  settingsButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  avatarButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     backgroundColor: 'rgba(108, 99, 255, 0.1)',
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  settingsIcon: {
-    fontSize: 20,
+  avatarText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 35,
   },
   scrollView: {
     flex: 0,

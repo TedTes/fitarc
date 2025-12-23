@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 type ProfileSetupScreenProps = {
   onComplete: (data: {
+    name: string;
     sex: 'male' | 'female' | 'other';
     age: number;
     heightCm: number;
@@ -14,6 +15,7 @@ type ProfileSetupScreenProps = {
 };
 
 export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComplete }) => {
+  const [name, setName] = useState('');
   const [sex, setSex] = useState<'male' | 'female' | 'other'>('male');
   const [age, setAge] = useState('');
   const [heightCm, setHeightCm] = useState('');
@@ -22,8 +24,14 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
   const [eatingMode, setEatingMode] = useState<'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance'>('maintenance');
 
   const handleContinue = () => {
+    const trimmedName = name.trim();
     const ageNum = parseInt(age, 10);
     const heightNum = parseInt(heightCm, 10);
+
+    if (!trimmedName) {
+      Alert.alert('Missing Name', 'Please enter your name.');
+      return;
+    }
 
     if (!age || isNaN(ageNum) || ageNum < 13 || ageNum > 100) {
       Alert.alert('Invalid Input', 'Please enter a valid age (13-100)');
@@ -36,6 +44,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
     }
 
     onComplete({
+      name: trimmedName,
       sex,
       age: ageNum,
       heightCm: heightNum,
@@ -83,6 +92,19 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
           <View style={styles.header}>
             <Text style={styles.title}>Welcome to FitArc</Text>
             <Text style={styles.subtitle}>Let's set up your profile</Text>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.label}>Name</Text>
+            <TextInput
+              style={styles.input}
+              value={name}
+              onChangeText={setName}
+              placeholder="Enter your name"
+              placeholderTextColor="#A0A3BD"
+              autoCapitalize="words"
+              maxLength={40}
+            />
           </View>
 
           <View style={styles.section}>

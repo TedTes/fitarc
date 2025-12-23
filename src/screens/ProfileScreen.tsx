@@ -10,11 +10,14 @@ import {
   Switch,
   Modal,
   Pressable,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, TrainingSplit, EatingMode, ExperienceLevel } from '../types/domain';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { useExerciseDefaults } from '../hooks/useExerciseDefaults';
+import * as ImagePicker from 'expo-image-picker';
+import { uploadUserAvatar } from '../services/userProfileService';
 
 type ProfileScreenProps = {
   user: User;
@@ -33,12 +36,27 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onChangeTargetLevel,
   onLogout,
 }) => {
+  const [name, setName] = useState(user.name ?? '');
   const [sex, setSex] = useState<'male' | 'female' | 'other'>(user.sex);
   const [age, setAge] = useState(user.age.toString());
   const [heightCm, setHeightCm] = useState(user.heightCm.toString());
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>(user.experienceLevel);
   const [trainingSplit, setTrainingSplit] = useState<TrainingSplit>(user.trainingSplit);
   const [eatingMode, setEatingMode] = useState<EatingMode>(user.eatingMode);
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(user.avatarUrl);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const avatarInitials = useMemo(
+    () =>
+      name
+        .trim()
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => part[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase() || 'A',
+    [name]
+  );
 
   // ✨ NEW: Settings toggles
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -87,19 +105,66 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
       const updatedUser: User = {
         ...user,
+        name: name.trim(),
         sex,
         age: ageNum,
         heightCm: heightNum,
         experienceLevel,
         trainingSplit,
         eatingMode,
+        avatarUrl,
       };
 
       onSave(updatedUser);
       return true;
     },
-    [age, eatingMode, experienceLevel, heightCm, onSave, sex, trainingSplit, user]
+    [age, eatingMode, experienceLevel, heightCm, name, onSave, sex, trainingSplit, user]
   );
+
+  const handlePickAvatar = useCallback(async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow access to photos to upload an avatar.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        aspect: [1, 1],
+      });
+      if (result.canceled) return;
+      const asset = result.assets?.[0];
+      if (!asset?.uri) return;
+      setIsUploadingAvatar(true);
+      const url = await uploadUserAvatar(user.id, asset.uri);
+      setAvatarUrl(url);
+      onSave({
+        ...user,
+        sex,
+        age: parseInt(age, 10) || user.age,
+        heightCm: parseInt(heightCm, 10) || user.heightCm,
+        experienceLevel,
+        trainingSplit,
+        eatingMode,
+        avatarUrl: url,
+      });
+    } catch (err: any) {
+      Alert.alert('Upload failed', err?.message || 'Unable to upload avatar.');
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  }, [
+    age,
+    eatingMode,
+    experienceLevel,
+    heightCm,
+    onSave,
+    sex,
+    trainingSplit,
+    user,
+  ]);
 
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didMountRef = useRef(false);
@@ -292,9 +357,45 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </TouchableOpacity>
           </View>
 
+          <View style={styles.avatarRow}>
+            <TouchableOpacity
+              style={styles.avatarButton}
+              onPress={handlePickAvatar}
+              disabled={isUploadingAvatar}
+            >
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarInitials}>{avatarInitials}</Text>
+              )}
+            </TouchableOpacity>
+            <View style={styles.avatarMeta}>
+              <Text style={styles.avatarTitle}>Profile photo</Text>
+              <Text style={styles.avatarHint}>
+                {isUploadingAvatar ? 'Uploading…' : 'Tap to upload'}
+              </Text>
+            </View>
+          </View>
+
           {/* ✨ PROFILE SECTION */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>PROFILE</Text>
+
+            <View style={styles.settingRow}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>🪪</Text>
+                <Text style={styles.settingLabel}>Name</Text>
+              </View>
+              <TextInput
+                style={styles.settingInput}
+                value={name}
+                onChangeText={setName}
+                placeholder="Your name"
+                placeholderTextColor="#A0A3BD"
+                autoCapitalize="words"
+                maxLength={40}
+              />
+            </View>
             
             {/* Sex */}
             <View style={styles.settingRow}>
@@ -873,6 +974,46 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#FFFFFF',
     fontWeight: '600',
+  },
+  avatarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginBottom: 24,
+    paddingHorizontal: 20,
+  },
+  avatarButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  avatarInitials: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  avatarMeta: {
+    flex: 1,
+  },
+  avatarTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  avatarHint: {
+    fontSize: 13,
+    color: '#A3A7B7',
   },
 
   // Section

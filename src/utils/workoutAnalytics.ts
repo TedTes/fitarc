@@ -101,7 +101,8 @@ type WorkoutAnalyticsResult = {
 };
 
 export const buildWorkoutAnalytics = (
-  sessions: WorkoutSessionEntry[]
+  sessions: WorkoutSessionEntry[],
+  defaultWeights?: Record<string, number>
 ): WorkoutAnalyticsResult => {
   const workoutLogs: WorkoutLog[] = [];
   const strengthSnapshots: StrengthSnapshot[] = [];
@@ -119,6 +120,10 @@ export const buildWorkoutAnalytics = (
 
     session.exercises.forEach((exercise) => {
       const setDetails = (exercise.setDetails || []).map(normalizeSetDetails);
+      const fallbackWeight =
+        exercise.exerciseId && defaultWeights
+          ? defaultWeights[exercise.exerciseId]
+          : undefined;
       const setCount = setDetails.length || exercise.sets || 0;
       totalSets += setCount;
 
@@ -136,7 +141,7 @@ export const buildWorkoutAnalytics = (
       }
 
       setDetails.forEach((set) => {
-        const weight = Number(set.weight ?? 0);
+        const weight = Number(set.weight ?? fallbackWeight ?? 0);
         const reps = Number(set.reps ?? 0);
         if (weight > 0 && reps > 0) {
           totalVolume += weight * reps;
@@ -146,12 +151,12 @@ export const buildWorkoutAnalytics = (
       const liftId = inferLiftIdFromName(exercise.name);
       if (liftId && setDetails.length) {
         const bestSet = setDetails.reduce((best, candidate) => {
-          const candidateWeight = Number(candidate.weight ?? 0);
-          const bestWeight = Number(best.weight ?? 0);
+          const candidateWeight = Number(candidate.weight ?? fallbackWeight ?? 0);
+          const bestWeight = Number(best.weight ?? fallbackWeight ?? 0);
           return candidateWeight > bestWeight ? candidate : best;
         }, setDetails[0]);
 
-        const bestWeight = Number(bestSet.weight ?? 0);
+        const bestWeight = Number(bestSet.weight ?? fallbackWeight ?? 0);
         const bestReps = Number(bestSet.reps ?? 0);
         const currentBest = bestLiftSets.get(liftId);
         if (!currentBest || bestWeight > currentBest.weight) {
@@ -209,4 +214,3 @@ export const buildWorkoutAnalytics = (
     strengthSnapshots,
   };
 };
-
