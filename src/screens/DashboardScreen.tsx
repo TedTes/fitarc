@@ -7,6 +7,11 @@ import {
   ScrollView,
   Alert,
   Image,
+  Animated,
+  Easing,
+  LayoutAnimation,
+  Platform,
+  UIManager,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -27,6 +32,11 @@ import {
   formatMacroSummaryLine,
   formatMealEntryMacros,
 } from '../utils/mealMacros';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const MEAL_TYPE_EMOJI: Record<string, string> = {
   Breakfast: '🥚',
@@ -101,6 +111,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const pendingToggleRef = useRef<Map<string, number>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastActiveTabRef = useRef<'workouts' | 'meals'>('workouts');
+  
+  // 🎨 Animation values
+  const headerFadeAnim = useRef(new Animated.Value(0)).current;
+  const activityCardSlideAnim = useRef(new Animated.Value(50)).current;
+  const tabSwitchAnim = useRef(new Animated.Value(0)).current;
+  const fabScaleAnim = useRef(new Animated.Value(0)).current;
+  const fabRotationAnim = useRef(new Animated.Value(0)).current;
+  const exerciseCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
+  const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
+  const activityCellAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
+  const createButtonPulse = useRef(new Animated.Value(1)).current;
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const activePhaseId = resolvedPhase?.id ?? null;
@@ -226,7 +247,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return columns;
   }, [activityCells]);
 
-
   const getActivityLevelStyle = (level: number) => {
     if (level >= 3) return styles.activityLevel3;
     if (level === 2) return styles.activityLevel2;
@@ -277,6 +297,153 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     hasSyncedWorkout &&
     pendingWorkoutCount > 0;
 
+  // 🎨 Animation functions
+  const getActivityCellAnimation = (iso: string) => {
+    if (!activityCellAnims.has(iso)) {
+      const anim = new Animated.Value(1);
+      activityCellAnims.set(iso, anim);
+    }
+    return activityCellAnims.get(iso)!;
+  };
+
+  const triggerActivityCellPulse = (iso: string, level: number) => {
+    if (level === 0) return;
+    
+    const anim = getActivityCellAnimation(iso);
+    
+    Animated.sequence([
+      Animated.spring(anim, {
+        toValue: 1.2,
+        tension: 200,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(anim, {
+        toValue: 1,
+        tension: 200,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const getExerciseCardAnimation = (key: string) => {
+    if (!exerciseCardAnims.has(key)) {
+      const anim = new Animated.Value(1);
+      exerciseCardAnims.set(key, anim);
+    }
+    return exerciseCardAnims.get(key)!;
+  };
+
+  const animateExerciseCompletion = (key: string) => {
+    const scaleAnim = getExerciseCardAnimation(key);
+    
+    Animated.sequence([
+      Animated.spring(scaleAnim, {
+        toValue: 0.97,
+        tension: 200,
+        friction: 10,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 200,
+        friction: 10,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  // 🎨 Header entrance animation
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(headerFadeAnim, {
+        toValue: 1,
+        duration: 600,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(activityCardSlideAnim, {
+        toValue: 0,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  // 🎨 Trigger pulse animation for activity cells on mount
+  useEffect(() => {
+    const delay = 300;
+    activityCells.forEach((cell, index) => {
+      setTimeout(() => {
+        triggerActivityCellPulse(cell.iso, cell.level);
+      }, delay + index * 15);
+    });
+  }, [activityCells.length]);
+
+  // 🎨 Tab switch animation
+  useEffect(() => {
+    LayoutAnimation.configureNext({
+      duration: 300,
+      create: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+      update: {
+        type: LayoutAnimation.Types.spring,
+        springDamping: 0.7,
+      },
+    });
+
+    Animated.spring(tabSwitchAnim, {
+      toValue: activeTab === 'workouts' ? 0 : 1,
+      tension: 100,
+      friction: 10,
+      useNativeDriver: true,
+    }).start();
+  }, [activeTab]);
+
+  // 🎨 FAB entrance animation
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(400),
+      Animated.spring(fabScaleAnim, {
+        toValue: 1,
+        tension: 80,
+        friction: 6,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  // 🎨 Create button pulse animation
+  useEffect(() => {
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(2000),
+        Animated.spring(createButtonPulse, {
+          toValue: 1.05,
+          tension: 100,
+          friction: 5,
+          useNativeDriver: true,
+        }),
+        Animated.spring(createButtonPulse, {
+          toValue: 1,
+          tension: 100,
+          friction: 5,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    
+    if (!resolvedPhase) {
+      pulseLoop.start();
+    }
+    
+    return () => pulseLoop.stop();
+  }, [resolvedPhase]);
+
   const flushPendingToggles = useCallback(async () => {
     if (toggleFlushTimeoutRef.current) {
       clearTimeout(toggleFlushTimeoutRef.current);
@@ -317,6 +484,31 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     toggleFlushTimeoutRef.current = setTimeout(() => {
       void flushPendingToggles();
     }, 700);
+  };
+
+  const handleToggleExerciseAnimated = (exerciseName: string) => {
+    const target = displayExercises.find((ex) => ex.name === exerciseName);
+    if (!target) return;
+    
+    const key = `${todayStr}-${exerciseName}`;
+    animateExerciseCompletion(key);
+    
+    Animated.sequence([
+      Animated.spring(checkboxPulseAnim, {
+        toValue: 1.3,
+        tension: 200,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(checkboxPulseAnim, {
+        toValue: 1,
+        tension: 200,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    
+    handleToggleExercise(exerciseName);
   };
 
   useEffect(() => {
@@ -362,6 +554,28 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     } finally {
       setIsMarkingAll(false);
     }
+  };
+
+  const handleMarkAllCompleteAnimated = async () => {
+    if (isMarkingAll) return;
+
+    Animated.sequence([
+      Animated.spring(fabRotationAnim, {
+        toValue: 1,
+        tension: 100,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.delay(400),
+      Animated.spring(fabRotationAnim, {
+        toValue: 0,
+        tension: 100,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    await handleMarkAllComplete();
   };
 
   const renderMealGroup = (group: { mealType: string; entries: MealEntry[] }) => {
@@ -503,12 +717,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </Text>
           
           {onStartPhase && (
-            <TouchableOpacity 
-              style={styles.createPlanButton} 
-              onPress={onStartPhase}
-            >
-              <Text style={styles.createPlanButtonText}>Create Plan</Text>
-            </TouchableOpacity>
+            <Animated.View style={{ transform: [{ scale: createButtonPulse }] }}>
+              <TouchableOpacity 
+                style={styles.createPlanButton} 
+                onPress={onStartPhase}
+              >
+                <Text style={styles.createPlanButtonText}>Create Plan</Text>
+              </TouchableOpacity>
+            </Animated.View>
           )}
         </View>
       ) : !hasSyncedWorkout ? (
@@ -537,47 +753,61 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         <View style={styles.verticalList}>
           {displayExercises.map((exercise, index) => {
             const isMarked = isExerciseMarked(exercise);
+            const cardKey = `${todayStr}-${exercise.name}-${index}`;
+            const scaleAnim = getExerciseCardAnimation(cardKey);
+            
             return (
-              <LinearGradient
-                key={`${todayStr}-${exercise.name}-${index}`}
-                colors={isMarked ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
-                style={[
-                  styles.exerciseCard,
-                  isMarked && styles.exerciseCardCompleted,
-                ]}
+              <Animated.View
+                key={cardKey}
+                style={{
+                  transform: [{ scale: scaleAnim }],
+                }}
               >
-                {isMarked && <View style={styles.completedTopBar} />}
-                
-                <View style={styles.exerciseCardRow}>
-                  <View style={styles.exerciseCardMain}>
-                    <View style={styles.cardHeader}>
-                      <View style={styles.exerciseHeaderText}>
-                        <Text style={styles.exerciseName}>{exercise.name}</Text>
-                        <Text style={styles.exerciseMetaLine}>
-                          {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
-                        </Text>
+                <LinearGradient
+                  colors={isMarked ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
+                  style={[
+                    styles.exerciseCard,
+                    isMarked && styles.exerciseCardCompleted,
+                  ]}
+                >
+                  {isMarked && <View style={styles.completedTopBar} />}
+                  
+                  <View style={styles.exerciseCardRow}>
+                    <View style={styles.exerciseCardMain}>
+                      <View style={styles.cardHeader}>
+                        <View style={styles.exerciseHeaderText}>
+                          <Text style={styles.exerciseName}>{exercise.name}</Text>
+                          <Text style={styles.exerciseMetaLine}>
+                            {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
+                          </Text>
+                        </View>
+
+                        <Animated.View
+                          style={{
+                            transform: [{ scale: isMarked ? checkboxPulseAnim : 1 }],
+                          }}
+                        >
+                          <TouchableOpacity
+                            style={[
+                              styles.checkBox,
+                              !canLogWorkouts && styles.checkBoxDisabled,
+                              isMarked && styles.checkBoxActive,
+                            ]}
+                            onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise.name)}
+                            disabled={!canLogWorkouts}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.checkBoxText}>{isMarked ? '✓' : ''}</Text>
+                          </TouchableOpacity>
+                        </Animated.View>
                       </View>
-
-                      <TouchableOpacity
-                        style={[
-                          styles.checkBox,
-                          !canLogWorkouts && styles.checkBoxDisabled,
-                          isMarked && styles.checkBoxActive,
-                        ]}
-                        onPress={() => canLogWorkouts && handleToggleExercise(exercise.name)}
-                        disabled={!canLogWorkouts}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.checkBoxText}>{isMarked ? '✓' : ''}</Text>
-                      </TouchableOpacity>
+                      <Text style={styles.exerciseBodyParts}>
+                        {formatBodyPartList(exercise.bodyParts)}
+                      </Text>
                     </View>
-                    <Text style={styles.exerciseBodyParts}>
-                      {formatBodyPartList(exercise.bodyParts)}
-                    </Text>
                   </View>
-
-                </View>
-              </LinearGradient>
+                </LinearGradient>
+              </Animated.View>
             );
           })}
         </View>
@@ -616,7 +846,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   return (
     <View style={styles.container}>
       <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
-        <View style={styles.header}>
+        <Animated.View
+          style={[
+            styles.header,
+            {
+              opacity: headerFadeAnim,
+              transform: [
+                {
+                  translateY: headerFadeAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-20, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
             <Text style={styles.userName}>{displayName}</Text>
@@ -631,7 +876,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               )}
             </TouchableOpacity>
           )}
-        </View>
+        </Animated.View>
 
         <ScrollView
           style={styles.scrollView}
@@ -639,56 +884,73 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           showsVerticalScrollIndicator={false}
           bounces={true}
         >
-          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
-            <View style={styles.activityHeader}>
-              <Text style={styles.activityTitle}>ACTIVITY STREAK</Text>
-              <View style={styles.activityLegend}>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.activityLevel1]} />
-                  <Text style={styles.legendText}>1</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.activityLevel2]} />
-                  <Text style={styles.legendText}>2</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.activityLevel3]} />
-                  <Text style={styles.legendText}>3+</Text>
-                </View>
-              </View>
-            </View>
-            <View style={styles.activityGridWrapper}>
-              <View
-                style={styles.activityGrid}
-                onLayout={(event) =>
-                  setGridLayout({
-                    width: event.nativeEvent.layout.width,
-                    height: event.nativeEvent.layout.height,
-                  })
-                }
-              >
-                {activityColumns.map((column, colIdx) => (
-                  <View key={`col-${colIdx}`} style={styles.activityColumn}>
-                    {column.map((cell, rowIdx) => (
-                      <TouchableOpacity
-                        key={cell.iso}
-                        style={[
-                          styles.activityCell,
-                          getActivityLevelStyle(cell.level),
-                          cell.isToday && styles.activityCellToday,
-                        ]}
-                        onPress={() =>
-                          setSelectedActivityMeta({ iso: cell.iso, row: rowIdx, col: colIdx })
-                        }
-                        activeOpacity={0.85}
-                      />
-                    ))}
+          <Animated.View
+            style={{
+              opacity: headerFadeAnim,
+              transform: [{ translateY: activityCardSlideAnim }],
+            }}
+          >
+            <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
+              <View style={styles.activityHeader}>
+                <Text style={styles.activityTitle}>ACTIVITY STREAK</Text>
+                <View style={styles.activityLegend}>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, styles.activityLevel1]} />
+                    <Text style={styles.legendText}>1</Text>
                   </View>
-                ))}
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, styles.activityLevel2]} />
+                    <Text style={styles.legendText}>2</Text>
+                  </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, styles.activityLevel3]} />
+                    <Text style={styles.legendText}>3+</Text>
+                  </View>
+                </View>
               </View>
-              {selectedActivity && renderActivityDetails()}
-            </View>
-          </LinearGradient>
+              <View style={styles.activityGridWrapper}>
+                <View
+                  style={styles.activityGrid}
+                  onLayout={(event) =>
+                    setGridLayout({
+                      width: event.nativeEvent.layout.width,
+                      height: event.nativeEvent.layout.height,
+                    })
+                  }
+                >
+                  {activityColumns.map((column, colIdx) => (
+                    <View key={`col-${colIdx}`} style={styles.activityColumn}>
+                      {column.map((cell, rowIdx) => {
+                        const cellAnim = getActivityCellAnimation(cell.iso);
+                        return (
+                          <Animated.View
+                            key={cell.iso}
+                            style={{
+                              transform: [{ scale: cellAnim }],
+                            }}
+                          >
+                            <TouchableOpacity
+                              style={[
+                                styles.activityCell,
+                                getActivityLevelStyle(cell.level),
+                                cell.isToday && styles.activityCellToday,
+                              ]}
+                              onPress={() => {
+                                triggerActivityCellPulse(cell.iso, cell.level);
+                                setSelectedActivityMeta({ iso: cell.iso, row: rowIdx, col: colIdx });
+                              }}
+                              activeOpacity={0.85}
+                            />
+                          </Animated.View>
+                        );
+                      })}
+                    </View>
+                  ))}
+                </View>
+                {selectedActivity && renderActivityDetails()}
+              </View>
+            </LinearGradient>
+          </Animated.View>
         </ScrollView>
 
         <View style={styles.stickyTabsContainer}>
@@ -696,6 +958,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <TouchableOpacity
               style={[styles.tab, activeTab === 'workouts' && styles.tabActive]}
               onPress={() => setActiveTab('workouts')}
+              activeOpacity={0.7}
             >
               <Text style={[styles.tabText, activeTab === 'workouts' && styles.tabTextActive]}>
                 Workouts
@@ -704,11 +967,28 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <TouchableOpacity
               style={[styles.tab, activeTab === 'meals' && styles.tabActive]}
               onPress={() => setActiveTab('meals')}
+              activeOpacity={0.7}
             >
               <Text style={[styles.tabText, activeTab === 'meals' && styles.tabTextActive]}>
                 Meals
               </Text>
             </TouchableOpacity>
+            
+            <Animated.View
+              style={[
+                styles.tabIndicator,
+                {
+                  transform: [
+                    {
+                      translateX: tabSwitchAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 180],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            />
           </View>
         </View>
 
@@ -720,28 +1000,63 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         >
           {activeTab === 'workouts' ? renderWorkoutsSection() : renderMealsSection()}
         </ScrollView>
+
         {activeTab === 'workouts' && showWorkoutCompletionButton && (
-          <TouchableOpacity
-            style={[
-              styles.fabButton,
-              (isMarkingAll || allWorkoutsCompleted) && styles.fabButtonDisabled,
-            ]}
-            onPress={handleMarkAllComplete}
-            disabled={isMarkingAll || allWorkoutsCompleted}
-            activeOpacity={0.9}
+          <Animated.View
+            style={{
+              position: 'absolute',
+              bottom: 16,
+              right: 16,
+              transform: [
+                { scale: fabScaleAnim },
+                {
+                  rotate: fabRotationAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0deg', '360deg'],
+                  }),
+                },
+              ],
+            }}
           >
-            <Text style={styles.fabButtonText}>✓</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.fabButton,
+                (isMarkingAll || allWorkoutsCompleted) && styles.fabButtonDisabled,
+              ]}
+              onPress={handleMarkAllCompleteAnimated}
+              disabled={isMarkingAll || allWorkoutsCompleted}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.fabButtonText}>✓</Text>
+            </TouchableOpacity>
+          </Animated.View>
         )}
         {activeTab === 'meals' && totalMealCount > 0 && (
-          <TouchableOpacity
-            style={[styles.fabButton, isMarkingAll && styles.fabButtonDisabled]}
-            onPress={handleMarkAllComplete}
-            disabled={isMarkingAll}
-            activeOpacity={0.9}
+          <Animated.View
+            style={{
+              position: 'absolute',
+              bottom: 16,
+              right: 16,
+              transform: [
+                { scale: fabScaleAnim },
+                {
+                  rotate: fabRotationAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0deg', '360deg'],
+                  }),
+                },
+              ],
+            }}
           >
-            <Text style={styles.fabButtonText}>✓</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.fabButton, isMarkingAll && styles.fabButtonDisabled]}
+              onPress={handleMarkAllCompleteAnimated}
+              disabled={isMarkingAll}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.fabButtonText}>✓</Text>
+            </TouchableOpacity>
+          </Animated.View>
         )}
       </LinearGradient>
     </View>
@@ -970,6 +1285,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(108, 99, 255, 0.15)',
     gap: 12,
     marginBottom: 12,
+    position: 'relative',
   },
   tab: {
     flex: 1,
@@ -977,9 +1293,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: 'center',
+    zIndex: 1,
   },
   tabActive: {
+    // backgroundColor is now handled by animated indicator
+  },
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    width: 170,
+    height: 48,
+    borderRadius: 12,
     backgroundColor: 'rgba(108, 99, 255, 0.3)',
+    zIndex: 0,
   },
   tabText: {
     fontSize: 15,
@@ -990,9 +1317,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   fabButton: {
-    position: 'absolute',
-    bottom: 30,
-    right: 20,
     width: 60,
     height: 60,
     borderRadius: 30,
@@ -1142,7 +1466,6 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
     marginBottom: 12,
   },
-  // MEAL STYLES
   mealCard: {
     borderRadius: 20,
     padding: 20,
