@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Text, TouchableOpacity, Animated } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,22 +18,22 @@ import {
   ProfileSetupScreen,
   AuthNavigator,
 } from './src/screens';
-import { useEffect, useState, useCallback} from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { PhotoCheckin, User, WorkoutSessionEntry } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile } from './src/services/userProfileService';
-import { fetchHomeData } from './src/services/appDataService';
+import { fetchHomeData } from './src/services/dashboardService';
 import { formatLocalDateYMD } from './src/utils/date';
 import {
   ensureDailyMealForDate,
   setDailyMealsCompleted,
   setDailyMealEntriesDone,
-} from './src/services/supabaseMealService';
+} from './src/services/mealService';
 import { 
   createPhaseWithWorkouts,
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
-import { fetchWorkoutSessionEntries } from './src/services/supabaseWorkoutService';
+import { fetchWorkoutSessionEntries } from './src/services/workoutService';
 
 type RootTabParamList = {
   Home: undefined;
@@ -63,6 +63,197 @@ const TabPlaceholder: React.FC<{ title: string; subtitle: string }> = ({ title, 
     </View>
   </View>
 );
+
+// Custom animated tab bar button
+const AnimatedTabButton: React.FC<{
+  focused: boolean;
+  icon: IoniconName;
+  activeIcon: IoniconName;
+  onPress: () => void;
+}> = ({ focused, icon, activeIcon, onPress }) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const indicatorScale = useRef(new Animated.Value(focused ? 1 : 0)).current;
+  const iconOpacity = useRef(new Animated.Value(focused ? 1 : 0.4)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 8,
+        tension: 100,
+      }),
+      Animated.spring(indicatorScale, {
+        toValue: focused ? 1 : 0,
+        useNativeDriver: true,
+        friction: 6,
+        tension: 80,
+      }),
+      Animated.timing(iconOpacity, {
+        toValue: focused ? 1 : 0.4,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [focused]);
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.85,
+      useNativeDriver: true,
+      friction: 8,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 8,
+    }).start();
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      activeOpacity={1}
+      style={styles.tabButton}
+    >
+      <Animated.View
+        style={[
+          styles.tabButtonInner,
+          {
+            transform: [{ scale: scaleAnim }],
+          },
+        ]}
+      >
+        <Animated.View style={{ opacity: iconOpacity }}>
+          <Ionicons
+            name={focused ? activeIcon : icon}
+            size={30}
+            color={focused ? '#8B83FF' : 'rgba(255,255,255,0.4)'}
+          />
+        </Animated.View>
+
+        {/* Round indicator dot below icon */}
+        <Animated.View
+          style={[
+            styles.activeIndicatorDot,
+            {
+              transform: [{ scale: indicatorScale }],
+              opacity: indicatorScale,
+            },
+          ]}
+        />
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
+
+// Animated FAB component
+const AnimatedFAB: React.FC<{
+  config: {
+    icon: string;
+    label: string;
+    colors: string[];
+    iconColor: string;
+    labelColor: string;
+    onPress: () => void;
+  } | null;
+}> = ({ config }) => {
+  const scaleAnim = useRef(new Animated.Value(0)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (config) {
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+          friction: 7,
+          tension: 100,
+        }),
+        Animated.spring(rotateAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+          friction: 8,
+          tension: 80,
+        }),
+      ]).start();
+    } else {
+      Animated.timing(scaleAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [config]);
+
+  if (!config) return null;
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.88,
+      useNativeDriver: true,
+      friction: 6,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 6,
+    }).start();
+  };
+
+  return (
+    <Animated.View
+      style={[
+        styles.fabContainer,
+        {
+          transform: [
+            { scale: scaleAnim },
+            {
+              rotate: rotateAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['180deg', '0deg'],
+              }),
+            },
+          ],
+        },
+      ]}
+    >
+      <TouchableOpacity
+        style={styles.fabButton}
+        onPress={config.onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={1}
+      >
+        <LinearGradient
+          colors={config.colors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.fabGradient}
+        >
+          <Text style={[styles.fabIcon, { color: config.iconColor }]}>
+            {config.icon}
+          </Text>
+        </LinearGradient>
+        
+        {/* Glow ring */}
+        <View style={styles.fabGlowRing} />
+      </TouchableOpacity>
+      
+      <Text style={[styles.fabLabel, { color: config.labelColor }]}>
+        {config.label}
+      </Text>
+    </Animated.View>
+  );
+};
 
 function AppContent() {
   const navigationRef = useNavigationContainerRef<RootTabParamList>();
@@ -121,7 +312,6 @@ function AppContent() {
 
   const fabConfig = getFabAction(currentRouteName);
 
-  // Onboarding state - Start with 'complete' instead of 'profile'
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('complete');
   const [tempProfileData, setTempProfileData] = useState<any>(null);
   const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
@@ -259,25 +449,21 @@ function AppContent() {
         if (remoteProfile) {
           await updateUser(remoteProfile);
           
-          // Fetch home data (includes existing phase if any)
           const homeData = await fetchHomeData(authUser.id);
           if (cancelled) return;
 
-          // Only hydrate with existing phase, don't create new one
           await hydrateFromRemote({
             phase: homeData.phase ?? null,
             workoutSessions: homeData.recentSessions,
             mealPlans: homeData.todayMealPlan ? [homeData.todayMealPlan] : undefined,
           });
 
-          // Load workout sessions if there's an active phase
           if (homeData.phase?.id) {
             await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);
             await loadMealPlansFromSupabase(authUser.id, homeData.phase.id);
           }
           setOnboardingStep('complete');
         } else {
-          // No profile exists - show profile setup
           setOnboardingStep('profile');
         }
       } catch (err) {
@@ -310,7 +496,6 @@ function AppContent() {
 
     console.log('✅ User found, preparing physique selection');
     
-    // Prepare data for physique selection
     setTempProfileData({
       sex: state.user.sex,
       age: state.user.age,
@@ -321,7 +506,6 @@ function AppContent() {
     });
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
     
-    // Trigger physique selection flow
     setOnboardingStep('current_physique');
     
     console.log('✅ Onboarding step set to: current_physique');
@@ -357,7 +541,6 @@ function AppContent() {
     setOnboardingStep('complete');
   };
 
-  // Show loading while checking auth or loading app state
   if (isAuthLoading || isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -366,7 +549,6 @@ function AppContent() {
     );
   }
 
-  // Show auth screens if not authenticated
   if (!isAuthenticated) {
     return (
       <View style={styles.container}>
@@ -386,15 +568,12 @@ function AppContent() {
     );
   }
 
-  //Show onboarding based on step, allowing "Create Plan" to trigger physique selection
   const shouldShowOnboarding = 
     !state?.user || 
     onboardingStep === 'current_physique' || 
     onboardingStep === 'target_physique';
 
-  // Onboarding flow
   if (shouldShowOnboarding) {
-    // Profile setup - only if no user exists
     if (onboardingStep === 'profile' || !state?.user) {
       return (
         <View style={styles.container}>
@@ -404,7 +583,6 @@ function AppContent() {
       );
     }
 
-    // Current physique selection - can be triggered by "Create Plan" button
     if (onboardingStep === 'current_physique' && tempProfileData) {
       return (
         <View style={styles.container}>
@@ -417,7 +595,6 @@ function AppContent() {
       );
     }
 
-    // Target physique selection
     if (onboardingStep === 'target_physique' && tempCurrentLevel && tempProfileData) {
       return (
         <View style={styles.container}>
@@ -432,7 +609,6 @@ function AppContent() {
     }
   }
 
-  // Photo capture overlay
   if (isPhotoCaptureVisible && photoCapturePhaseId) {
     return (
       <View style={styles.container}>
@@ -446,7 +622,6 @@ function AppContent() {
     );
   }
 
-  // Main app
   return (
     <View style={styles.appShell}>
       <NavigationContainer
@@ -455,56 +630,14 @@ function AppContent() {
         onStateChange={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
       >
         <Tab.Navigator
-          screenOptions={({ route }) => ({
+          screenOptions={{
             headerShown: false,
             tabBarStyle: {
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              backgroundColor: '#0A0E27',
-              borderTopWidth: 0,
-              height: 88,
-              paddingBottom: 20,
-              paddingTop: 12,
-              paddingLeft: 16,
-              paddingRight: 140,
-              elevation: 0,
+              display: 'none',
             },
-            tabBarBackground: () => (
-              <LinearGradient
-                colors={['rgba(10, 14, 39, 0.98)', 'rgba(5, 7, 20, 1)']}
-                style={styles.tabBarBackground}
-              />
-            ),
-            tabBarItemStyle: {
-              flex: 0,
-              width: 70,
-              marginRight: 8,
-            },
-            tabBarActiveTintColor: '#6C63FF',
-            tabBarInactiveTintColor: 'rgba(255,255,255,0.5)',
-            tabBarIcon: ({ focused, color }) => {
-              const icon = TAB_ICONS[route.name];
-              if (!icon) return null;
-
-              return (
-                <Ionicons
-                  name={focused ? icon.active : icon.default}
-                  size={28}
-                  color={color}
-                />
-              );
-            },
-          })}
+          }}
         >
-          <Tab.Screen 
-            name="Home" 
-            options={{ tabBarLabel: 'Home' }}
-            listeners={{
-              tabPress: () => setProfileVisible(false),
-            }}
-          >
+          <Tab.Screen name="Home">
             {() =>
               state?.user ? (
                 <DashboardScreen 
@@ -524,13 +657,7 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          <Tab.Screen 
-            name="Workouts"
-            options={{ tabBarLabel: 'Workouts' }}
-            listeners={{
-              tabPress: () => setProfileVisible(false),
-            }}
-          >
+          <Tab.Screen name="Workouts">
             {() =>
               state?.user ? (
                 <PlansScreen
@@ -550,13 +677,7 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          <Tab.Screen 
-            name="Menu"
-            options={{ tabBarLabel: 'Menu' }}
-            listeners={{
-              tabPress: () => setProfileVisible(false),
-            }}
-          >
+          <Tab.Screen name="Menu">
             {() =>
               state?.user ? (
                 <MenuScreen
@@ -571,13 +692,7 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          <Tab.Screen 
-            name="Progress"
-            options={{ tabBarLabel: 'Progress' }}
-            listeners={{
-              tabPress: () => setProfileVisible(false),
-            }}
-          >
+          <Tab.Screen name="Progress">
             {() =>
               state?.currentPhase && state?.user ? (
                 <ProgressScreen 
@@ -598,27 +713,64 @@ function AppContent() {
             }
           </Tab.Screen>
         </Tab.Navigator>
-        {fabConfig && (
-          <View style={styles.actionButtonContainer}>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={fabConfig.onPress}
-            >
-              <LinearGradient
-                colors={fabConfig.colors}
-                style={styles.actionButtonGradient}
-              >
-                <Text style={[styles.actionButtonIcon, { color: fabConfig.iconColor }]}>
-                  {fabConfig.icon}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-            <Text style={[styles.actionButtonLabel, { color: fabConfig.labelColor }]}>
-              {fabConfig.label}
-            </Text>
+
+        {/* Custom Animated Tab Bar */}
+        <View style={styles.customTabBar} pointerEvents="box-none">
+          <View style={styles.tabBarBackground} pointerEvents="none">
+            <LinearGradient
+              colors={['rgba(10, 14, 39, 0.96)', 'rgba(5, 7, 20, 0.99)']}
+              style={styles.tabBarGradient}
+            />
+            <View style={styles.tabBarTopBorder} />
           </View>
-        )}
+          
+          <View style={styles.tabBarContent} pointerEvents="box-none">
+            <AnimatedTabButton
+              focused={currentRouteName === 'Home'}
+              icon={TAB_ICONS.Home.default}
+              activeIcon={TAB_ICONS.Home.active}
+              onPress={() => {
+                setProfileVisible(false);
+                navigationRef.navigate('Home');
+              }}
+            />
+            <AnimatedTabButton
+              focused={currentRouteName === 'Workouts'}
+              icon={TAB_ICONS.Workouts.default}
+              activeIcon={TAB_ICONS.Workouts.active}
+              onPress={() => {
+                setProfileVisible(false);
+                navigationRef.navigate('Workouts');
+              }}
+            />
+            <AnimatedTabButton
+              focused={currentRouteName === 'Menu'}
+              icon={TAB_ICONS.Menu.default}
+              activeIcon={TAB_ICONS.Menu.active}
+              onPress={() => {
+                setProfileVisible(false);
+                navigationRef.navigate('Menu');
+              }}
+            />
+            <AnimatedTabButton
+              focused={currentRouteName === 'Progress'}
+              icon={TAB_ICONS.Progress.default}
+              activeIcon={TAB_ICONS.Progress.active}
+              onPress={() => {
+                setProfileVisible(false);
+                navigationRef.navigate('Progress');
+              }}
+            />
+            
+            {/* Spacer for FAB */}
+            <View style={styles.fabSpacer} />
+          </View>
+          
+          {/* Animated FAB inside tab bar */}
+          <AnimatedFAB config={fabConfig} />
+        </View>
       </NavigationContainer>
+      
       {isProfileVisible && state?.user && (
         <View style={styles.profileSheet} pointerEvents="box-none">
           <View style={styles.profileSheetHandle} />
@@ -723,39 +875,6 @@ const styles = StyleSheet.create({
   profileSheetContent: {
     flex: 1,
   },
-  actionButtonContainer: {
-    position: 'absolute',
-    bottom: 20,
-    right: 16,
-    alignItems: 'center',
-    gap: 4,
-  },
-  actionButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    overflow: 'hidden',
-    shadowColor: '#00F5A0',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  actionButtonGradient: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionButtonIcon: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#0A0E27',
-  },
-  actionButtonLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#00F5A0',
-  },
   placeholderCard: {
     flex: 1,
     justifyContent: 'center',
@@ -776,13 +895,103 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
+  customTabBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 88,
+  },
   tabBarBackground: {
     position: 'absolute',
     left: 0,
     right: 0,
     top: 0,
     bottom: 0,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(108, 99, 255, 0.15)',
+  },
+  tabBarGradient: {
+    flex: 1,
+  },
+  tabBarTopBorder: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
+  },
+  tabBarContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 20,
+    paddingTop: 8,
+    paddingLeft: 4,
+    paddingRight: 4,
+  },
+  tabButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  tabButtonInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  activeIndicatorDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#6C63FF',
+    marginTop: 6,
+  },
+  fabSpacer: {
+    width: 80,
+  },
+  fabContainer: {
+    position: 'absolute',
+    bottom: 28,
+    right: 20,
+    alignItems: 'center',
+    gap: 6,
+  },
+  fabButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    position: 'relative',
+  },
+  fabGradient: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  fabGlowRing: {
+    position: 'absolute',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: 'rgba(0, 245, 160, 0.2)',
+    top: -4,
+    left: -4,
+  },
+  fabIcon: {
+    fontSize: 30,
+    fontWeight: '900',
+  },
+  fabLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 });
