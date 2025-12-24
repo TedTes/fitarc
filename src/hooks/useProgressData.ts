@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchProgressData, ProgressData } from '../services/appDataService';
+import { fetchProgressData, ProgressData } from '../services/progressService';
 
 export const useProgressData = (
   userId?: string,

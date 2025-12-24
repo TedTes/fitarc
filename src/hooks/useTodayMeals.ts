@@ -10,8 +10,8 @@ import {
   deleteMealEntry,
   setDailyMealsCompleted,
   setDailyMealEntriesDone,
-} from '../services/supabaseMealService';
-import { addMealEntryFromFood, FoodItem } from '../services/foodCatalogService';
+} from '../services/mealService';
+import { addMealEntryFromFood, FoodItem } from '../services/mealService';
 import { formatLocalDateYMD } from '../utils/date';
 
 type AddEntryPayload = {

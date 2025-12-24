@@ -22,7 +22,7 @@ import {
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
 import { useTodayMeals } from '../hooks/useTodayMeals';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
-import { MealEntry } from '../services/supabaseMealService';
+import { MealEntry } from '../services/mealService';
 import { useFabAction } from '../contexts/FabActionContext';
 import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
@@ -287,9 +287,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     setFabAction('Home', {
       label: 'Complete',
       icon: '✓',
-      colors: ['#00F5A0', '#00D9A3'] as const,
+      colors: ['#6C63FF', '#4C3BFF'] as const,
       iconColor: '#0A0E27',
-      labelColor: '#00F5A0',
+      labelColor: '#6C63FF',
       onPress: onCompleteAllToday,
     });
 

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchMealPlansForRange } from '../services/appDataService';
+import { fetchMealPlansForRange } from '../services/mealService';
 import {
   hasDailyMealsInRange,
   createMealPlanWithSeed,
-} from '../services/supabaseMealService';
+} from '../services/mealService';
 import { DailyMealPlan } from '../types/domain';
 
 const cache = new Map<string, DailyMealPlan[]>();

@@ -26,10 +26,10 @@ import {
   MuscleGroup,
 } from '../types/domain';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
-import { ExerciseCatalogEntry } from '../services/exerciseCatalogService';
+import { ExerciseCatalogEntry } from '../services/workoutService';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
 import { formatLocalDateYMD } from '../utils/date';
-import { fetchWorkoutCompletionMap } from '../services/supabaseWorkoutService';
+import { fetchWorkoutCompletionMap } from '../services/workoutService';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -148,7 +148,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   useFocusEffect(
     useCallback(() => {
       setFabAction('Workouts', {
-        label: 'Add',
+        label: 'Workout',
         icon: '+',
         colors: ['#6C63FF', '#4C3BFF'] as const,
         iconColor: '#0A0E27',

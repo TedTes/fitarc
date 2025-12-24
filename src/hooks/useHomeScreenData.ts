@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchHomeData, HomeScreenData } from '../services/appDataService';
+import { fetchHomeData, HomeScreenData } from '../services/dashboardService';
 
 const cache = new Map<string, HomeScreenData>();
 

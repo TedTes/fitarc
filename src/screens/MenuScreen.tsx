@@ -19,8 +19,8 @@ import {  PhasePlan, User } from '../types/domain';
 import { useMealPlans } from '../hooks/useMealPlans';
 import { formatLocalDateYMD } from '../utils/date';
 import { useTodayMeals, DUPLICATE_MEAL_ENTRY_ERROR } from '../hooks/useTodayMeals';
-import { FoodItem, createUserFood, fetchStoredFoods, searchFoods } from '../services/foodCatalogService';
-import { MealEntry } from '../services/supabaseMealService';
+import { FoodItem, createUserFood, fetchStoredFoods, searchFoods } from '../services/mealService';
+import { MealEntry } from '../services/mealService';
 import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
 import { useFabAction } from '../contexts/FabActionContext';
 
@@ -247,7 +247,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   useFocusEffect(
     useCallback(() => {
       setFabAction('Menu', {
-        label: 'Add Meal',
+        label: 'Meal',
         icon: '+',
         colors: ['#6C63FF', '#4C3BFF'] as const,
         iconColor: '#0A0E27',

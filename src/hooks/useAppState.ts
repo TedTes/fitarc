@@ -25,10 +25,10 @@ import {
   addExerciseToSession,
   updateSessionExercises,
   deleteWorkoutSessionExercise,
-} from '../services/supabaseWorkoutService';
+} from '../services/workoutService';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
-import { fetchMealPlansForRange } from '../services/appDataService';
+import { fetchMealPlansForRange } from '../services/mealService';
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(

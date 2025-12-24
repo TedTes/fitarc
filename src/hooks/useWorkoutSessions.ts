@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchPhaseWorkoutSessions } from '../services/appDataService';
+import { fetchPhaseWorkoutSessions } from '../services/workoutService';
 import { WorkoutSessionEntry } from '../types/domain';
 
 const sessionCache = new Map<string, WorkoutSessionEntry[]>();
