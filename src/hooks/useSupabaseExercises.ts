@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   ExerciseCatalogEntry,
   fetchExerciseCatalog,
-} from '../services/exerciseCatalogService';
+} from '../services/workoutService';
 
 type UseSupabaseExercisesResult = {
   exercises: ExerciseCatalogEntry[];

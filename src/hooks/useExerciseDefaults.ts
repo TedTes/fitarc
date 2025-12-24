@@ -5,7 +5,7 @@ import {
   deleteExerciseDefault,
   fetchExerciseDefaults,
   upsertExerciseDefault,
-} from '../services/exerciseDefaultsService';
+} from '../services/workoutService';
 
 export type UseExerciseDefaultsResult = {
   defaults: ExerciseDefault[];

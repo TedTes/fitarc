@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { DailyMealPlan, PhotoCheckin, PhasePlan, WorkoutSessionEntry } from '../types/domain';
 import { mapPhaseRow } from './phaseService';
-import { mapSessionRow } from './workoutSessionMapper';
+import { mapSessionRow } from '../utils/workoutSessionMapper';
 import {
   formatDateInTimeZone,
   getAppTimeZone,

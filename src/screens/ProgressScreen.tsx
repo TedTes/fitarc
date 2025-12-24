@@ -60,7 +60,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       }
 
       setFabAction('Progress', {
-        label: 'Add Progress',
+        label: 'Progress',
         icon: '+',
         colors: ['#6C63FF', '#4C3BFF'] as const,
         iconColor: '#0A0E27',

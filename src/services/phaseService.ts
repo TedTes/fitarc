@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { PhasePlan, User } from '../types/domain';
-import { generateWeekWorkouts, hasExistingWorkouts } from './workoutGenerationService';
+import { generateWeekWorkouts, hasExistingWorkouts } from './workoutService';
 
 type PhaseRow = {
   id: string;

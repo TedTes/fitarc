@@ -1,4 +1,4 @@
-import { MealsByType, MealEntry } from '../services/supabaseMealService';
+import { MealsByType, MealEntry } from '../services/mealService';
 
 export type MacroSummary = {
   calories: number;
