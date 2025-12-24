@@ -22,6 +22,7 @@ import { useTodayMeals, DUPLICATE_MEAL_ENTRY_ERROR } from '../hooks/useTodayMeal
 import { FoodItem, createUserFood, fetchStoredFoods, searchFoods } from '../services/foodCatalogService';
 import { MealEntry } from '../services/supabaseMealService';
 import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
+import { useFabAction } from '../contexts/FabActionContext';
 
 type MenuScreenProps = {
   user: User;
@@ -77,6 +78,7 @@ const formatFoodMacroSummary = (food: FoodItem): string => {
 };
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
+  const { setFabAction } = useFabAction();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayKey = formatLocalDateYMD(today);
@@ -221,7 +223,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
   };
 
-  const openAddMealModal = (defaultMealType?: string) => {
+  const openAddMealModal = useCallback((defaultMealType?: string) => {
     setSelectedMealTypeForAdding(defaultMealType || allMealTypes[0] || '');
     setMealModalMode('search');
     setFoodQuery('');
@@ -240,7 +242,22 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     if (!storedFoodsLoadedRef.current) {
       loadStoredFoods();
     }
-  };
+  }, [allMealTypes, loadStoredFoods]);
+
+  useFocusEffect(
+    useCallback(() => {
+      setFabAction('Menu', {
+        label: 'Add Meal',
+        icon: '+',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: () => openAddMealModal(),
+      });
+
+      return () => setFabAction('Menu', null);
+    }, [openAddMealModal, setFabAction])
+  );
 
   const closeMealModal = () => {
     setMealModalVisible(false);
@@ -579,14 +596,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           </View>
         </ScrollView>
 
-        {/* Global FAB "+" Button */}
-        <TouchableOpacity 
-          style={styles.fabButton}
-          onPress={() => openAddMealModal()}
-          activeOpacity={0.9}
-        >
-          <Text style={styles.fabButtonText}>+</Text>
-        </TouchableOpacity>
       </LinearGradient>
 
       {/* Add Food Modal */}
@@ -989,28 +998,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#FF3B30',
     fontWeight: '600',
-  },
-  fabButton: {
-    position: 'absolute',
-    bottom: 110,
-    right: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: COLORS.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  fabButtonText: {
-    fontSize: 32,
-    fontWeight: '300',
-    color: COLORS.textPrimary,
   },
   errorText: {
     color: '#FF3B30',

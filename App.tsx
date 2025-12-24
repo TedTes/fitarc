@@ -1,9 +1,11 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, ActivityIndicator, Text } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAppState } from './src/hooks';
+import { FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import { 
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
@@ -16,11 +18,17 @@ import {
   ProfileSetupScreen,
   AuthNavigator,
 } from './src/screens';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback} from 'react';
 import { PhotoCheckin, User, WorkoutSessionEntry } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/appDataService';
+import { formatLocalDateYMD } from './src/utils/date';
+import {
+  ensureDailyMealForDate,
+  setDailyMealsCompleted,
+  setDailyMealEntriesDone,
+} from './src/services/supabaseMealService';
 import { 
   createPhaseWithWorkouts,
   completePhase as completeRemotePhase 
@@ -83,6 +91,35 @@ function AppContent() {
   const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
   const [isProfileVisible, setProfileVisible] = useState(false);
   const [isCreatingPlan, setIsCreatingPlan] = useState(false);
+  const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
+  const { getFabAction } = useFabAction();
+
+  const handleCompleteAllToday = useCallback(async () => {
+    if (!state?.user || !state.currentPhase) return;
+    const todayStr = formatLocalDateYMD(new Date());
+    await markAllWorkoutsComplete(todayStr);
+
+    try {
+      const dailyMeal = await ensureDailyMealForDate(
+        state.user.id,
+        todayStr,
+        state.currentPhase.id
+      );
+      await setDailyMealsCompleted(dailyMeal.id, true);
+      await setDailyMealEntriesDone(dailyMeal.id, true);
+    } catch (error) {
+      console.error('Failed to complete meals for today', error);
+    }
+  }, [markAllWorkoutsComplete, state?.currentPhase, state?.user]);
+
+  const handleAddProgress = useCallback(() => {
+    if (!state?.currentPhase) return;
+    setPhotoCapturePhaseId(state.currentPhase.id);
+    setPhotoCaptureOptional(true);
+    setPhotoCaptureVisible(true);
+  }, [state?.currentPhase]);
+
+  const fabConfig = getFabAction(currentRouteName);
 
   // Onboarding state - Start with 'complete' instead of 'profile'
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('complete');
@@ -412,16 +449,38 @@ function AppContent() {
   // Main app
   return (
     <View style={styles.appShell}>
-      <NavigationContainer ref={navigationRef}>
+      <NavigationContainer
+        ref={navigationRef}
+        onReady={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
+        onStateChange={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
+      >
         <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
             tabBarStyle: {
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
               backgroundColor: '#0A0E27',
-              borderTopColor: 'rgba(255,255,255,0.1)',
-              height: 64,
-              paddingBottom: 8,
-              paddingTop: 8,
+              borderTopWidth: 0,
+              height: 88,
+              paddingBottom: 20,
+              paddingTop: 12,
+              paddingLeft: 16,
+              paddingRight: 140,
+              elevation: 0,
+            },
+            tabBarBackground: () => (
+              <LinearGradient
+                colors={['rgba(10, 14, 39, 0.98)', 'rgba(5, 7, 20, 1)']}
+                style={styles.tabBarBackground}
+              />
+            ),
+            tabBarItemStyle: {
+              flex: 0,
+              width: 70,
+              marginRight: 8,
             },
             tabBarActiveTintColor: '#6C63FF',
             tabBarInactiveTintColor: 'rgba(255,255,255,0.5)',
@@ -455,7 +514,7 @@ function AppContent() {
                   onProfilePress={() => setProfileVisible(true)}
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
-                  onMarkAllWorkoutsComplete={markAllWorkoutsComplete}
+                  onCompleteAllToday={handleCompleteAllToday}
                 />
               ) : (
                 <TabPlaceholder
@@ -528,6 +587,7 @@ function AppContent() {
                   workoutSessions={state.workoutSessions}
                   workoutLogs={state.workoutLogs}
                   strengthSnapshots={state.strengthSnapshots}
+                  onAddProgress={handleAddProgress}
                 />
               ) : (
                 <TabPlaceholder
@@ -538,6 +598,26 @@ function AppContent() {
             }
           </Tab.Screen>
         </Tab.Navigator>
+        {fabConfig && (
+          <View style={styles.actionButtonContainer}>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={fabConfig.onPress}
+            >
+              <LinearGradient
+                colors={fabConfig.colors}
+                style={styles.actionButtonGradient}
+              >
+                <Text style={[styles.actionButtonIcon, { color: fabConfig.iconColor }]}>
+                  {fabConfig.icon}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+            <Text style={[styles.actionButtonLabel, { color: fabConfig.labelColor }]}>
+              {fabConfig.label}
+            </Text>
+          </View>
+        )}
       </NavigationContainer>
       {isProfileVisible && state?.user && (
         <View style={styles.profileSheet} pointerEvents="box-none">
@@ -585,7 +665,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <FabActionProvider>
+        <AppContent />
+      </FabActionProvider>
     </AuthProvider>
   );
 }
@@ -641,6 +723,39 @@ const styles = StyleSheet.create({
   profileSheetContent: {
     flex: 1,
   },
+  actionButtonContainer: {
+    position: 'absolute',
+    bottom: 20,
+    right: 16,
+    alignItems: 'center',
+    gap: 4,
+  },
+  actionButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    overflow: 'hidden',
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  actionButtonGradient: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonIcon: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#0A0E27',
+  },
+  actionButtonLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#00F5A0',
+  },
   placeholderCard: {
     flex: 1,
     justifyContent: 'center',
@@ -660,5 +775,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  tabBarBackground: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(108, 99, 255, 0.15)',
   },
 });

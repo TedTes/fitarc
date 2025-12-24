@@ -16,6 +16,8 @@ import {
   UIManager,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from '@react-navigation/native';
+import { useFabAction } from '../contexts/FabActionContext';
 import {
   User,
   PhasePlan,
@@ -123,7 +125,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onAddExercise,
   onDeleteExercise,
 }) => {
-
+  const { setFabAction } = useFabAction();
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
   
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
@@ -138,6 +140,25 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const fabScale = useRef(new Animated.Value(0)).current;
   const exerciseCardsAnim = useRef<Map<string, Animated.Value>>(new Map()).current;
   const modalSlideAnim = useRef(new Animated.Value(300)).current;
+
+  const handleOpenExerciseModal = useCallback(() => {
+    setExerciseModalVisible(true);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      setFabAction('Workouts', {
+        label: 'Add',
+        icon: '+',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: handleOpenExerciseModal,
+      });
+
+      return () => setFabAction('Workouts', null);
+    }, [handleOpenExerciseModal, setFabAction])
+  );
 
   const resolvedSessions = useMemo(() => {
     if (!phase?.id) return workoutSessions;
@@ -762,31 +783,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </View>
         </ScrollView>
       </LinearGradient>
-      <Animated.View
-        style={{
-          position: 'absolute',
-          bottom: 110,
-          right: 20,
-          zIndex: 10,
-          transform: [
-            { scale: fabScale },
-            {
-              rotate: fabRotation.interpolate({
-                inputRange: [0, 1],
-                outputRange: ['0deg', '45deg'],
-              }),
-            },
-          ],
-        }}
-      >
-        <TouchableOpacity
-          style={styles.fabButton}
-          onPress={() => setExerciseModalVisible(!exerciseModalVisible)}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.fabButtonText}>+</Text>
-        </TouchableOpacity>
-      </Animated.View>
 
       <Modal
         transparent
@@ -1084,24 +1080,6 @@ const styles = StyleSheet.create({
   iconButtonText: {
     fontSize: 20,
     color: '#FF7B7B',
-  },
-  fabButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: COLORS.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  fabButtonText: {
-    fontSize: 32,
-    fontWeight: '300',
-    color: COLORS.textPrimary,
   },
   emptyCard: {
     backgroundColor: COLORS.surface,

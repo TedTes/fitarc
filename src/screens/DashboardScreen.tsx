@@ -23,6 +23,7 @@ import { useHomeScreenData } from '../hooks/useHomeScreenData';
 import { useTodayMeals } from '../hooks/useTodayMeals';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { MealEntry } from '../services/supabaseMealService';
+import { useFabAction } from '../contexts/FabActionContext';
 import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
 import {
@@ -84,8 +85,8 @@ type DashboardScreenProps = {
   onProfilePress?: () => void;
   onStartPhase?: () => void;
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
-  onMarkAllWorkoutsComplete?: (date: string) => Promise<void>;
   onCreateSession?: (date: string) => void;
+  onCompleteAllToday?: () => void;
 };
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
@@ -96,12 +97,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onStartPhase,
   onToggleWorkoutExercise,
   onCreateSession,
+  onCompleteAllToday,
 }) => {
+  const { setFabAction } = useFabAction();
   const { data: homeData } = useHomeScreenData(user.id);
   const derivedPhaseId = phase?.id ?? homeData?.phase?.id;
   const { sessions: phaseSessions } = useWorkoutSessions(user.id, derivedPhaseId);
   const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
-  const [isMarkingAll, setIsMarkingAll] = useState(false);
   const [localCompletionOverrides, setLocalCompletionOverrides] = useState<Record<string, boolean>>(
     {}
   );
@@ -275,6 +277,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const canLogWorkouts = !!resolvedPhase && !!onToggleWorkoutExercise;
 
   const pendingWorkoutCount = visibleWorkoutCards.length;
+
+  useEffect(() => {
+    if (!onCompleteAllToday) {
+      setFabAction('Home', null);
+      return () => setFabAction('Home', null);
+    }
+
+    setFabAction('Home', {
+      label: 'Complete',
+      icon: '✓',
+      colors: ['#00F5A0', '#00D9A3'] as const,
+      iconColor: '#0A0E27',
+      labelColor: '#00F5A0',
+      onPress: onCompleteAllToday,
+    });
+
+    return () => setFabAction('Home', null);
+  }, [onCompleteAllToday, setFabAction]);
 
   // 🎨 Animation functions
   const getActivityCellAnimation = (iso: string) => {

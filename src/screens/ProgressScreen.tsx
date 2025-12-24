@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
+import { useFabAction } from '../contexts/FabActionContext';
 import {
   PhasePlan,
   User,
@@ -26,6 +27,7 @@ type ProgressScreenProps = {
   workoutSessions: WorkoutSessionEntry[];
   workoutLogs: WorkoutLog[];
   strengthSnapshots: StrengthSnapshot[];
+  onAddProgress?: () => void;
 };
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
@@ -35,7 +37,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   workoutSessions: sessionFallback,
   workoutLogs: workoutLogFallback,
   strengthSnapshots: snapshotFallback,
+  onAddProgress,
 }) => {
+  const { setFabAction } = useFabAction();
   const { data, isLoading, refresh } = useProgressData(
     user.id,
     phase.id,
@@ -46,6 +50,26 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     useCallback(() => {
       refresh();
     }, [refresh])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!onAddProgress) {
+        setFabAction('Progress', null);
+        return () => setFabAction('Progress', null);
+      }
+
+      setFabAction('Progress', {
+        label: 'Add Progress',
+        icon: '+',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: onAddProgress,
+      });
+
+      return () => setFabAction('Progress', null);
+    }, [onAddProgress, setFabAction])
   );
   const resolvedPhase = data?.phase ?? phase;
   const mergedSessions = useMemo(() => {
