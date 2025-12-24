@@ -73,7 +73,7 @@ const AnimatedTabButton: React.FC<{
 }> = ({ focused, icon, activeIcon, onPress }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const indicatorScale = useRef(new Animated.Value(focused ? 1 : 0)).current;
-  const iconOpacity = useRef(new Animated.Value(focused ? 1 : 0.4)).current;
+  const popAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
@@ -88,11 +88,6 @@ const AnimatedTabButton: React.FC<{
         useNativeDriver: true,
         friction: 6,
         tension: 80,
-      }),
-      Animated.timing(iconOpacity, {
-        toValue: focused ? 1 : 0.4,
-        duration: 200,
-        useNativeDriver: true,
       }),
     ]).start();
   }, [focused]);
@@ -113,9 +108,28 @@ const AnimatedTabButton: React.FC<{
     }).start();
   };
 
+  const handlePress = () => {
+    popAnim.setValue(0);
+    Animated.sequence([
+      Animated.spring(popAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 6,
+        tension: 120,
+      }),
+      Animated.spring(popAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        friction: 7,
+        tension: 110,
+      }),
+    ]).start();
+    onPress();
+  };
+
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={handlePress}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       activeOpacity={1}
@@ -125,17 +139,27 @@ const AnimatedTabButton: React.FC<{
         style={[
           styles.tabButtonInner,
           {
-            transform: [{ scale: scaleAnim }],
+            transform: [
+              {
+                scale: Animated.multiply(
+                  scaleAnim,
+                  popAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 1.08],
+                  })
+                ),
+              },
+            ],
           },
         ]}
       >
-        <Animated.View style={{ opacity: iconOpacity }}>
+        <View>
           <Ionicons
             name={focused ? activeIcon : icon}
-            size={30}
-            color={focused ? '#8B83FF' : 'rgba(255,255,255,0.4)'}
+            size={34}
+            color="rgba(255,255,255,0.6)"
           />
-        </Animated.View>
+        </View>
 
         {/* Round indicator dot below icon */}
         <Animated.View
@@ -162,7 +186,8 @@ const AnimatedFAB: React.FC<{
     labelColor: string;
     onPress: () => void;
   } | null;
-}> = ({ config }) => {
+  popAnim: Animated.Value;
+}> = ({ config, popAnim }) => {
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
 
@@ -215,7 +240,15 @@ const AnimatedFAB: React.FC<{
         styles.fabContainer,
         {
           transform: [
-            { scale: scaleAnim },
+            {
+              scale: Animated.multiply(
+                scaleAnim,
+                popAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 1.08],
+                })
+              ),
+            },
             {
               rotate: rotateAnim.interpolate({
                 inputRange: [0, 1],
@@ -248,9 +281,24 @@ const AnimatedFAB: React.FC<{
         <View style={styles.fabGlowRing} />
       </TouchableOpacity>
       
-      <Text style={[styles.fabLabel, { color: config.labelColor }]}>
+      <Animated.Text
+        style={[
+          styles.fabLabel,
+          {
+            color: config.labelColor,
+            transform: [
+              {
+                scale: popAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 1.06],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
         {config.label}
-      </Text>
+      </Animated.Text>
     </Animated.View>
   );
 };
@@ -267,6 +315,7 @@ function AppContent() {
     startPhase,
     toggleWorkoutExercise,
     saveCustomWorkoutSession,
+    createWorkoutSession,
     addWorkoutExercise,
     deleteWorkoutExercise,
     deleteWorkoutSession,
@@ -284,6 +333,7 @@ function AppContent() {
   const [isCreatingPlan, setIsCreatingPlan] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
   const { getFabAction } = useFabAction();
+  const tabFabPop = useRef(new Animated.Value(0)).current;
 
   const handleCompleteAllToday = useCallback(async () => {
     if (!state?.user || !state.currentPhase) return;
@@ -311,6 +361,23 @@ function AppContent() {
   }, [state?.currentPhase]);
 
   const fabConfig = getFabAction(currentRouteName);
+  const triggerTabFabPop = useCallback(() => {
+    tabFabPop.setValue(0);
+    Animated.sequence([
+      Animated.spring(tabFabPop, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 6,
+        tension: 120,
+      }),
+      Animated.spring(tabFabPop, {
+        toValue: 0,
+        useNativeDriver: true,
+        friction: 7,
+        tension: 110,
+      }),
+    ]).start();
+  }, [tabFabPop]);
 
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('complete');
   const [tempProfileData, setTempProfileData] = useState<any>(null);
@@ -647,6 +714,7 @@ function AppContent() {
                   onProfilePress={() => setProfileVisible(true)}
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
+                  onCreateSession={createWorkoutSession}
                   onCompleteAllToday={handleCompleteAllToday}
                 />
               ) : (
@@ -731,6 +799,7 @@ function AppContent() {
               activeIcon={TAB_ICONS.Home.active}
               onPress={() => {
                 setProfileVisible(false);
+                triggerTabFabPop();
                 navigationRef.navigate('Home');
               }}
             />
@@ -740,6 +809,7 @@ function AppContent() {
               activeIcon={TAB_ICONS.Workouts.active}
               onPress={() => {
                 setProfileVisible(false);
+                triggerTabFabPop();
                 navigationRef.navigate('Workouts');
               }}
             />
@@ -749,6 +819,7 @@ function AppContent() {
               activeIcon={TAB_ICONS.Menu.active}
               onPress={() => {
                 setProfileVisible(false);
+                triggerTabFabPop();
                 navigationRef.navigate('Menu');
               }}
             />
@@ -758,6 +829,7 @@ function AppContent() {
               activeIcon={TAB_ICONS.Progress.active}
               onPress={() => {
                 setProfileVisible(false);
+                triggerTabFabPop();
                 navigationRef.navigate('Progress');
               }}
             />
@@ -767,7 +839,7 @@ function AppContent() {
           </View>
           
           {/* Animated FAB inside tab bar */}
-          <AnimatedFAB config={fabConfig} />
+          <AnimatedFAB config={fabConfig} popAnim={tabFabPop} />
         </View>
       </NavigationContainer>
       
@@ -924,21 +996,27 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     paddingBottom: 20,
     paddingTop: 8,
     paddingLeft: 4,
     paddingRight: 4,
   },
   tabButton: {
-    flex: 1,
+    flex: 0,
+    width: 70,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
+    marginRight: 7,
   },
   tabButtonInner: {
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+    backgroundColor: 'transparent',
   },
   activeIndicatorDot: {
     width: 6,
@@ -986,7 +1064,7 @@ const styles = StyleSheet.create({
     left: -4,
   },
   fabIcon: {
-    fontSize: 30,
+    fontSize: 34,
     fontWeight: '900',
   },
   fabLabel: {

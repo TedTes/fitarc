@@ -437,11 +437,7 @@ export const fetchWorkoutSessionEntries = async (
   }
 
   const rows = (data as any[]) || [];
-  console.log("legittt data")
-  console.log(rows)
   const res =  rows.map((session) => mapSessionRow(session, phasePlanId, timeZone));
-  console.log("from resusl")
-  console.log(res)
   return res;
 };
 
