@@ -130,21 +130,17 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   });
   const [isCreatingFood, setIsCreatingFood] = useState(false);
   const [storedFoods, setStoredFoods] = useState<FoodItem[]>([]);
-  const [isLoadingStoredFoods, setIsLoadingStoredFoods] = useState(false);
   const foodSearchCache = useRef<Map<string, FoodItem[]>>(new Map());
   const storedFoodsLoadedRef = useRef(false);
 
   const loadStoredFoods = useCallback(async () => {
     try {
-      setIsLoadingStoredFoods(true);
       const foods = await fetchStoredFoods(user.id);
       setStoredFoods(foods);
       storedFoodsLoadedRef.current = true;
     } catch (err) {
       console.error('Failed to load stored foods', err);
-    } finally {
-      setIsLoadingStoredFoods(false);
-    }
+    } 
   }, [user.id]);
 
   const weeklyMenus = useMemo(() => {
@@ -996,7 +992,7 @@ const styles = StyleSheet.create({
   },
   fabButton: {
     position: 'absolute',
-    bottom: 30,
+    bottom: 110,
     right: 20,
     width: 60,
     height: 60,
@@ -1004,6 +1000,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,

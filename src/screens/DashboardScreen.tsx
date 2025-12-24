@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
   Image,
   Animated,
   Easing,
@@ -21,7 +20,6 @@ import {
   MuscleGroup,
 } from '../types/domain';
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
-import { useMealPlans } from '../hooks/useMealPlans';
 import { useTodayMeals } from '../hooks/useTodayMeals';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { MealEntry } from '../services/supabaseMealService';
@@ -97,7 +95,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onProfilePress,
   onStartPhase,
   onToggleWorkoutExercise,
-  onMarkAllWorkoutsComplete,
   onCreateSession,
 }) => {
   const { data: homeData } = useHomeScreenData(user.id);
@@ -116,8 +113,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const headerFadeAnim = useRef(new Animated.Value(0)).current;
   const activityCardSlideAnim = useRef(new Animated.Value(50)).current;
   const tabSwitchAnim = useRef(new Animated.Value(0)).current;
-  const fabScaleAnim = useRef(new Animated.Value(0)).current;
-  const fabRotationAnim = useRef(new Animated.Value(0)).current;
   const exerciseCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
   const activityCellAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
@@ -255,24 +250,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   };
 
   const {
-    dailyMeal,
+
     mealsByType,
     isLoading: isMealsLoading,
     isMutating: isMealsMutating,
     error: todayMealsError,
-    toggleDayCompleted,
   } = useTodayMeals(
     resolvedPhase ? user.id : undefined,
     resolvedPhase ? today : undefined,
     Boolean(resolvedPhase),
     activePhaseId
   );
-  const { mealPlansByDate } = useMealPlans(
-    resolvedPhase ? user.id : undefined,
-    resolvedPhase ? todayStr : undefined,
-    resolvedPhase ? todayStr : undefined,
-    activePhaseId
-  );
+
   const baseMealTypes = useMemo(() => Object.keys(mealsByType), [mealsByType]);
   const mealGroups = useMemo(() => {
     return baseMealTypes
@@ -284,18 +273,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   }, [baseMealTypes, mealsByType]);
 
   const canLogWorkouts = !!resolvedPhase && !!onToggleWorkoutExercise;
-  const totalWorkoutCount = displayExercises.length;
+
   const pendingWorkoutCount = visibleWorkoutCards.length;
-  const allWorkoutsCompleted = totalWorkoutCount > 0 && pendingWorkoutCount === 0;
-
-  const totalMealCount = mealGroups.length;
-
-  const showWorkoutCompletionButton =
-    activeTab === 'workouts' &&
-    canLogWorkouts &&
-    resolvedPhase &&
-    hasSyncedWorkout &&
-    pendingWorkoutCount > 0;
 
   // 🎨 Animation functions
   const getActivityCellAnimation = (iso: string) => {
@@ -404,19 +383,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }).start();
   }, [activeTab]);
 
-  // 🎨 FAB entrance animation
-  useEffect(() => {
-    Animated.sequence([
-      Animated.delay(400),
-      Animated.spring(fabScaleAnim, {
-        toValue: 1,
-        tension: 80,
-        friction: 6,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
-
   // 🎨 Create button pulse animation
   useEffect(() => {
     const pulseLoop = Animated.loop(
@@ -524,59 +490,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     };
   }, [flushPendingToggles]);
 
-  const handleMarkAllComplete = async () => {
-    if (isMarkingAll) return;
-    
-    setIsMarkingAll(true);
-    
-    try {
-      if (activeTab === 'workouts') {
-        if (pendingWorkoutCount === 0) {
-          setIsMarkingAll(false);
-          return;
-        }
-        
-        if (onMarkAllWorkoutsComplete) {
-          await onMarkAllWorkoutsComplete(todayStr);
-        }
-        setLocalCompletionOverrides((prev) => {
-          const next = { ...prev };
-          visibleWorkoutCards.forEach((exercise) => {
-            next[getExerciseKey(exercise)] = true;
-          });
-          return next;
-        });
-      } else if (toggleDayCompleted) {
-        await toggleDayCompleted(true);
-      }
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Unable to complete action.');
-    } finally {
-      setIsMarkingAll(false);
-    }
-  };
-
-  const handleMarkAllCompleteAnimated = async () => {
-    if (isMarkingAll) return;
-
-    Animated.sequence([
-      Animated.spring(fabRotationAnim, {
-        toValue: 1,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-      Animated.delay(400),
-      Animated.spring(fabRotationAnim, {
-        toValue: 0,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    await handleMarkAllComplete();
-  };
 
   const renderMealGroup = (group: { mealType: string; entries: MealEntry[] }) => {
     const { mealType, entries } = group;
@@ -1001,63 +914,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           {activeTab === 'workouts' ? renderWorkoutsSection() : renderMealsSection()}
         </ScrollView>
 
-        {activeTab === 'workouts' && showWorkoutCompletionButton && (
-          <Animated.View
-            style={{
-              position: 'absolute',
-              bottom: 16,
-              right: 16,
-              transform: [
-                { scale: fabScaleAnim },
-                {
-                  rotate: fabRotationAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0deg', '360deg'],
-                  }),
-                },
-              ],
-            }}
-          >
-            <TouchableOpacity
-              style={[
-                styles.fabButton,
-                (isMarkingAll || allWorkoutsCompleted) && styles.fabButtonDisabled,
-              ]}
-              onPress={handleMarkAllCompleteAnimated}
-              disabled={isMarkingAll || allWorkoutsCompleted}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.fabButtonText}>✓</Text>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-        {activeTab === 'meals' && totalMealCount > 0 && (
-          <Animated.View
-            style={{
-              position: 'absolute',
-              bottom: 16,
-              right: 16,
-              transform: [
-                { scale: fabScaleAnim },
-                {
-                  rotate: fabRotationAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0deg', '360deg'],
-                  }),
-                },
-              ],
-            }}
-          >
-            <TouchableOpacity
-              style={[styles.fabButton, isMarkingAll && styles.fabButtonDisabled]}
-              onPress={handleMarkAllCompleteAnimated}
-              disabled={isMarkingAll}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.fabButtonText}>✓</Text>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
       </LinearGradient>
     </View>
   );
@@ -1315,27 +1171,6 @@ const styles = StyleSheet.create({
   },
   tabTextActive: {
     color: '#FFFFFF',
-  },
-  fabButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#00F5A0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  fabButtonDisabled: {
-    opacity: 0.5,
-  },
-  fabButtonText: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#0A0E27',
   },
   section: {
     gap: 16,

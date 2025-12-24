@@ -379,10 +379,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
   }, [enqueueSave, isDirty, selectedPlan]);
 
-  const handleSelectDate = async (dateStr: string) => {
-    await flushAutosave();
-    setSelectedDate(dateStr);
-  };
+ 
 
   const handleSelectDateAnimated = async (dateStr: string) => {
     await flushAutosave();
@@ -768,8 +765,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       <Animated.View
         style={{
           position: 'absolute',
-          bottom: 30,
+          bottom: 110,
           right: 20,
+          zIndex: 10,
           transform: [
             { scale: fabScale },
             {
