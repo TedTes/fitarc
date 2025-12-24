@@ -18,6 +18,7 @@ import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
 import { createMealPlanForDate } from '../utils/dietPlanner';
 import {
   fetchWorkoutSessionEntries,
+  createWorkoutSession,
   deleteWorkoutSessionRemote,
   toggleExerciseAndCheckSession, 
   markAllExercisesComplete,
@@ -361,6 +362,31 @@ export const useAppState = () => {
     [updateState]
   );
 
+  const createWorkoutSessionForDate = useCallback(
+    async (date: string) => {
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
+      const existing = current.workoutSessions.find(
+        (entry) => entry.phasePlanId === current.currentPhase!.id && entry.date === date
+      );
+      if (existing) return;
+
+      const created = await createWorkoutSession({
+        userId: current.user.id,
+        planId: current.currentPhase.id,
+        date,
+      });
+
+      updateState((prev) => ({
+        ...prev,
+        workoutSessions: upsertWorkoutSession(prev.workoutSessions, created),
+        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(created)),
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
+    },
+    [updateState]
+  );
+
   const addWorkoutExercise = useCallback(
     async (sessionId: string, exercise: WorkoutSessionExercise) => {
       const current = stateRef.current;
@@ -445,6 +471,7 @@ export const useAppState = () => {
     loadWorkoutSessionsFromSupabase,
     loadMealPlansFromSupabase,
     saveCustomWorkoutSession,
+    createWorkoutSession: createWorkoutSessionForDate,
     addWorkoutExercise,
     deleteWorkoutExercise,
     deleteWorkoutSession,

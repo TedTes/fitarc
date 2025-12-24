@@ -26,13 +26,23 @@ export const mapSessionRow = (
   const performedAtRaw = session.performed_at;
   let sessionDate = formatLocalDateYMD(new Date());
   if (performedAtRaw) {
-    if (typeof performedAtRaw === 'string' && !performedAtRaw.includes('T')) {
-      sessionDate = performedAtRaw;
+    if (typeof performedAtRaw === 'string') {
+      if (!performedAtRaw.includes('T')) {
+        sessionDate = performedAtRaw;
+      } else {
+        const [datePart, timePartWithZone = ''] = performedAtRaw.split('T');
+        const timePart = timePartWithZone.split('.')[0];
+        const isMidnightUtc =
+          timePart.startsWith('00:00:00') &&
+          (timePartWithZone.includes('Z') || timePartWithZone.includes('+00:00'));
+        sessionDate = isMidnightUtc
+          ? datePart
+          : formatDateInTimeZone(new Date(performedAtRaw), timeZone);
+      }
     } else {
       sessionDate = formatDateInTimeZone(new Date(performedAtRaw), timeZone);
     }
   }
-
   return {
     id: session.id,
     phasePlanId: phasePlanId ?? session.plan_id,

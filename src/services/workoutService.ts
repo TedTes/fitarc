@@ -195,6 +195,43 @@ export const deleteExerciseDefault = async (id: string) => {
   }
 };
 
+type CreateWorkoutSessionInput = {
+  userId: string;
+  planId: string;
+  date: string;
+  splitDayId?: string | null;
+};
+
+export const createWorkoutSession = async ({
+  userId,
+  planId,
+  date,
+  splitDayId = null,
+}: CreateWorkoutSessionInput): Promise<WorkoutSessionEntry> => {
+  const performedAt = normalizeDate(date);
+  const { data, error } = await supabase
+    .from('fitarc_workout_sessions')
+    .insert({
+      user_id: userId,
+      plan_id: planId,
+      performed_at: performedAt,
+      split_day_id: splitDayId,
+    })
+    .select('id, user_id, plan_id, performed_at, notes, complete')
+    .single();
+
+  if (error) throw error;
+
+  return mapSessionRow(
+    {
+      ...data,
+      session_exercises: [],
+    },
+    planId,
+    getAppTimeZone()
+  );
+};
+
 export type WorkoutSessionRow = {
   id: string;
   user_id: string;
@@ -400,8 +437,12 @@ export const fetchWorkoutSessionEntries = async (
   }
 
   const rows = (data as any[]) || [];
-
-  return rows.map((session) => mapSessionRow(session, phasePlanId, timeZone));
+  console.log("legittt data")
+  console.log(rows)
+  const res =  rows.map((session) => mapSessionRow(session, phasePlanId, timeZone));
+  console.log("from resusl")
+  console.log(res)
+  return res;
 };
 
 type UpsertWorkoutSessionInput = {

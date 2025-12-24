@@ -127,7 +127,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     : workoutSessions.length
     ? workoutSessions
     : homeData?.recentSessions ?? [];
-  
+
   const today = new Date();
   const todayStr = formatLocalDateYMD(today);
   const todaySession = resolvedSessions.find((session) => session.date === todayStr) || null;
@@ -1017,7 +1017,7 @@ const styles = StyleSheet.create({
   contentScrollContent: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 40,
+    paddingBottom: 120,
   },
   activityCard: {
     borderRadius: 20,
