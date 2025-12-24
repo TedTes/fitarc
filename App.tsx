@@ -16,7 +16,6 @@ import {
   ProfileSetupScreen,
   AuthNavigator,
 } from './src/screens';
-import { generatePhase } from './src/utils';
 import { useEffect, useState, useCallback } from 'react';
 import { PhotoCheckin, User, WorkoutSessionEntry } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -33,7 +32,6 @@ type RootTabParamList = {
   Workouts: undefined;
   Menu: undefined;
   Progress: undefined;
-  More: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
@@ -45,12 +43,9 @@ const TAB_ICONS: Record<keyof RootTabParamList, { default: IoniconName; active: 
   Workouts: { default: 'barbell-outline', active: 'barbell' },
   Menu: { default: 'fast-food-outline', active: 'fast-food' },
   Progress: { default: 'stats-chart-outline', active: 'stats-chart' },
-  More: { default: 'menu-outline', active: 'menu' },
 };
 
 type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'complete';
-
-const EmptyScreen = () => null;
 
 const TabPlaceholder: React.FC<{ title: string; subtitle: string }> = ({ title, subtitle }) => (
   <View style={styles.container}>
@@ -96,7 +91,7 @@ function AppContent() {
 
   const closeProfileSheet = () => {
     setProfileVisible(false);
-    if (navigationRef.isReady() && navigationRef.getCurrentRoute()?.name === 'More') {
+    if (navigationRef.isReady()) {
       navigationRef.navigate('Home');
     }
   };
@@ -433,26 +428,7 @@ function AppContent() {
             tabBarIcon: ({ focused, color }) => {
               const icon = TAB_ICONS[route.name];
               if (!icon) return null;
-              
-              if (route.name === 'More') {
-                return (
-                  <View style={styles.menuIconContainer}>
-                    <View style={styles.menuIconStack}>
-                      {[0, 1, 2].map((idx) => (
-                        <View
-                          key={idx}
-                          style={[
-                            styles.menuIconBar, 
-                            { backgroundColor: color },
-                            focused && styles.menuIconBarActive
-                          ]}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                );
-              }
-              
+
               return (
                 <Ionicons
                   name={focused ? icon.active : icon.default}
@@ -561,34 +537,6 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          <Tab.Screen
-            name="More"
-            component={EmptyScreen}
-            options={{
-              tabBarLabel: 'More', 
-              tabBarIcon: ({ color, focused }) => (
-                <View style={styles.menuIconContainer}>
-                  <View style={styles.menuIconStack}>
-                    {[0, 1, 2].map((idx) => (
-                      <View
-                        key={idx}
-                        style={[
-                          styles.menuIconBar, 
-                          { backgroundColor: color },
-                          focused && styles.menuIconBarActive
-                        ]}
-                      />
-                    ))}
-                  </View>
-                </View>
-              ),
-            }}
-            listeners={{
-              tabPress: () => {
-                setProfileVisible(true);
-              },
-            }}
-          />
         </Tab.Navigator>
       </NavigationContainer>
       {isProfileVisible && state?.user && (
@@ -692,26 +640,6 @@ const styles = StyleSheet.create({
   },
   profileSheetContent: {
     flex: 1,
-  },
-  menuIconContainer: {
-    width: 28,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  menuIconStack: {
-    width: 24,
-    height: 18,
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  menuIconBar: {
-    width: 24,
-    height: 3, 
-    borderRadius: 2,
-  },
-  menuIconBarActive: {
-    height: 3.5,
   },
   placeholderCard: {
     flex: 1,
