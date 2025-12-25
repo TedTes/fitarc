@@ -100,9 +100,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onCompleteAllToday,
 }) => {
   const { setFabAction } = useFabAction();
-  const { data: homeData } = useHomeScreenData(user.id);
+  const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const derivedPhaseId = phase?.id ?? homeData?.phase?.id;
-  const { sessions: phaseSessions } = useWorkoutSessions(user.id, derivedPhaseId);
+  const { sessions: phaseSessions, isLoading: isSessionsLoading } = useWorkoutSessions(
+    user.id,
+    derivedPhaseId
+  );
   const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const [localCompletionOverrides, setLocalCompletionOverrides] = useState<Record<string, boolean>>(
     {}
@@ -164,6 +167,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     [displayExercises, isExerciseMarked]
   );
   
+  const hasAnySessions = resolvedSessions.length > 0;
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
   const displayName = user.name?.trim() || 'Athlete';
@@ -644,7 +648,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const renderWorkoutsSection = () => (
     <View style={styles.section}>
-      {!resolvedPhase ? (
+      {!resolvedPhase && !hasAnySessions && !isHomeLoading && !isSessionsLoading ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>🎯</Text>
           <Text style={styles.emptyTitle}>No active plan</Text>

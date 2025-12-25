@@ -334,6 +334,8 @@ function AppContent() {
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
   const { getFabAction } = useFabAction();
   const tabFabPop = useRef(new Animated.Value(0)).current;
+  const showPlanTabs = Boolean(state?.currentPhase);
+  const [bootstrapComplete, setBootstrapComplete] = useState(false);
 
   const handleCompleteAllToday = useCallback(async () => {
     if (!state?.user || !state.currentPhase) return;
@@ -389,6 +391,14 @@ function AppContent() {
       navigationRef.navigate('Home');
     }
   };
+
+  useEffect(() => {
+    if (!navigationRef.isReady()) return;
+    if (showPlanTabs) return;
+    if (currentRouteName === 'Workouts' || currentRouteName === 'Menu') {
+      navigationRef.navigate('Home');
+    }
+  }, [currentRouteName, navigationRef, showPlanTabs]);
 
   const waitForInitialSessions = useCallback(async (
     userId: string,
@@ -505,8 +515,12 @@ function AppContent() {
   useEffect(() => {
     if (!authUser) return;
     if (!state) return;
-    if (state.currentPhase) return;
+    if (state.currentPhase) {
+      setBootstrapComplete(true);
+      return;
+    }
     let cancelled = false;
+    setBootstrapComplete(false);
 
     const bootstrapUser = async () => {
       try {
@@ -535,6 +549,10 @@ function AppContent() {
         }
       } catch (err) {
         console.error('Failed to bootstrap user', err);
+      } finally {
+        if (!cancelled) {
+          setBootstrapComplete(true);
+        }
       }
     };
 
@@ -616,6 +634,14 @@ function AppContent() {
     );
   }
 
+  if (isAuthenticated && !bootstrapComplete) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6C63FF" />
+      </View>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <View style={styles.container}>
@@ -636,7 +662,6 @@ function AppContent() {
   }
 
   const shouldShowOnboarding = 
-    !state?.user || 
     onboardingStep === 'current_physique' || 
     onboardingStep === 'target_physique';
 
@@ -725,41 +750,45 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          <Tab.Screen name="Workouts">
-            {() =>
-              state?.user ? (
-                <PlansScreen
-                  user={state.user}
-                  phase={state.currentPhase}
-                  workoutSessions={state.workoutSessions}
-                  onSaveCustomSession={saveCustomWorkoutSession}
-                  onAddExercise={addWorkoutExercise}
-                  onDeleteExercise={deleteWorkoutExercise}
-                  onDeleteSession={deleteWorkoutSession}
-                />
-              ) : (
-                <TabPlaceholder
-                  title="Workouts loading"
-                  subtitle="Finish onboarding to sync your workouts."
-                />
-              )
-            }
-          </Tab.Screen>
-          <Tab.Screen name="Menu">
-            {() =>
-              state?.user ? (
-                <MenuScreen
-                  user={state.user}
-                  phase={state.currentPhase}
-                />
-              ) : (
-                <TabPlaceholder
-                  title="Nutrition coming soon"
-                  subtitle="Complete onboarding to generate meal plans."
-                />
-              )
-            }
-          </Tab.Screen>
+          {showPlanTabs && (
+            <Tab.Screen name="Workouts">
+              {() =>
+                state?.user ? (
+                  <PlansScreen
+                    user={state.user}
+                    phase={state.currentPhase}
+                    workoutSessions={state.workoutSessions}
+                    onSaveCustomSession={saveCustomWorkoutSession}
+                    onAddExercise={addWorkoutExercise}
+                    onDeleteExercise={deleteWorkoutExercise}
+                    onDeleteSession={deleteWorkoutSession}
+                  />
+                ) : (
+                  <TabPlaceholder
+                    title="Workouts loading"
+                    subtitle="Finish onboarding to sync your workouts."
+                  />
+                )
+              }
+            </Tab.Screen>
+          )}
+          {showPlanTabs && (
+            <Tab.Screen name="Menu">
+              {() =>
+                state?.user ? (
+                  <MenuScreen
+                    user={state.user}
+                    phase={state.currentPhase}
+                  />
+                ) : (
+                  <TabPlaceholder
+                    title="Nutrition coming soon"
+                    subtitle="Complete onboarding to generate meal plans."
+                  />
+                )
+              }
+            </Tab.Screen>
+          )}
           <Tab.Screen name="Progress">
             {() =>
               state?.currentPhase && state?.user ? (
@@ -803,26 +832,30 @@ function AppContent() {
                 navigationRef.navigate('Home');
               }}
             />
-            <AnimatedTabButton
-              focused={currentRouteName === 'Workouts'}
-              icon={TAB_ICONS.Workouts.default}
-              activeIcon={TAB_ICONS.Workouts.active}
-              onPress={() => {
-                setProfileVisible(false);
-                triggerTabFabPop();
-                navigationRef.navigate('Workouts');
-              }}
-            />
-            <AnimatedTabButton
-              focused={currentRouteName === 'Menu'}
-              icon={TAB_ICONS.Menu.default}
-              activeIcon={TAB_ICONS.Menu.active}
-              onPress={() => {
-                setProfileVisible(false);
-                triggerTabFabPop();
-                navigationRef.navigate('Menu');
-              }}
-            />
+            {showPlanTabs && (
+              <AnimatedTabButton
+                focused={currentRouteName === 'Workouts'}
+                icon={TAB_ICONS.Workouts.default}
+                activeIcon={TAB_ICONS.Workouts.active}
+                onPress={() => {
+                  setProfileVisible(false);
+                  triggerTabFabPop();
+                  navigationRef.navigate('Workouts');
+                }}
+              />
+            )}
+            {showPlanTabs && (
+              <AnimatedTabButton
+                focused={currentRouteName === 'Menu'}
+                icon={TAB_ICONS.Menu.default}
+                activeIcon={TAB_ICONS.Menu.active}
+                onPress={() => {
+                  setProfileVisible(false);
+                  triggerTabFabPop();
+                  navigationRef.navigate('Menu');
+                }}
+              />
+            )}
             <AnimatedTabButton
               focused={currentRouteName === 'Progress'}
               icon={TAB_ICONS.Progress.default}
@@ -1064,8 +1097,8 @@ const styles = StyleSheet.create({
     left: -4,
   },
   fabIcon: {
-    fontSize: 34,
-    fontWeight: '900',
+    fontSize: 44,
+    fontWeight: '300',
   },
   fabLabel: {
     fontSize: 11,
