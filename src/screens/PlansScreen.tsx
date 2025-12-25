@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Alert,
   Modal,
   TextInput,
   Pressable,
@@ -440,6 +441,16 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     // Animate modal close first
     setExerciseModalVisible(false);
     
+    const isDuplicate = editingExercisesRef.current.some(
+      (exercise) =>
+        (entry.id && exercise.exerciseId === entry.id) ||
+        exercise.name.toLowerCase() === entry.name.toLowerCase()
+    );
+    if (isDuplicate) {
+      Alert.alert('Duplicate exercise', "This exercise is already in today's workout.");
+      return;
+    }
+
     const wasDirty = isDirty;
     const displayOrder = editingExercisesRef.current.length + 1;
     const newExercise = { ...convertCatalogExercise(entry), displayOrder };
@@ -485,6 +496,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         setIsDirty(wasDirty);
       }
     } catch (err) {
+      if (err instanceof Error && err.message === 'duplicate_exercise') {
+        Alert.alert('Duplicate exercise', "This exercise is already in today's workout.");
+        return;
+      }
       console.error('Failed to save workout session:', err);
     }
   };

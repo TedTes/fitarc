@@ -587,6 +587,19 @@ export const addExerciseToSession = async ({
   exercise,
   displayOrder,
 }: AddExerciseToSessionInput): Promise<string> => {
+  if (exercise.exerciseId) {
+    const existingRes = await supabase
+      .from('fitarc_workout_session_exercises')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('exercise_id', exercise.exerciseId)
+      .maybeSingle();
+    if (existingRes.error) throw existingRes.error;
+    if (existingRes.data?.id) {
+      throw new Error('duplicate_exercise');
+    }
+  }
+
   const insertExerciseRes = await supabase
     .from('fitarc_workout_session_exercises')
     .insert({

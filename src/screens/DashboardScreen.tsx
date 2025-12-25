@@ -122,11 +122,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const activePhaseId = resolvedPhase?.id ?? null;
-  const resolvedSessions = phaseSessions.length
-    ? phaseSessions
-    : workoutSessions.length
-    ? workoutSessions
-    : homeData?.recentSessions ?? [];
+  const resolvedSessions = useMemo(() => {
+    const fallbackSessions = phaseSessions.length
+      ? phaseSessions
+      : homeData?.recentSessions ?? [];
+    const preferredSessions = workoutSessions.length ? workoutSessions : fallbackSessions;
+    if (!derivedPhaseId) return preferredSessions;
+    return preferredSessions.filter((session) => session.phasePlanId === derivedPhaseId);
+  }, [derivedPhaseId, homeData?.recentSessions, phaseSessions, workoutSessions]);
 
   const today = new Date();
   const todayStr = formatLocalDateYMD(today);
@@ -684,7 +687,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </View>
       ) : (
         <View style={styles.verticalList}>
-          {displayExercises.map((exercise, index) => {
+          {visibleWorkoutCards.map((exercise, index) => {
             const isMarked = isExerciseMarked(exercise);
             const cardKey = `${todayStr}-${exercise.name}-${index}`;
             const scaleAnim = getExerciseCardAnimation(cardKey);

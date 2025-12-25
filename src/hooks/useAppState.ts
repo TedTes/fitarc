@@ -398,9 +398,10 @@ export const useAppState = () => {
         exercise,
         displayOrder,
       });
+      await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
       return sessionExerciseId;
     },
-    []
+    [loadWorkoutSessionsFromSupabase]
   );
 
   const deleteWorkoutExercise = useCallback(
