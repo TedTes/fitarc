@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
-import { User, ExperienceLevel } from '../types/domain';
+import { User, ExperienceLevel, TrackingPreferences } from '../types/domain';
 
 const PROFILE_TABLE = process.env.EXPO_PUBLIC_PROFILE_TABLE || 'fitarc_user_profiles';
 
@@ -12,6 +12,7 @@ export type RemoteProfileRow = {
   training_experience: ExperienceLevel | null;
   training_split?: User['trainingSplit'] | null;
   avatar_url?: string | null;
+  tracking_preferences?: TrackingPreferences | null;
   created_at: string;
 };
 
@@ -48,6 +49,7 @@ const mapRowToUser = (row: RemoteProfileRow): User => ({
   trainingSplit: row.training_split ?? 'full_body',
   eatingMode: 'maintenance',
   avatarUrl: row.avatar_url ?? undefined,
+  trackingPreferences: row.tracking_preferences ?? undefined,
   createdAt: row.created_at,
 });
 
@@ -65,25 +67,42 @@ export const fetchUserProfile = async (userId: string): Promise<User | null> => 
   if (!data) {
     return null;
   }
-
+  
   return mapRowToUser(data as RemoteProfileRow);
 };
 
 export const saveUserProfile = async (user: User): Promise<void> => {
+  const payload: RemoteProfileRow = {
+    user_id: user.id,
+    name: user.name ?? null,
+    gender: user.sex,
+    birth_date: convertAgeToBirthDate(user.age),
+    height_cm: user.heightCm,
+    training_experience: user.experienceLevel,
+    training_split: user.trainingSplit ?? 'full_body',
+    avatar_url: user.avatarUrl ?? null,
+    created_at: user.createdAt,
+  };
+
+  if (user.trackingPreferences !== undefined) {
+    payload.tracking_preferences = user.trackingPreferences ?? null;
+  }
+
+  const { error } = await supabase.from(PROFILE_TABLE).upsert(payload);
+
+  if (error) {
+    throw error;
+  }
+};
+
+export const updateTrackingPreferences = async (
+  userId: string,
+  preferences: TrackingPreferences
+): Promise<void> => {
   const { error } = await supabase
     .from(PROFILE_TABLE)
-    .upsert({
-      user_id: user.id,
-      name: user.name ?? null,
-      gender: user.sex,
-      birth_date: convertAgeToBirthDate(user.age),
-      height_cm: user.heightCm,
-      training_experience: user.experienceLevel,
-      training_split: user.trainingSplit ?? 'full_body',
-      avatar_url: user.avatarUrl ?? null,
-      created_at: user.createdAt,
-    });
-
+    .update({ tracking_preferences: preferences })
+    .eq('user_id', userId);
   if (error) {
     throw error;
   }

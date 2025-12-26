@@ -1,6 +1,7 @@
 import { StrengthSnapshot, WorkoutLog, LiftId, MuscleGroup, MovementPattern } from '../types/domain';
 
 export type StrengthTrendView = {
+  key: LiftId;
   lift: string;
   weights: number[];
   glyph: string;
@@ -9,11 +10,13 @@ export type StrengthTrendView = {
 };
 
 export type VolumeEntryView = {
+  key: MuscleGroup;
   group: string;
   sets: number;
 };
 
 export type MovementPatternView = {
+  key: MovementPattern;
   name: string;
   sessions: number;
 };
@@ -27,31 +30,25 @@ export type LiftHistoryView = {
   insight: string;
 };
 
-const LIFT_LABELS: Record<LiftId, string> = {
-  bench_press: 'Bench Press',
-  squat: 'Squat',
-  deadlift: 'Deadlift',
-};
-
-const MOVEMENT_LABELS: Record<MovementPattern, string> = {
-  squat: 'Squat',
-  hinge: 'Hinge',
-  horizontal_push: 'H. Push',
-  vertical_push: 'V. Push',
-  horizontal_pull: 'H. Pull',
-  vertical_pull: 'V. Pull',
-};
-
-const MUSCLE_LABELS: Record<MuscleGroup, string> = {
-  chest: 'Chest',
-  back: 'Back',
-  legs: 'Legs',
-  shoulders: 'Shoulders',
-  arms: 'Arms',
-  core: 'Core',
+export type TrackingLabelMaps = {
+  lifts?: Record<string, string>;
+  movements?: Record<string, string>;
+  muscles?: Record<string, string>;
 };
 
 const GLYPH_STEPS = ['▂', '▃', '▅', '▆', '█'];
+
+const getLabel = (labels: Record<string, string> | undefined, key: string) =>
+  labels?.[key] ?? key;
+
+const getAllowedKeys = (
+  labels: Record<string, string> | undefined,
+  observed: string[]
+) => {
+  const preferred = labels && Object.keys(labels).length ? Object.keys(labels) : null;
+  const base = preferred ?? observed;
+  return Array.from(new Set(base));
+};
 
 const buildGlyph = (values: number[]): string => {
   if (values.length === 0) return '';
@@ -72,7 +69,10 @@ const createZeroVolume = <T extends string>(keys: T[]): Record<T, number> =>
 
 const sortDesc = (a: VolumeEntryView, b: VolumeEntryView) => b.sets - a.sets;
 
-export const buildStrengthTrends = (snapshots: StrengthSnapshot[]): StrengthTrendView[] => {
+export const buildStrengthTrends = (
+  snapshots: StrengthSnapshot[],
+  labelMaps?: TrackingLabelMaps
+): StrengthTrendView[] => {
   const grouped = snapshots.reduce<Record<LiftId, StrengthSnapshot[]>>((acc, snapshot) => {
     if (!snapshot.lift) {
       return acc;
@@ -90,7 +90,8 @@ export const buildStrengthTrends = (snapshots: StrengthSnapshot[]): StrengthTren
     const deltaPercent =
       weights.length > 1 ? Math.round((deltaLbs / Math.max(weights[0], 1)) * 100) : 0;
     return {
-      lift: LIFT_LABELS[lift],
+      key: lift,
+      lift: getLabel(labelMaps?.lifts, lift),
       weights,
       glyph: buildGlyph(weights),
       deltaLbs,
@@ -99,20 +100,24 @@ export const buildStrengthTrends = (snapshots: StrengthSnapshot[]): StrengthTren
   });
 };
 
-export const buildWeeklyVolumeSummary = (workoutLogs: WorkoutLog[]): VolumeEntryView[] => {
+export const buildWeeklyVolumeSummary = (
+  workoutLogs: WorkoutLog[],
+  labelMaps?: TrackingLabelMaps
+): VolumeEntryView[] => {
+  const observedMuscles = workoutLogs.flatMap((log) => Object.keys(log.muscleVolume));
+  const allowedMuscles = getAllowedKeys(labelMaps?.muscles, observedMuscles);
+
   if (!workoutLogs.length) {
-    return [
-      { group: 'Chest', sets: 0 },
-      { group: 'Back', sets: 0 },
-      { group: 'Legs', sets: 0 },
-      { group: 'Shoulders', sets: 0 },
-      { group: 'Arms', sets: 0 },
-    ];
+    return allowedMuscles.map((group) => ({
+      key: group as MuscleGroup,
+      group: getLabel(labelMaps?.muscles, group),
+      sets: 0,
+    }));
   }
 
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 28);
-  const totals = createZeroVolume(Object.keys(MUSCLE_LABELS) as MuscleGroup[]);
+  const totals = createZeroVolume(allowedMuscles as MuscleGroup[]);
 
   workoutLogs
     .filter((log) => new Date(log.date) >= cutoff)
@@ -124,23 +129,31 @@ export const buildWeeklyVolumeSummary = (workoutLogs: WorkoutLog[]): VolumeEntry
 
   return (Object.keys(totals) as MuscleGroup[])
     .map((group) => ({
-      group: MUSCLE_LABELS[group],
+      key: group,
+      group: getLabel(labelMaps?.muscles, group),
       sets: Math.round(totals[group]),
     }))
     .sort(sortDesc);
 };
 
-export const buildMovementBalanceSummary = (workoutLogs: WorkoutLog[]): MovementPatternView[] => {
+export const buildMovementBalanceSummary = (
+  workoutLogs: WorkoutLog[],
+  labelMaps?: TrackingLabelMaps
+): MovementPatternView[] => {
+  const observedMovements = workoutLogs.flatMap((log) => Object.keys(log.movementPatterns));
+  const allowedMovements = getAllowedKeys(labelMaps?.movements, observedMovements);
+
   if (!workoutLogs.length) {
-    return (Object.keys(MOVEMENT_LABELS) as MovementPattern[]).map((pattern) => ({
-      name: MOVEMENT_LABELS[pattern],
+    return allowedMovements.map((pattern) => ({
+      key: pattern as MovementPattern,
+      name: getLabel(labelMaps?.movements, pattern),
       sessions: 0,
     }));
   }
 
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 30);
-  const totals = createZeroVolume(Object.keys(MOVEMENT_LABELS) as MovementPattern[]);
+  const totals = createZeroVolume(allowedMovements as MovementPattern[]);
 
   workoutLogs
     .filter((log) => new Date(log.date) >= cutoff)
@@ -152,7 +165,8 @@ export const buildMovementBalanceSummary = (workoutLogs: WorkoutLog[]): Movement
 
   return (Object.keys(totals) as MovementPattern[])
     .map((pattern) => ({
-      name: MOVEMENT_LABELS[pattern],
+      key: pattern,
+      name: getLabel(labelMaps?.movements, pattern),
       sessions: Math.round(totals[pattern]),
     }))
     .sort((a, b) => b.sessions - a.sessions);
@@ -160,7 +174,8 @@ export const buildMovementBalanceSummary = (workoutLogs: WorkoutLog[]): Movement
 
 export const buildLiftHistory = (
   snapshots: StrengthSnapshot[],
-  lift: LiftId
+  lift: LiftId,
+  labelMaps?: TrackingLabelMaps
 ): LiftHistoryView => {
   const history = snapshots
     .filter((snapshot) => snapshot.lift === lift)
@@ -184,7 +199,7 @@ export const buildLiftHistory = (
       : 'Keep building consistency to unlock more progress.';
 
   return {
-    title: `${LIFT_LABELS[lift]} - 12 Week History`,
+    title: `${getLabel(labelMaps?.lifts, lift)} - 12 Week History`,
     sparkline,
     startWeight,
     endWeight,

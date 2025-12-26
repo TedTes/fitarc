@@ -16,6 +16,12 @@ export type MovementPattern = string;
 export type LiftId = string;
 export type HabitType = 'steps' | 'sleep' | 'hydration';
 
+export type TrackingPreferences = {
+  lifts?: Record<string, string>;
+  movements?: Record<string, string>;
+  muscles?: Record<string, string>;
+};
+
 export type WorkoutSetEntry = {
   setNumber?: number | null;
   weight?: number | null;
@@ -72,6 +78,7 @@ export type User = {
   trainingSplit: TrainingSplit;
   eatingMode: EatingMode;
   avatarUrl?: string;
+  trackingPreferences?: TrackingPreferences;
   createdAt: string;
 };
 
