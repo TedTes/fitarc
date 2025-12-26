@@ -30,8 +30,9 @@ import {
   buildStrengthTrends,
   buildWeeklyVolumeSummary,
   buildMovementBalanceSummary,
-
+  StrengthTrendView,
 } from '../utils/performanceSelectors';
+import { fetchExerciseDefaults, ExerciseDefault } from '../services/workoutService';
 import {
   fetchMuscleGroups,
   fetchExercises,
@@ -137,6 +138,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const [muscleOptions, setMuscleOptions] = useState<MuscleGroupOption[]>([]);
   const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
   const [movementOptions, setMovementOptions] = useState<string[]>([]);
+  const [exerciseDefaults, setExerciseDefaults] = useState<ExerciseDefault[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
 
   // Header entrance animation
@@ -182,6 +184,29 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       refresh();
     }, [refresh])
   );
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadDefaults = async () => {
+      try {
+        const [defaults, exercises] = await Promise.all([
+          fetchExerciseDefaults(user.id),
+          fetchExercises(),
+        ]);
+        if (!isMounted) return;
+        setExerciseDefaults(defaults);
+        if (exerciseOptions.length === 0) {
+          setExerciseOptions(exercises);
+        }
+      } catch (error) {
+        console.error('Failed to load exercise defaults:', error);
+      }
+    };
+    loadDefaults();
+    return () => {
+      isMounted = false;
+    };
+  }, [user.id, exerciseOptions.length]);
 
   const loadTrackingOptions = useCallback(async () => {
     setLoadingOptions(true);
@@ -268,23 +293,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     }
   }, [handleCloseTrackingModal, onUpdateTrackingPreferences, trackingDraft]);
 
-  const handleRemoveTracking = useCallback(
-    async (category: TrackingCategory, key: string) => {
-      if (!onUpdateTrackingPreferences || !key) return;
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      const next = createTrackingDraft(user.trackingPreferences);
-      const bucket = { ...(next[category] ?? {}) };
-      if (!bucket[key]) return;
-      delete bucket[key];
-      next[category] = bucket;
-      try {
-        await onUpdateTrackingPreferences(next);
-      } catch (error) {
-        console.error('Failed to update tracking preferences', error);
-      }
-    },
-    [onUpdateTrackingPreferences, user.trackingPreferences]
-  );
+
 
   const labelMaps = useMemo(
     () => ({
@@ -329,7 +338,58 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const workoutLogs = mergedWorkoutLogs;
   const strengthSnapshots = mergedSnapshots;
 
-  const strengthTrends = buildStrengthTrends(strengthSnapshots, labelMaps);
+  const strengthTrendsRaw = buildStrengthTrends(strengthSnapshots, labelMaps);
+
+  console.log("lets see this")
+  console.log(strengthTrendsRaw)
+  const preferredWeightsByKey = useMemo(() => {
+    const exerciseKeyById = new Map(
+      exerciseOptions.map((exercise) => [exercise.id, toTrackingKey(exercise.name)])
+    );
+    const result = new Map<string, number>();
+    exerciseDefaults.forEach((def) => {
+      if (!def.exerciseId || !def.defaultWeight || def.defaultWeight <= 0) return;
+      const key = exerciseKeyById.get(def.exerciseId);
+      if (!key) return;
+      if (!result.has(key)) {
+        result.set(key, def.defaultWeight);
+      }
+    });
+    return result;
+  }, [exerciseDefaults, exerciseOptions]);
+  const strengthTrends = useMemo(() => {
+    const existingKeys = new Set(strengthTrendsRaw.map((trend) => toTrackingKey(trend.lift)));
+    const selected = Object.entries(user.trackingPreferences?.lifts ?? {});
+    const filled = strengthTrendsRaw.map((trend) => {
+      if (trend.weights.length > 0) return trend;
+      const key = toTrackingKey(trend.lift);
+      const weight = preferredWeightsByKey.get(key);
+      if (!weight) return trend;
+      return {
+        ...trend,
+        weights: [weight],
+        glyph: '▅',
+        deltaLbs: 0,
+        deltaPercent: 0,
+      };
+    });
+    const fallback = selected.reduce<StrengthTrendView[]>((acc, [key, label]) => {
+      const normalizedKey = key || toTrackingKey(label);
+      if (existingKeys.has(normalizedKey)) return acc;
+      const weight = preferredWeightsByKey.get(normalizedKey);
+      if (!weight) return acc;
+      acc.push({
+        key: normalizedKey as any,
+        lift: label,
+        weights: [weight],
+        glyph: '▅',
+        deltaLbs: 0,
+        deltaPercent: 0,
+      });
+      return acc;
+    }, []);
+    return [...filled, ...fallback];
+  }, [strengthTrendsRaw, preferredWeightsByKey, user.trackingPreferences?.lifts]);
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs, labelMaps);
   const nonZeroWeeklyVolume = weeklyVolume.filter((entry) => entry.sets > 0);
   const movementBalance = buildMovementBalanceSummary(workoutLogs, labelMaps);
@@ -349,8 +409,8 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const getHeatColor = (intensity: number) => {
     if (intensity >= 0.8) return COLORS.success;
     if (intensity >= 0.5) return COLORS.accent;
-    if (intensity >= 0.3) return COLORS.textTertiary;
-    return '#2A2F4F';
+    if (intensity >= 0.3) return '#4B5385';
+    return '#4A527F';
   };
 
   const maxVolumeRows = 3;
@@ -358,6 +418,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const visibleVolume = showAllVolume
     ? nonZeroWeeklyVolume
     : nonZeroWeeklyVolume.slice(0, maxVolumeRows);
+  const planWeeks = Math.max(resolvedPhase?.expectedWeeks ?? 8, 1);
+  const volumeWindowWeeks = 4;
+  const maxWindowSets = Math.max(...weeklyVolume.map((entry) => entry.sets), 0);
+  const maxWeeklyAvg = maxWindowSets / volumeWindowWeeks;
+  const planBaseline = Math.max(maxWeeklyAvg * planWeeks, maxWindowSets, 1);
 
   const toggleVolumeExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -420,8 +485,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       );
     }
 
-    const topSets = Math.max(...visibleVolume.map((v) => v.sets), 1);
-
     return (
       <View
         style={styles.card}
@@ -429,11 +492,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       >
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Training Volume</Text>
-          <Text style={styles.cardSubtitle}>Last 4 weeks • Total sets</Text>
+          <Text style={styles.cardSubtitle}>
+            Last 4 weeks • Scaled to plan progress
+          </Text>
         </View>
         <View style={styles.volumeGrid}>
           {visibleVolume.map((volume) => {
-            const intensity = volume.sets / topSets;
+            const intensity = Math.min(volume.sets / planBaseline, 1);
             const barColor = getHeatColor(intensity);
             return (
               <View key={volume.key} style={styles.volumeRow}>
@@ -486,7 +551,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Strength Trends</Text>
-          <Text style={styles.cardSubtitle}>Last 8 weeks</Text>
+          <Text style={styles.cardSubtitle}>Last 4 weeks</Text>
         </View>
         <View style={styles.strengthList}>
           {strengthTrends.map((trend) => (

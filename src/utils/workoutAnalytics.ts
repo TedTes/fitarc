@@ -45,6 +45,16 @@ const LIFT_MATCHERS: { lift: LiftId; keywords: RegExp }[] = [
   { lift: 'deadlift', keywords: /deadlift|hip thrust|rdl/i },
 ];
 
+const normalizeLiftId = (name?: string | null): LiftId | null => {
+  if (!name) return null;
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized.length ? normalized : null;
+};
+
 export const mapMuscleNameToGroup = (name?: string | null): MuscleGroup | null => {
   if (!name) return null;
   const normalized = name.trim().toLowerCase();
@@ -148,7 +158,7 @@ export const buildWorkoutAnalytics = (
         }
       });
 
-      const liftId = inferLiftIdFromName(exercise.name);
+      const liftId = inferLiftIdFromName(exercise.name) ?? normalizeLiftId(exercise.name);
       if (liftId && setDetails.length) {
         const bestSet = setDetails.reduce((best, candidate) => {
           const candidateWeight = Number(candidate.weight ?? fallbackWeight ?? 0);

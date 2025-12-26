@@ -87,10 +87,22 @@ export const buildStrengthTrends = (
   return (allowedLifts as LiftId[])
     .filter((lift) => grouped[lift])
     .map((lift) => {
-      const history = grouped[lift]
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-        .slice(-5);
-      const weights = history.map((entry) => entry.weight);
+      const history = grouped[lift].sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+      );
+      const weeklyMaxes = new Map<string, number>();
+      history.forEach((entry) => {
+        const date = new Date(entry.date);
+        const year = date.getFullYear();
+        const week = getWeekNumber(date);
+        const key = `${year}-W${String(week).padStart(2, '0')}`;
+        const currentMax = weeklyMaxes.get(key) ?? 0;
+        if (entry.weight > currentMax) {
+          weeklyMaxes.set(key, entry.weight);
+        }
+      });
+      const recentWeeks = Array.from(weeklyMaxes.keys()).sort().slice(-4);
+      const weights = recentWeeks.map((key) => weeklyMaxes.get(key) ?? 0);
       const deltaLbs = weights.length > 1 ? weights[weights.length - 1] - weights[0] : 0;
       const deltaPercent =
         weights.length > 1 ? Math.round((deltaLbs / Math.max(weights[0], 1)) * 100) : 0;
@@ -103,6 +115,14 @@ export const buildStrengthTrends = (
         deltaPercent,
       };
     });
+};
+
+const getWeekNumber = (date: Date): number => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 };
 
 export const buildWeeklyVolumeSummary = (
