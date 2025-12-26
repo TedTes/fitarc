@@ -81,23 +81,28 @@ export const buildStrengthTrends = (
     return acc;
   }, {} as Record<LiftId, StrengthSnapshot[]>);
 
-  return (Object.keys(grouped) as LiftId[]).map((lift) => {
-    const history = grouped[lift]
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-      .slice(-5);
-    const weights = history.map((entry) => entry.weight);
-    const deltaLbs = weights.length > 1 ? weights[weights.length - 1] - weights[0] : 0;
-    const deltaPercent =
-      weights.length > 1 ? Math.round((deltaLbs / Math.max(weights[0], 1)) * 100) : 0;
-    return {
-      key: lift,
-      lift: getLabel(labelMaps?.lifts, lift),
-      weights,
-      glyph: buildGlyph(weights),
-      deltaLbs,
-      deltaPercent,
-    };
-  });
+  const observedLifts = Object.keys(grouped);
+  const allowedLifts = getAllowedKeys(labelMaps?.lifts, observedLifts);
+
+  return (allowedLifts as LiftId[])
+    .filter((lift) => grouped[lift])
+    .map((lift) => {
+      const history = grouped[lift]
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .slice(-5);
+      const weights = history.map((entry) => entry.weight);
+      const deltaLbs = weights.length > 1 ? weights[weights.length - 1] - weights[0] : 0;
+      const deltaPercent =
+        weights.length > 1 ? Math.round((deltaLbs / Math.max(weights[0], 1)) * 100) : 0;
+      return {
+        key: lift,
+        lift: getLabel(labelMaps?.lifts, lift),
+        weights,
+        glyph: buildGlyph(weights),
+        deltaLbs,
+        deltaPercent,
+      };
+    });
 };
 
 export const buildWeeklyVolumeSummary = (
@@ -123,7 +128,9 @@ export const buildWeeklyVolumeSummary = (
     .filter((log) => new Date(log.date) >= cutoff)
     .forEach((log) => {
       (Object.keys(log.muscleVolume) as MuscleGroup[]).forEach((group) => {
-        totals[group] += log.muscleVolume[group] || 0;
+        if (totals[group] !== undefined) {
+          totals[group] += log.muscleVolume[group] || 0;
+        }
       });
     });
 
@@ -159,7 +166,9 @@ export const buildMovementBalanceSummary = (
     .filter((log) => new Date(log.date) >= cutoff)
     .forEach((log) => {
       (Object.keys(log.movementPatterns) as MovementPattern[]).forEach((pattern) => {
-        totals[pattern] += log.movementPatterns[pattern] || 0;
+        if (totals[pattern] !== undefined) {
+          totals[pattern] += log.movementPatterns[pattern] || 0;
+        }
       });
     });
 

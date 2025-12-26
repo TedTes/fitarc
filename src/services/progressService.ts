@@ -25,6 +25,52 @@ export type ProgressData = {
   strengthSnapshots: StrengthSnapshot[];
 };
 
+export type MuscleGroupOption = {
+  name: string;
+};
+
+export type ExerciseOption = {
+  id: string;
+  name: string;
+  movement_pattern: string | null;
+};
+
+export const fetchMuscleGroups = async (): Promise<MuscleGroupOption[]> => {
+  const { data, error } = await supabase
+    .from('fitarc_muscle_groups')
+    .select('name')
+    .order('name', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []) as MuscleGroupOption[];
+};
+
+export const fetchExercises = async (): Promise<ExerciseOption[]> => {
+  const { data, error } = await supabase
+    .from('fitarc_exercises')
+    .select('id, name, movement_pattern')
+    .order('name', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []) as ExerciseOption[];
+};
+
+export const deriveMovementPatterns = (exercises: ExerciseOption[]): string[] => {
+  const patterns = new Set<string>();
+  exercises.forEach((exercise) => {
+    if (exercise.movement_pattern) {
+      patterns.add(exercise.movement_pattern);
+    }
+  });
+  return Array.from(patterns).sort();
+};
+
 export const fetchProgressData = async (
   userId: string,
   planId: string,
@@ -98,27 +144,24 @@ export const fetchProgressData = async (
           meal_type,
           food_name,
           calories,
-          protein_g,
-          carbs_g,
-          fat_g
+          protein,
+          carbs,
+          fat
         )
       `
         )
         .eq('user_id', userId)
         .gte('meal_date', fromIso)
         .lte('meal_date', toIso)
-        .order('meal_date', { ascending: true });
-      if (planId) {
-        query = query.or(`plan_id.eq.${planId},plan_id.is.null`);
-      }
+        .order('meal_date', { ascending: false });
       return query;
     })(),
     supabase
       .from('fitarc_photo_checkins')
       .select('*')
       .eq('user_id', userId)
-      .eq('plan_id', planId)
-      .order('date', { ascending: false }),
+      .gte('check_in_date', fromIso)
+      .order('check_in_date', { ascending: false }),
     fetchExerciseDefaults(userId),
   ]);
 
@@ -127,24 +170,41 @@ export const fetchProgressData = async (
   if (mealsRes.error) throw mealsRes.error;
   if (photosRes.error) throw photosRes.error;
 
-  const sessionRows = sessionsRes.data || [];
-  const mealRows = mealsRes.data || [];
+  const phase = phaseRes.data ? mapPhaseRow(phaseRes.data) : null;
+  const sessions = (sessionsRes.data || []).map((row: any) =>
+    mapSessionRow(row, planId, timeZone)
+  );
+  const mealPlans = (mealsRes.data || []).map(mapMealPlanRow);
+  const photos = (photosRes.data || []).map(
+    (row: any) =>
+      ({
+        id: row.id,
+        userId: row.user_id,
+        phasePlanId: row.plan_id,
+        checkInDate: row.check_in_date,
+        frontPhotoUrl: row.front_photo_url,
+        sidePhotoUrl: row.side_photo_url,
+        backPhotoUrl: row.back_photo_url,
+        weightLbs: row.weight_lbs,
+        notes: row.notes,
+      } as PhotoCheckin)
+  );
 
-  const sessionEntries = sessionRows.map((row: any) => mapSessionRow(row, planId, timeZone));
-  const defaultWeights = (defaultsRes || []).reduce<Record<string, number>>((acc, item) => {
-    if (item.exerciseId && typeof item.defaultWeight === 'number') {
-      acc[item.exerciseId] = item.defaultWeight;
+  const defaultWeights = defaultsRes.reduce<Record<string, number>>((acc, def) => {
+    if (def.exerciseId && def.defaultWeight) {
+      acc[def.exerciseId] = def.defaultWeight;
     }
     return acc;
   }, {});
-  const analytics = buildWorkoutAnalytics(sessionEntries, defaultWeights);
+
+  const { workoutLogs, strengthSnapshots } = buildWorkoutAnalytics(sessions, defaultWeights);
 
   return {
-    phase: phaseRes.data ? mapPhaseRow(phaseRes.data) : null,
-    sessions: sessionEntries,
-    mealPlans: mealRows.map((row: any) => mapMealPlanRow(row, planId)),
-    photos: (photosRes.data as PhotoCheckin[]) || [],
-    workoutLogs: analytics.workoutLogs,
-    strengthSnapshots: analytics.strengthSnapshots,
+    phase,
+    sessions,
+    mealPlans,
+    photos,
+    workoutLogs,
+    strengthSnapshots,
   };
 };

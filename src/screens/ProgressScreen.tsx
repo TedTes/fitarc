@@ -6,13 +6,13 @@ import {
   ScrollView, 
   TouchableOpacity,
   Modal,
-  TextInput,
   Pressable,
   Animated,
   Easing,
   LayoutAnimation,
   Platform,
   UIManager,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
@@ -34,6 +34,13 @@ import {
   VolumeEntryView,
   MovementPatternView,
 } from '../utils/performanceSelectors';
+import {
+  fetchMuscleGroups,
+  fetchExercises,
+  deriveMovementPatterns,
+  MuscleGroupOption,
+  ExerciseOption,
+} from '../services/progressService';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -88,9 +95,9 @@ const AVAILABLE_METRICS: MetricConfig[] = [
 ];
 
 const TRACKING_CATEGORIES = [
-  { id: 'muscles', label: 'Muscles' },
-  { id: 'movements', label: 'Movements' },
-  { id: 'lifts', label: 'Lifts' },
+  { id: 'muscles', label: 'Training Volume' },
+  { id: 'lifts', label: 'Strength Trends' },
+  { id: 'movements', label: 'Movement Balance' },
 ] as const;
 
 type TrackingCategory = (typeof TRACKING_CATEGORIES)[number]['id'];
@@ -139,7 +146,12 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     createTrackingDraft(user.trackingPreferences)
   );
   const [trackingCategory, setTrackingCategory] = useState<TrackingCategory>('muscles');
-  const [newTrackingLabel, setNewTrackingLabel] = useState('');
+  
+  // DB-backed options state
+  const [muscleOptions, setMuscleOptions] = useState<MuscleGroupOption[]>([]);
+  const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
+  const [movementOptions, setMovementOptions] = useState<string[]>([]);
+  const [loadingOptions, setLoadingOptions] = useState(false);
 
   // Header entrance animation
   useEffect(() => {
@@ -185,17 +197,33 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     }, [refresh])
   );
 
-  const handleOpenTrackingModal = useCallback(() => {
+  const loadTrackingOptions = useCallback(async () => {
+    setLoadingOptions(true);
+    try {
+      const [muscles, exercises] = await Promise.all([
+        fetchMuscleGroups(),
+        fetchExercises(),
+      ]);
+      setMuscleOptions(muscles);
+      setExerciseOptions(exercises);
+      setMovementOptions(deriveMovementPatterns(exercises));
+    } catch (error) {
+      console.error('Failed to load tracking options:', error);
+    } finally {
+      setLoadingOptions(false);
+    }
+  }, []);
+
+  const handleOpenTrackingModal = useCallback(async () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setTrackingDraft(createTrackingDraft(user.trackingPreferences));
     setTrackingCategory('muscles');
-    setNewTrackingLabel('');
     setTrackingModalVisible(true);
-  }, [user.trackingPreferences]);
+    await loadTrackingOptions();
+  }, [user.trackingPreferences, loadTrackingOptions]);
 
   const handleCloseTrackingModal = useCallback(() => {
     setTrackingModalVisible(false);
-    setNewTrackingLabel('');
   }, []);
 
   useFocusEffect(
@@ -213,11 +241,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     }, [handleOpenTrackingModal, setFabAction])
   );
 
-  const handleAddTrackingItem = useCallback(() => {
-    const label = newTrackingLabel.trim();
-    if (!label) return;
+  const handleAddTrackingItem = useCallback((label: string) => {
     const key = toTrackingKey(label);
     if (!key) return;
+    
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setTrackingDraft((prev) => {
       const next = createTrackingDraft(prev);
       const bucket = next[trackingCategory] ?? {};
@@ -225,10 +253,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       next[trackingCategory] = { ...bucket, [key]: label };
       return next;
     });
-    setNewTrackingLabel('');
-  }, [newTrackingLabel, trackingCategory]);
+  }, [trackingCategory]);
 
   const handleRemoveTrackingItem = useCallback((key: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setTrackingDraft((prev) => {
       const next = createTrackingDraft(prev);
       const bucket = { ...(next[trackingCategory] ?? {}) };
@@ -267,7 +295,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         console.error('Failed to update tracking preferences', error);
       }
     },
-    [createTrackingDraft, onUpdateTrackingPreferences, user.trackingPreferences]
+    [onUpdateTrackingPreferences, user.trackingPreferences]
   );
 
   const labelMaps = useMemo(
@@ -385,6 +413,27 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     }
   };
 
+  // Get available options based on category
+  const getAvailableOptions = useCallback((): string[] => {
+    const selectedKeys = new Set(Object.keys(trackingDraft[trackingCategory] ?? {}));
+    
+    switch (trackingCategory) {
+      case 'muscles':
+        return muscleOptions
+          .map((m) => m.name)
+          .filter((name) => !selectedKeys.has(toTrackingKey(name)));
+      case 'lifts':
+        return exerciseOptions
+          .map((e) => e.name)
+          .filter((name) => !selectedKeys.has(toTrackingKey(name)));
+      case 'movements':
+        return movementOptions
+          .filter((pattern) => !selectedKeys.has(toTrackingKey(pattern)));
+      default:
+        return [];
+    }
+  }, [trackingCategory, trackingDraft, muscleOptions, exerciseOptions, movementOptions]);
+
   const renderMetricSelector = () => (
     <View style={styles.metricSelector}>
       <View style={styles.selectorHeader}>
@@ -412,23 +461,30 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               style={[
                 styles.metricChip,
                 isActive && styles.metricChipActive,
-                !hasContent && styles.metricChipDisabled,
+                !hasContent && styles.metricChipEmpty,
               ]}
-              onPress={() => hasContent && toggleMetric(metric.id)}
+              onPress={() => toggleMetric(metric.id)}
               activeOpacity={0.7}
-              disabled={!hasContent}
             >
-              <Text style={styles.metricChipIcon}>{metric.icon}</Text>
-              <Text
-                style={[
-                  styles.metricChipText,
-                  isActive && styles.metricChipTextActive,
-                  !hasContent && styles.metricChipTextDisabled,
-                ]}
-              >
-                {metric.label}
-              </Text>
-              {isActive && <View style={styles.metricChipIndicator} />}
+              <Text style={styles.metricIcon}>{metric.icon}</Text>
+              <View style={styles.metricInfo}>
+                <Text
+                  style={[
+                    styles.metricLabel,
+                    isActive && styles.metricLabelActive,
+                  ]}
+                >
+                  {metric.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.metricTime,
+                    isActive && styles.metricTimeActive,
+                  ]}
+                >
+                  {metric.timeframe}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
@@ -438,76 +494,50 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const renderVolumeCard = () => {
     if (!activeMetrics.includes('volume')) return null;
+    if (weeklyVolume.length === 0) {
+      return (
+        <View style={[styles.card, styles.emptyStateCard]}>
+          <Text style={styles.emptyStateEmoji}>💪</Text>
+          <Text style={styles.emptyStateTitle}>No volume data yet</Text>
+          <Text style={styles.emptyStateText}>
+            Complete workouts to track muscle volume over time
+          </Text>
+        </View>
+      );
+    }
 
-    const metric = AVAILABLE_METRICS.find((m) => m.id === 'volume')!;
+    const topSets = Math.max(...visibleVolume.map((v) => v.sets), 1);
 
     return (
-      <View style={styles.compactCard}>
+      <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardIcon}>{metric.icon}</Text>
-              <Text style={styles.cardTitle}>Training Volume</Text>
-            </View>
-            <Text style={styles.cardSubtitle}>{metric.timeframe}</Text>
-          </View>
+          <Text style={styles.cardTitle}>💪 Training Volume</Text>
+          <Text style={styles.cardSubtitle}>Last 4 weeks • Total sets</Text>
         </View>
-
-        {weeklyVolume.length > 0 ? (
-          <View style={styles.volumeBars}>
-            {visibleVolume.map((entry: VolumeEntryView) => {
-              const maxSets = weeklyVolume[0]?.sets || 1;
-              const percent = Math.max(0, Math.min(100, (entry.sets / maxSets) * 100));
-              const intensity = entry.sets / maxSets;
-              const barColor = getHeatColor(intensity);
-              return (
-                <View key={entry.key} style={styles.volumeRow}>
-                  <View style={styles.volumeRowHeader}>
-                    <Text style={styles.volumeLabel}>{entry.group}</Text>
-                    <View style={styles.volumeRowMeta}>
-                      <Text style={styles.volumeValue}>{entry.sets}</Text>
-                      {onUpdateTrackingPreferences && (
-                        <TouchableOpacity
-                          style={styles.trackingRemoveInline}
-                          onPress={() => handleRemoveTracking('muscles', entry.key)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.trackingRemoveInlineText}>x</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                  <View style={styles.volumeTrack}>
-                    <Animated.View
-                      style={[
-                        styles.volumeFill,
-                        { 
-                          width: `${percent}%`, 
-                          backgroundColor: barColor,
-                        },
-                      ]}
-                    />
-                  </View>
+        <View style={styles.volumeGrid}>
+          {visibleVolume.map((volume) => {
+            const intensity = volume.sets / topSets;
+            const barColor = getHeatColor(intensity);
+            return (
+              <View key={volume.key} style={styles.volumeRow}>
+                <Text style={styles.volumeLabel}>{volume.group}</Text>
+                <View style={styles.volumeBarContainer}>
+                  <View
+                    style={[
+                      styles.volumeBar,
+                      { width: `${intensity * 100}%`, backgroundColor: barColor },
+                    ]}
+                  />
                 </View>
-              );
-            })}
-          </View>
-        ) : (
-          <EmptyState
-            emoji="📊"
-            title="Volume tracking starts soon"
-            description="Log workouts to see your training volume breakdown"
-          />
-        )}
-
+                <Text style={styles.volumeValue}>{volume.sets}</Text>
+              </View>
+            );
+          })}
+        </View>
         {hasExtraVolume && (
-          <TouchableOpacity
-            style={styles.volumeToggle}
-            onPress={toggleVolumeExpand}
-            activeOpacity={0.8}
-          >
+          <TouchableOpacity style={styles.volumeToggle} onPress={toggleVolumeExpand}>
             <Text style={styles.volumeToggleText}>
-              {showAllVolume ? 'Show less' : `Show ${weeklyVolume.length - maxVolumeRows} more`}
+              {showAllVolume ? 'Show Less' : `Show ${weeklyVolume.length - maxVolumeRows} More`}
             </Text>
           </TouchableOpacity>
         )}
@@ -517,231 +547,184 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const renderStrengthCard = () => {
     if (!activeMetrics.includes('strength')) return null;
-
-    const metric = AVAILABLE_METRICS.find((m) => m.id === 'strength')!;
+    if (strengthTrends.length === 0) {
+      return (
+        <View style={[styles.card, styles.emptyStateCard]}>
+          <Text style={styles.emptyStateEmoji}>📈</Text>
+          <Text style={styles.emptyStateTitle}>No strength data yet</Text>
+          <Text style={styles.emptyStateText}>
+            Log weights to track strength progression
+          </Text>
+        </View>
+      );
+    }
 
     return (
-      <View style={styles.compactCard}>
+      <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardIcon}>{metric.icon}</Text>
-              <Text style={styles.cardTitle}>Strength Trends</Text>
-            </View>
-            <Text style={styles.cardSubtitle}>{metric.timeframe}</Text>
-          </View>
+          <Text style={styles.cardTitle}>💪 Strength Trends</Text>
+          <Text style={styles.cardSubtitle}>Last 8 weeks</Text>
         </View>
-
-        {strengthTrends.length > 0 ? (
-          strengthTrends.slice(0, 5).map((trend: StrengthTrendView) => {
-            const maxWeight = Math.max(...trend.weights);
-            return (
-              <View key={trend.key} style={styles.trendRow}>
-                <View style={styles.trendLeft}>
-                  <View style={styles.trendSparkline}>
-                    {trend.weights.map((weight, idx) => {
-                      const height = (weight / maxWeight) * 30;
-                      return (
-                        <View
-                          key={idx}
-                          style={[
-                            styles.sparklineBar,
-                            {
-                              height,
-                              backgroundColor:
-                                idx === trend.weights.length - 1 ? COLORS.success : COLORS.accent,
-                            },
-                          ]}
-                        />
-                      );
-                    })}
-                  </View>
-                  <View style={styles.trendDetails}>
-                    <Text style={styles.trendLift}>{trend.lift}</Text>
-                    <View style={styles.trendProgressRow}>
-                      <Text style={styles.trendStart}>{trend.weights[0]}</Text>
-                      <Text style={styles.trendArrow}>→</Text>
-                      <Text style={styles.trendCurrent}>
-                        {trend.weights[trend.weights.length - 1]} lbs
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-                <View style={styles.trendRight}>
-                  <View style={styles.trendBadge}>
-                    <Text style={styles.trendDelta}>+{trend.deltaLbs}</Text>
-                  </View>
-                  <Text style={styles.trendPercent}>+{trend.deltaPercent}%</Text>
-                  {onUpdateTrackingPreferences && (
-                    <TouchableOpacity
-                      style={[styles.trackingRemoveInline, styles.trackingRemoveInlineSmall]}
-                      onPress={() => handleRemoveTracking('lifts', trend.key)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.trackingRemoveInlineText, styles.trackingRemoveInlineTextSmall]}>
-                        x
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+        <View style={styles.strengthList}>
+          {strengthTrends.map((trend) => (
+            <View key={trend.key} style={styles.strengthRow}>
+              <View style={styles.strengthInfo}>
+                <Text style={styles.strengthLift}>{trend.lift}</Text>
+                <Text style={styles.strengthGlyph}>{trend.glyph}</Text>
               </View>
-            );
-          })
-        ) : (
-          <EmptyState
-            emoji="💪"
-            title="Your strength journey starts here"
-            description="Complete a few workouts to see your progress trends"
-          />
-        )}
+              <View style={styles.strengthStats}>
+                <Text style={styles.strengthWeight}>
+                  {trend.weights[trend.weights.length - 1]} lbs
+                </Text>
+                {trend.deltaLbs !== 0 && (
+                  <Text
+                    style={[
+                      styles.strengthDelta,
+                      trend.deltaLbs > 0 && styles.strengthDeltaPositive,
+                    ]}
+                  >
+                    {trend.deltaLbs > 0 ? '+' : ''}
+                    {trend.deltaLbs} lbs
+                  </Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
       </View>
     );
   };
 
   const renderMovementCard = () => {
     if (!activeMetrics.includes('movement')) return null;
+    if (movementBalance.length === 0) {
+      return (
+        <View style={[styles.card, styles.emptyStateCard]}>
+          <Text style={styles.emptyStateEmoji}>🎯</Text>
+          <Text style={styles.emptyStateTitle}>No movement data yet</Text>
+          <Text style={styles.emptyStateText}>
+            Complete workouts to track movement patterns
+          </Text>
+        </View>
+      );
+    }
 
-    const metric = AVAILABLE_METRICS.find((m) => m.id === 'movement')!;
+    const maxSessions = Math.max(...movementBalance.map((m) => m.sessions), 1);
 
     return (
-      <View style={styles.compactCard}>
+      <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardIcon}>{metric.icon}</Text>
-              <Text style={styles.cardTitle}>Movement Balance</Text>
-            </View>
-            <Text style={styles.cardSubtitle}>{metric.timeframe}</Text>
-          </View>
+          <Text style={styles.cardTitle}>🎯 Movement Balance</Text>
+          <Text style={styles.cardSubtitle}>This month</Text>
         </View>
-
-        {movementBalance.length > 0 ? (
-          <View style={styles.movementGrid}>
-            {movementBalance.map((pattern: MovementPatternView) => {
-              const maxSessions = Math.max(...movementBalance.map((p) => p.sessions));
-              const intensity = pattern.sessions / maxSessions;
-              return (
-                <View key={pattern.key} style={styles.movementPill}>
-                  <View
-                    style={[
-                      styles.movementIndicator,
-                      { opacity: Math.max(0.3, intensity) },
-                    ]}
-                  />
-                  <Text style={styles.movementName}>{pattern.name}</Text>
-                  <Text style={styles.movementCount}>{pattern.sessions}x</Text>
-                  {onUpdateTrackingPreferences && (
-                    <TouchableOpacity
-                      style={[styles.trackingRemoveInline, styles.trackingRemoveInlineTiny]}
-                      onPress={() => handleRemoveTracking('movements', pattern.key)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.trackingRemoveInlineText, styles.trackingRemoveInlineTextSmall]}>
-                        x
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        ) : (
-          <EmptyState
-            emoji="🎯"
-            title="Balance your training"
-            description="Movement patterns appear after tracking workouts"
-          />
-        )}
+        <View style={styles.movementGrid}>
+          {movementBalance.map((movement) => {
+            const intensity = movement.sessions / maxSessions;
+            const pillColor = getHeatColor(intensity);
+            return (
+              <View key={movement.key} style={styles.movementPill}>
+                <View
+                  style={[styles.movementIndicator, { backgroundColor: pillColor }]}
+                />
+                <Text style={styles.movementName}>{movement.name}</Text>
+                <Text style={styles.movementCount}>×{movement.sessions}</Text>
+              </View>
+            );
+          })}
+        </View>
       </View>
     );
   };
 
   const renderRecordsCard = () => {
-    if (!activeMetrics.includes('records') || bestLiftRows.length === 0) return null;
-
-    const metric = AVAILABLE_METRICS.find((m) => m.id === 'records')!;
+    if (!activeMetrics.includes('records')) return null;
+    if (bestLiftRows.length === 0) {
+      return (
+        <View style={[styles.card, styles.emptyStateCard]}>
+          <Text style={styles.emptyStateEmoji}>🏆</Text>
+          <Text style={styles.emptyStateTitle}>No records yet</Text>
+          <Text style={styles.emptyStateText}>
+            Keep lifting to set personal records
+          </Text>
+        </View>
+      );
+    }
 
     return (
-      <View style={styles.compactCard}>
+      <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardIcon}>{metric.icon}</Text>
-              <Text style={styles.cardTitle}>Personal Records</Text>
-            </View>
-            <Text style={styles.cardSubtitle}>{metric.timeframe}</Text>
-          </View>
+          <Text style={styles.cardTitle}>🏆 Personal Records</Text>
+          <Text style={styles.cardSubtitle}>Top 3 lifts</Text>
         </View>
-
-        {bestLiftRows.map((row, index) => {
-          const rankStyle =
-            index === 0
-              ? styles.prRank1
-              : index === 1
-              ? styles.prRank2
-              : index === 2
-              ? styles.prRank3
-              : styles.prRank;
-          const rankEmoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '💪';
-
-          return (
-            <View key={row.lift} style={styles.prRow}>
-              <View style={[styles.prRank, rankStyle]}>
-                <Text style={styles.prRankEmoji}>{rankEmoji}</Text>
-              </View>
-              <View style={styles.prInfo}>
-                <Text style={styles.prLift}>{row.lift}</Text>
-                <Text style={styles.prWeight}>{row.current} lbs</Text>
-              </View>
-              {row.delta > 0 && (
-                <View style={styles.prBadgeImproved}>
-                  <Text style={styles.prArrow}>↑</Text>
-                  <Text style={styles.prBadgeText}>{row.delta} lbs</Text>
+        <View style={styles.prList}>
+          {bestLiftRows.map((row, idx) => {
+            const rankEmojis = ['🥇', '🥈', '🥉'];
+            return (
+              <View key={row.lift} style={styles.prRow}>
+                <View
+                  style={[
+                    styles.prRank,
+                    idx === 0 && styles.prRank1,
+                    idx === 1 && styles.prRank2,
+                    idx === 2 && styles.prRank3,
+                  ]}
+                >
+                  <Text style={styles.prRankEmoji}>{rankEmojis[idx]}</Text>
                 </View>
-              )}
-            </View>
-          );
-        })}
+                <View style={styles.prInfo}>
+                  <Text style={styles.prLift}>{row.lift}</Text>
+                  <Text style={styles.prWeight}>{row.current} lbs</Text>
+                </View>
+                {row.delta > 0 && (
+                  <View style={styles.prBadgeImproved}>
+                    <Text style={styles.prArrow}>↑</Text>
+                    <Text style={styles.prBadgeText}>+{row.delta}</Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
+        </View>
       </View>
     );
   };
 
-  return (
-    <View style={styles.container}>
-      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-        {/* Sticky Header */}
-        <Animated.View
-          style={[
-            styles.stickyHeader,
-            {
-              opacity: headerFadeAnim,
-              transform: [{ translateY: headerSlideAnim }],
-            },
-          ]}
-        >
-          <Text style={styles.title}>Progress</Text>
-          <Text style={styles.subtitle}>
-            Level {resolvedPhase.currentLevelId} → {resolvedPhase.targetLevelId}
-          </Text>
-        </Animated.View>
+  const availableOptions = getAvailableOptions();
+  const selectedItems = Object.entries(trackingDraft[trackingCategory] ?? {});
 
+  return (
+    <>
+      <LinearGradient colors={SCREEN_GRADIENT} style={styles.container}>
         <Animated.ScrollView
+          style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false }
+            { useNativeDriver: true }
           )}
-          scrollEventThrottle={16}
         >
+          <Animated.View
+            style={{
+              opacity: headerFadeAnim,
+              transform: [{ translateY: headerSlideAnim }],
+            }}
+          >
+            <View style={styles.header}>
+              <View>
+                <Text style={styles.headerTitle}>Progress</Text>
+                <Text style={styles.headerSubtitle}>Track your transformation</Text>
+              </View>
+            </View>
+          </Animated.View>
+
           {showSyncNotice && (
-            <Text style={styles.syncNotice}>Syncing latest progress data...</Text>
+            <Text style={styles.syncNotice}>⏳ Syncing latest progress data...</Text>
           )}
 
-          {/* Metric Selector */}
           {renderMetricSelector()}
 
-          {/* Dynamic Metric Cards */}
           <Animated.View
             style={{
               opacity: cardFadeAnim,
@@ -755,7 +738,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             {renderRecordsCard()}
           </Animated.View>
 
-          {/* Empty state when no metrics selected */}
           {activeMetrics.length === 0 && (
             <View style={styles.noMetricsCard}>
               <Text style={styles.noMetricsEmoji}>📈</Text>
@@ -813,353 +795,244 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               })}
             </View>
 
-            <View style={styles.trackingInputRow}>
-              <TextInput
-                style={styles.trackingInput}
-                placeholder="Add label"
-                placeholderTextColor={COLORS.textTertiary}
-                value={newTrackingLabel}
-                onChangeText={setNewTrackingLabel}
-              />
-              <TouchableOpacity
-                style={styles.trackingAddButton}
-                onPress={handleAddTrackingItem}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.trackingAddText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.trackingList} showsVerticalScrollIndicator={false}>
-              {Object.entries(trackingDraft[trackingCategory] ?? {}).length === 0 ? (
-                <Text style={styles.trackingEmptyText}>
-                  No items tracked yet.
-                </Text>
-              ) : (
-                Object.entries(trackingDraft[trackingCategory] ?? {}).map(([key, label]) => (
-                  <View key={key} style={styles.trackingItem}>
-                    <Text style={styles.trackingItemLabel}>{label}</Text>
-                    <TouchableOpacity
-                      style={styles.trackingRemoveButton}
-                      onPress={() => handleRemoveTrackingItem(key)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.trackingRemoveText}>×</Text>
-                    </TouchableOpacity>
+            {loadingOptions ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={COLORS.accent} />
+                <Text style={styles.loadingText}>Loading options...</Text>
+              </View>
+            ) : (
+              <>
+                {selectedItems.length > 0 && (
+                  <View style={styles.selectedSection}>
+                    <Text style={styles.sectionLabel}>Selected ({selectedItems.length})</Text>
+                    <View style={styles.trackingList}>
+                      {selectedItems.map(([key, label]) => (
+                        <View key={key} style={styles.trackingItem}>
+                          <Text style={styles.trackingItemLabel}>{label}</Text>
+                          <TouchableOpacity
+                            style={styles.trackingRemoveButton}
+                            onPress={() => handleRemoveTrackingItem(key)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.trackingRemoveText}>×</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
                   </View>
-                ))
-              )}
-            </ScrollView>
+                )}
+
+                {availableOptions.length > 0 && (
+                  <View style={styles.availableSection}>
+                    <Text style={styles.sectionLabel}>
+                      Available ({availableOptions.length})
+                    </Text>
+                    <ScrollView
+                      style={styles.optionsList}
+                      showsVerticalScrollIndicator={false}
+                    >
+                      {availableOptions.map((option) => (
+                        <TouchableOpacity
+                          key={option}
+                          style={styles.optionItem}
+                          onPress={() => handleAddTrackingItem(option)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.optionText}>{option}</Text>
+                          <Text style={styles.optionAddIcon}>+</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {availableOptions.length === 0 && selectedItems.length === 0 && (
+                  <Text style={styles.trackingEmptyText}>
+                    No items available for tracking.
+                  </Text>
+                )}
+              </>
+            )}
 
             <TouchableOpacity
               style={styles.trackingSaveButton}
               onPress={handleSaveTracking}
-              activeOpacity={0.85}
+              activeOpacity={0.8}
             >
-              <Text style={styles.trackingSaveText}>Save Tracking</Text>
+              <Text style={styles.trackingSaveText}>Save Changes</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
-    </View>
+    </>
   );
 };
-
-// Empty State Component
-const EmptyState = ({
-  emoji,
-  title,
-  description,
-}: {
-  emoji: string;
-  title: string;
-  description: string;
-}) => (
-  <View style={styles.emptyStateCard}>
-    <Text style={styles.emptyStateEmoji}>{emoji}</Text>
-    <Text style={styles.emptyStateTitle}>{title}</Text>
-    <Text style={styles.emptyStateText}>{description}</Text>
-    <View style={styles.emptyStateDots}>
-      <View style={styles.emptyStateDot} />
-      <View style={[styles.emptyStateDot, styles.emptyStateDotActive]} />
-      <View style={styles.emptyStateDot} />
-    </View>
-  </View>
-);
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.bgPrimary,
   },
-  gradient: {
+  scrollView: {
     flex: 1,
   },
-  stickyHeader: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    backgroundColor: COLORS.bgPrimary,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    zIndex: 10,
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 100,
   },
-  title: {
+  header: {
+    marginBottom: 24,
+  },
+  headerTitle: {
     fontSize: 32,
     fontWeight: '700',
     color: COLORS.textPrimary,
-    marginBottom: 4,
+    letterSpacing: -0.5,
   },
-  subtitle: {
-    fontSize: 14,
+  headerSubtitle: {
+    fontSize: 15,
     color: COLORS.textSecondary,
-  },
-  scrollContent: {
-    paddingTop: 140,
-    paddingHorizontal: 20,
-    paddingBottom: 100,
-    gap: 16,
+    marginTop: 4,
   },
   syncNotice: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
+    color: COLORS.textMuted,
     textAlign: 'center',
-    fontStyle: 'italic',
-    marginBottom: 8,
+    fontSize: 13,
+    marginBottom: 16,
   },
 
   // Metric Selector
   metricSelector: {
-    marginBottom: 8,
+    marginBottom: 24,
   },
   selectorHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
   },
   selectorLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textTertiary,
+    color: COLORS.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   selectorAction: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 999,
+    borderRadius: 8,
     backgroundColor: COLORS.accentDim,
-    borderWidth: 1,
-    borderColor: COLORS.accentGlow,
   },
   selectorActionText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: COLORS.accent,
   },
   metricChips: {
-    gap: 8,
-    paddingVertical: 4,
+    gap: 10,
+    paddingRight: 20,
   },
   metricChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: COLORS.surface,
+    backgroundColor: COLORS.card,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    gap: 8,
-    position: 'relative',
+    gap: 10,
   },
   metricChipActive: {
-    backgroundColor: COLORS.accentDim,
     borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentDim,
   },
-  metricChipDisabled: {
-    opacity: 0.4,
+  metricChipEmpty: {
+    opacity: 0.5,
   },
-  metricChipIcon: {
-    fontSize: 16,
+  metricIcon: {
+    fontSize: 18,
   },
-  metricChipText: {
-    fontSize: 14,
+  metricInfo: {
+    gap: 2,
+  },
+  metricLabel: {
+    fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: COLORS.textPrimary,
   },
-  metricChipTextActive: {
+  metricLabelActive: {
     color: COLORS.accent,
   },
-  metricChipTextDisabled: {
-    color: COLORS.textMuted,
+  metricTime: {
+    fontSize: 11,
+    color: COLORS.textTertiary,
   },
-  metricChipIndicator: {
-    position: 'absolute',
-    bottom: -1,
-    left: 16,
-    right: 16,
-    height: 2,
-    backgroundColor: COLORS.accent,
-    borderRadius: 1,
+  metricTimeActive: {
+    color: COLORS.accent,
+    opacity: 0.8,
   },
 
-  // Card Styles
-  compactCard: {
+  // Cards
+  card: {
     backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 20,
+    padding: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: 16,
   },
-  cardHeaderLeft: {
-    flex: 1,
-  },
-  cardTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  cardIcon: {
-    fontSize: 20,
-  },
   cardTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     color: COLORS.textPrimary,
+    marginBottom: 4,
   },
   cardSubtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
-  },
-
-  // Strength Trends
-  trendRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.bgTertiary,
-  },
-  trendLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  trendSparkline: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 3,
-    height: 30,
-    width: 50,
-  },
-  sparklineBar: {
-    flex: 1,
-    borderRadius: 2,
-    minHeight: 4,
-  },
-  trendDetails: {
-    flex: 1,
-  },
-  trendLift: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  trendProgressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 2,
-  },
-  trendStart: {
-    fontSize: 11,
     color: COLORS.textTertiary,
   },
-  trendArrow: {
-    fontSize: 10,
-    color: COLORS.accent,
-  },
-  trendCurrent: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  trendRight: {
-    alignItems: 'flex-end',
-  },
-  trendBadge: {
-    backgroundColor: COLORS.successDim,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  trendDelta: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.success,
-  },
-  trendPercent: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
 
-  // Volume Bars
-  volumeBars: {
-    gap: 12,
+  // Volume
+  volumeGrid: {
+    gap: 10,
   },
   volumeRow: {
-    gap: 8,
-  },
-  volumeRowHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 12,
   },
   volumeLabel: {
     fontSize: 13,
-    color: COLORS.textSecondary,
     fontWeight: '600',
+    color: COLORS.textPrimary,
+    width: 80,
+  },
+  volumeBarContainer: {
+    flex: 1,
+    height: 24,
+    backgroundColor: COLORS.bgTertiary,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  volumeBar: {
+    height: '100%',
+    borderRadius: 12,
   },
   volumeValue: {
     fontSize: 13,
-    color: COLORS.textPrimary,
     fontWeight: '700',
-  },
-  volumeTrack: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: COLORS.surface,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  volumeFill: {
-    height: '100%',
-    borderRadius: 999,
+    color: COLORS.textSecondary,
+    width: 40,
+    textAlign: 'right',
   },
   volumeToggle: {
-    alignSelf: 'flex-start',
     marginTop: 12,
     paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    backgroundColor: COLORS.accentDim,
+    alignItems: 'center',
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: COLORS.accentGlow,
   },
@@ -1170,7 +1043,49 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  // Movement Grid
+  // Strength
+  strengthList: {
+    gap: 12,
+  },
+  strengthRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  strengthInfo: {
+    flex: 1,
+  },
+  strengthLift: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  strengthGlyph: {
+    fontSize: 11,
+    color: COLORS.success,
+    letterSpacing: 1,
+  },
+  strengthStats: {
+    alignItems: 'flex-end',
+  },
+  strengthWeight: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  strengthDelta: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    marginTop: 2,
+  },
+  strengthDeltaPositive: {
+    color: COLORS.success,
+  },
+
+  // Movement
   movementGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1202,6 +1117,9 @@ const styles = StyleSheet.create({
   },
 
   // Personal Records
+  prList: {
+    gap: 12,
+  },
   prRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1262,6 +1180,31 @@ const styles = StyleSheet.create({
     color: COLORS.success,
   },
 
+  // Empty States
+  emptyStateCard: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+  },
+  emptyStateEmoji: {
+    fontSize: 48,
+    marginBottom: 12,
+    opacity: 0.7,
+  },
+  emptyStateTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  emptyStateText: {
+    fontSize: 13,
+    color: COLORS.textTertiary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+
   // No Metrics State
   noMetricsCard: {
     backgroundColor: COLORS.card,
@@ -1289,45 +1232,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Empty States
-  emptyStateCard: {
-    alignItems: 'center',
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-  },
-  emptyStateEmoji: {
-    fontSize: 48,
-    marginBottom: 12,
-    opacity: 0.7,
-  },
-  emptyStateTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  emptyStateText: {
-    fontSize: 13,
-    color: COLORS.textTertiary,
-    textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 16,
-  },
-  emptyStateDots: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  emptyStateDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#2A2F4F',
-  },
-  emptyStateDotActive: {
-    backgroundColor: COLORS.accent,
-  },
-
+  // Tracking Modal
   trackingOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -1363,7 +1268,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.elevated,
+    backgroundColor: COLORS.bgSecondary,
   },
   trackingCloseText: {
     fontSize: 22,
@@ -1374,6 +1279,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     marginBottom: 16,
+    flexWrap: 'wrap',
   },
   trackingCategoryChip: {
     paddingHorizontal: 14,
@@ -1395,73 +1301,49 @@ const styles = StyleSheet.create({
   trackingCategoryTextActive: {
     color: COLORS.accent,
   },
-  trackingInputRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  trackingInput: {
+  loadingContainer: {
     flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    color: COLORS.textPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    color: COLORS.textSecondary,
+    marginTop: 12,
     fontSize: 14,
   },
-  trackingAddButton: {
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: COLORS.accent,
-    justifyContent: 'center',
+  selectedSection: {
+    marginBottom: 16,
   },
-  trackingAddText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  trackingList: {
+  availableSection: {
     flex: 1,
     marginBottom: 16,
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  trackingList: {
+    gap: 8,
+    maxHeight: 150,
   },
   trackingItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: COLORS.surface,
   },
   trackingItemLabel: {
     fontSize: 14,
     color: COLORS.textPrimary,
     fontWeight: '600',
-  },
-  trackingRemoveInline: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.35)',
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-  },
-  trackingRemoveInlineSmall: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  trackingRemoveInlineTiny: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-  },
-  trackingRemoveInlineText: {
-    color: '#FF7B7B',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  trackingRemoveInlineTextSmall: {
-    fontSize: 10,
   },
   trackingRemoveButton: {
     width: 28,
@@ -1476,10 +1358,33 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
+  optionsList: {
+    flex: 1,
+    maxHeight: 300,
+  },
+  optionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  optionText: {
+    fontSize: 14,
+    color: COLORS.textPrimary,
+  },
+  optionAddIcon: {
+    fontSize: 20,
+    color: COLORS.accent,
+    fontWeight: '600',
+  },
   trackingEmptyText: {
     color: COLORS.textSecondary,
     textAlign: 'center',
-    paddingVertical: 24,
+    paddingVertical: 40,
+    fontSize: 14,
   },
   trackingSaveButton: {
     paddingVertical: 14,
