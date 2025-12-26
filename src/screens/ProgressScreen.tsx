@@ -122,6 +122,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const cardSlideAnim = useRef(new Animated.Value(30)).current;
   const cardFadeAnim = useRef(new Animated.Value(0)).current;
   const scrollY = useRef(new Animated.Value(0)).current;
+  const volumeCardRef = useRef<View | null>(null);
 
   const [activeMetrics, setActiveMetrics] = useState<MetricType[]>(['volume', 'strength', 'movement']);
   const [showAllVolume, setShowAllVolume] = useState(false);
@@ -214,6 +215,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   useFocusEffect(
     useCallback(() => {
+      setShowAllVolume(false);
       setFabAction('Progress', {
         label: 'Metrics',
         icon: '+',
@@ -329,6 +331,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const strengthTrends = buildStrengthTrends(strengthSnapshots, labelMaps);
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs, labelMaps);
+  const nonZeroWeeklyVolume = weeklyVolume.filter((entry) => entry.sets > 0);
   const movementBalance = buildMovementBalanceSummary(workoutLogs, labelMaps);
 
   const bestLiftRows = strengthTrends
@@ -350,14 +353,37 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     return '#2A2F4F';
   };
 
-  const maxVolumeRows = 6;
-  const hasExtraVolume = weeklyVolume.length > maxVolumeRows;
-  const visibleVolume = showAllVolume ? weeklyVolume : weeklyVolume.slice(0, maxVolumeRows);
+  const maxVolumeRows = 3;
+  const hasExtraVolume = nonZeroWeeklyVolume.length > maxVolumeRows;
+  const visibleVolume = showAllVolume
+    ? nonZeroWeeklyVolume
+    : nonZeroWeeklyVolume.slice(0, maxVolumeRows);
 
   const toggleVolumeExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setShowAllVolume((prev) => !prev);
   };
+
+  const collapseVolumeIfExpanded = () => {
+    if (!showAllVolume) return;
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setShowAllVolume(false);
+  };
+
+  const handleContentTap = useCallback(
+    (event: any) => {
+      if (!showAllVolume) return;
+      const pageY = event.nativeEvent.pageY;
+      const node = volumeCardRef.current;
+      if (!node) return;
+      node.measureInWindow((x, y, width, height) => {
+        if (pageY < y || pageY > y + height) {
+          collapseVolumeIfExpanded();
+        }
+      });
+    },
+    [showAllVolume]
+  );
 
   // Get available options based on category
   const getAvailableOptions = useCallback((): string[] => {
@@ -382,7 +408,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const renderVolumeCard = () => {
     if (!activeMetrics.includes('volume')) return null;
-    if (weeklyVolume.length === 0) {
+    if (nonZeroWeeklyVolume.length === 0) {
       return (
         <View style={[styles.card, styles.emptyStateCard]}>
           <Text style={styles.emptyStateEmoji}>💪</Text>
@@ -397,7 +423,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     const topSets = Math.max(...visibleVolume.map((v) => v.sets), 1);
 
     return (
-      <View style={styles.card}>
+      <View
+        style={styles.card}
+        ref={volumeCardRef}
+      >
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Training Volume</Text>
           <Text style={styles.cardSubtitle}>Last 4 weeks • Total sets</Text>
@@ -429,7 +458,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             activeOpacity={0.9}
           >
             <Text style={styles.volumeToggleText}>
-              {showAllVolume ? 'Show Less' : `Show ${weeklyVolume.length - maxVolumeRows} More`}
+              {showAllVolume
+                ? 'Show Less'
+                : `Show ${nonZeroWeeklyVolume.length - maxVolumeRows} More`}
             </Text>
           </TouchableOpacity>
         )}
@@ -592,6 +623,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
+          onScrollBeginDrag={collapseVolumeIfExpanded}
+          onMomentumScrollBegin={collapseVolumeIfExpanded}
+          onTouchStartCapture={handleContentTap}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
             { useNativeDriver: true }
@@ -728,6 +762,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                     </Text>
                   </TouchableOpacity>
                 </View>
+
+                <Text style={styles.trackingHintText}>
+                  Tracked items only appear when there is actual data.
+                </Text>
 
                 <View style={styles.trackingPanel}>
                   <View style={styles.trackingPanelHeader}>
@@ -1184,6 +1222,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     marginBottom: 12,
+  },
+  trackingHintText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginBottom: 10,
   },
   trackingTab: {
     paddingVertical: 10,
