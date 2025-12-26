@@ -127,6 +127,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const [activeMetrics, setActiveMetrics] = useState<MetricType[]>(['volume', 'strength', 'movement']);
   const [showAllVolume, setShowAllVolume] = useState(false);
+  const [showAllStrength, setShowAllStrength] = useState(false);
   const [trackingModalVisible, setTrackingModalVisible] = useState(false);
   const [trackingDraft, setTrackingDraft] = useState<TrackingPreferences>(() =>
     createTrackingDraft(user.trackingPreferences)
@@ -241,6 +242,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   useFocusEffect(
     useCallback(() => {
       setShowAllVolume(false);
+      setShowAllStrength(false);
       setFabAction('Progress', {
         label: 'Metrics',
         icon: '+',
@@ -250,7 +252,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         onPress: handleOpenTrackingModal,
       });
 
-      return () => setFabAction('Progress', null);
+      return () => {
+        setShowAllVolume(false);
+        setShowAllStrength(false);
+        setFabAction('Progress', null);
+      };
     }, [handleOpenTrackingModal, setFabAction])
   );
 
@@ -340,8 +346,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const strengthTrendsRaw = buildStrengthTrends(strengthSnapshots, labelMaps);
 
-  console.log("lets see this")
-  console.log(strengthTrendsRaw)
   const preferredWeightsByKey = useMemo(() => {
     const exerciseKeyById = new Map(
       exerciseOptions.map((exercise) => [exercise.id, toTrackingKey(exercise.name)])
@@ -418,6 +422,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const visibleVolume = showAllVolume
     ? nonZeroWeeklyVolume
     : nonZeroWeeklyVolume.slice(0, maxVolumeRows);
+  const maxStrengthRows = 3;
+  const hasExtraStrength = strengthTrends.length > maxStrengthRows;
+  const visibleStrength = showAllStrength
+    ? strengthTrends
+    : strengthTrends.slice(0, maxStrengthRows);
   const planWeeks = Math.max(resolvedPhase?.expectedWeeks ?? 8, 1);
   const volumeWindowWeeks = 4;
   const maxWindowSets = Math.max(...weeklyVolume.map((entry) => entry.sets), 0);
@@ -427,6 +436,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const toggleVolumeExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setShowAllVolume((prev) => !prev);
+  };
+
+  const toggleStrengthExpand = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setShowAllStrength((prev) => !prev);
   };
 
   const collapseVolumeIfExpanded = () => {
@@ -554,7 +568,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           <Text style={styles.cardSubtitle}>Last 4 weeks</Text>
         </View>
         <View style={styles.strengthList}>
-          {strengthTrends.map((trend) => (
+          {visibleStrength.map((trend) => (
             <View key={trend.key} style={styles.strengthRow}>
               <View style={styles.strengthInfo}>
                 <Text style={styles.strengthLift}>{trend.lift}</Text>
@@ -579,6 +593,19 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </View>
           ))}
         </View>
+        {hasExtraStrength && (
+          <TouchableOpacity
+            style={styles.volumeToggle}
+            onPress={toggleStrengthExpand}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.volumeToggleText}>
+              {showAllStrength
+                ? 'Show Less'
+                : `Show ${strengthTrends.length - maxStrengthRows} More`}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -688,8 +715,14 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
-          onScrollBeginDrag={collapseVolumeIfExpanded}
-          onMomentumScrollBegin={collapseVolumeIfExpanded}
+          onScrollBeginDrag={() => {
+            collapseVolumeIfExpanded();
+            setShowAllStrength(false);
+          }}
+          onMomentumScrollBegin={() => {
+            collapseVolumeIfExpanded();
+            setShowAllStrength(false);
+          }}
           onTouchStartCapture={handleContentTap}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
@@ -1011,13 +1044,13 @@ const styles = StyleSheet.create({
 
   // Strength
   strengthList: {
-    gap: 12,
+    gap: 8,
   },
   strengthRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 5,
   },
   strengthInfo: {
     flex: 1,
