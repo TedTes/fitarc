@@ -146,6 +146,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     createTrackingDraft(user.trackingPreferences)
   );
   const [trackingCategory, setTrackingCategory] = useState<TrackingCategory>('muscles');
+  const [trackingTab, setTrackingTab] = useState<'selected' | 'available'>('selected');
   
   // DB-backed options state
   const [muscleOptions, setMuscleOptions] = useState<MuscleGroupOption[]>([]);
@@ -218,6 +219,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setTrackingDraft(createTrackingDraft(user.trackingPreferences));
     setTrackingCategory('muscles');
+    setTrackingTab('selected');
     setTrackingModalVisible(true);
     await loadTrackingOptions();
   }, [user.trackingPreferences, loadTrackingOptions]);
@@ -801,34 +803,81 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                 <Text style={styles.loadingText}>Loading options...</Text>
               </View>
             ) : (
-              <>
-                {selectedItems.length > 0 && (
-                  <View style={styles.selectedSection}>
-                    <Text style={styles.sectionLabel}>Selected ({selectedItems.length})</Text>
-                    <View style={styles.trackingList}>
-                      {selectedItems.map(([key, label]) => (
-                        <View key={key} style={styles.trackingItem}>
-                          <Text style={styles.trackingItemLabel}>{label}</Text>
-                          <TouchableOpacity
-                            style={styles.trackingRemoveButton}
-                            onPress={() => handleRemoveTrackingItem(key)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.trackingRemoveText}>×</Text>
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                {availableOptions.length > 0 && (
-                  <View style={styles.availableSection}>
-                    <Text style={styles.sectionLabel}>
+              <View style={styles.trackingContent}>
+                <View style={styles.trackingTabRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.trackingTab,
+                      trackingTab === 'selected' && styles.trackingTabActive,
+                    ]}
+                    onPress={() => setTrackingTab('selected')}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.trackingTabText,
+                        trackingTab === 'selected' && styles.trackingTabTextActive,
+                      ]}
+                    >
+                      Selected ({selectedItems.length})
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.trackingTab,
+                      trackingTab === 'available' && styles.trackingTabActive,
+                    ]}
+                    onPress={() => setTrackingTab('available')}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.trackingTabText,
+                        trackingTab === 'available' && styles.trackingTabTextActive,
+                      ]}
+                    >
                       Available ({availableOptions.length})
                     </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.trackingPanel}>
+                  <View style={styles.trackingPanelHeader}>
+                    <Text style={styles.trackingPanelLabel}>
+                      {trackingTab === 'selected'
+                        ? `Selected (${selectedItems.length})`
+                        : `Available (${availableOptions.length})`}
+                    </Text>
+                  </View>
+                  {trackingTab === 'selected' ? (
+                    selectedItems.length > 0 ? (
+                      <ScrollView
+                        style={styles.trackingPanelScroll}
+                        contentContainerStyle={styles.trackingPanelList}
+                        showsVerticalScrollIndicator={false}
+                      >
+                        {selectedItems.map(([key, label]) => (
+                          <View key={key} style={styles.trackingItem}>
+                            <Text style={styles.trackingItemLabel}>{label}</Text>
+                            <TouchableOpacity
+                              style={styles.trackingRemoveButton}
+                              onPress={() => handleRemoveTrackingItem(key)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.trackingRemoveText}>×</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </ScrollView>
+                    ) : (
+                      <Text style={styles.trackingColumnEmptyText}>
+                        No selected items yet.
+                      </Text>
+                    )
+                  ) : availableOptions.length > 0 ? (
                     <ScrollView
-                      style={styles.optionsList}
+                      style={styles.trackingPanelScroll}
+                      contentContainerStyle={styles.trackingPanelList}
                       showsVerticalScrollIndicator={false}
                     >
                       {availableOptions.map((option) => (
@@ -843,15 +892,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
-                  </View>
-                )}
-
-                {availableOptions.length === 0 && selectedItems.length === 0 && (
-                  <Text style={styles.trackingEmptyText}>
-                    No items available for tracking.
-                  </Text>
-                )}
-              </>
+                  ) : (
+                    <Text style={styles.trackingColumnEmptyText}>
+                      No available items.
+                    </Text>
+                  )}
+                </View>
+              </View>
             )}
 
             <TouchableOpacity
@@ -1279,7 +1326,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     marginBottom: 16,
-    flexWrap: 'wrap',
+    paddingRight: 8,
+    alignItems: 'center',
   },
   trackingCategoryChip: {
     paddingHorizontal: 14,
@@ -1290,8 +1338,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
   },
   trackingCategoryChipActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.success,
+    backgroundColor: COLORS.successDim,
   },
   trackingCategoryText: {
     fontSize: 12,
@@ -1299,7 +1347,7 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   trackingCategoryTextActive: {
-    color: COLORS.accent,
+    color: COLORS.success,
   },
   loadingContainer: {
     flex: 1,
@@ -1312,24 +1360,69 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
   },
-  selectedSection: {
-    marginBottom: 16,
-  },
-  availableSection: {
+  trackingContent: {
     flex: 1,
     marginBottom: 16,
   },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  trackingList: {
+  trackingTabRow: {
+    flexDirection: 'row',
     gap: 8,
-    maxHeight: 150,
+    marginBottom: 12,
+  },
+  trackingTab: {
+    paddingVertical: 10,
+    paddingHorizontal: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    alignItems: 'center',
+  },
+  trackingTabActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentDim,
+  },
+  trackingTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+  },
+  trackingTabTextActive: {
+    color: COLORS.accent,
+  },
+  trackingPanel: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    overflow: 'hidden',
+  },
+  trackingPanelHeader: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: COLORS.bgSecondary,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  trackingPanelLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  trackingPanelScroll: {
+    flex: 1,
+  },
+  trackingPanelList: {
+    padding: 10,
+    gap: 8,
+  },
+  trackingColumnEmptyText: {
+    padding: 12,
+    color: COLORS.textTertiary,
+    fontSize: 13,
   },
   trackingItem: {
     flexDirection: 'row',
@@ -1358,10 +1451,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  optionsList: {
-    flex: 1,
-    maxHeight: 300,
-  },
   optionItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1379,12 +1468,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: COLORS.accent,
     fontWeight: '600',
-  },
-  trackingEmptyText: {
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    paddingVertical: 40,
-    fontSize: 14,
   },
   trackingSaveButton: {
     paddingVertical: 14,
