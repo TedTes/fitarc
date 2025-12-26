@@ -19,9 +19,9 @@ import {
   AuthNavigator,
 } from './src/screens';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { PhotoCheckin, User, WorkoutSessionEntry } from './src/types/domain';
+import { PhotoCheckin, TrackingPreferences, User, WorkoutSessionEntry } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
-import { fetchUserProfile, saveUserProfile } from './src/services/userProfileService';
+import { fetchUserProfile, saveUserProfile, updateTrackingPreferences } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/dashboardService';
 import { formatLocalDateYMD } from './src/utils/date';
 import {
@@ -361,6 +361,23 @@ function AppContent() {
     setPhotoCaptureOptional(true);
     setPhotoCaptureVisible(true);
   }, [state?.currentPhase]);
+
+  const handleUpdateTrackingPreferences = useCallback(
+    async (preferences: TrackingPreferences) => {
+      if (!state?.user) return;
+      const nextUser: User = {
+        ...state.user,
+        trackingPreferences: preferences,
+      };
+      updateUser(nextUser);
+      try {
+        await updateTrackingPreferences(nextUser.id, preferences);
+      } catch (err) {
+        console.error('Failed to persist tracking preferences', err);
+      }
+    },
+    [state?.user, updateUser, updateTrackingPreferences]
+  );
 
   const fabConfig = getFabAction(currentRouteName);
   const triggerTabFabPop = useCallback(() => {
@@ -800,6 +817,7 @@ function AppContent() {
                   workoutLogs={state.workoutLogs}
                   strengthSnapshots={state.strengthSnapshots}
                   onAddProgress={handleAddProgress}
+                  onUpdateTrackingPreferences={handleUpdateTrackingPreferences}
                 />
               ) : (
                 <TabPlaceholder
