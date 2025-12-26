@@ -30,9 +30,7 @@ import {
   buildStrengthTrends,
   buildWeeklyVolumeSummary,
   buildMovementBalanceSummary,
-  StrengthTrendView,
-  VolumeEntryView,
-  MovementPatternView,
+
 } from '../utils/performanceSelectors';
 import {
   fetchMuscleGroups,
@@ -79,20 +77,6 @@ const COLORS = {
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 
 type MetricType = 'volume' | 'strength' | 'movement' | 'records';
-
-interface MetricConfig {
-  id: MetricType;
-  label: string;
-  icon: string;
-  timeframe: string;
-}
-
-const AVAILABLE_METRICS: MetricConfig[] = [
-  { id: 'volume', label: 'Volume', icon: '📊', timeframe: 'Last 4 weeks' },
-  { id: 'strength', label: 'Strength', icon: '💪', timeframe: 'Last 8 weeks' },
-  { id: 'movement', label: 'Balance', icon: '🎯', timeframe: 'This month' },
-  { id: 'records', label: 'Records', icon: '🏆', timeframe: 'This phase' },
-];
 
 const TRACKING_CATEGORIES = [
   { id: 'muscles', label: 'Training Volume' },
@@ -370,49 +354,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const hasExtraVolume = weeklyVolume.length > maxVolumeRows;
   const visibleVolume = showAllVolume ? weeklyVolume : weeklyVolume.slice(0, maxVolumeRows);
 
-  const toggleMetric = (metricId: MetricType) => {
-    LayoutAnimation.configureNext({
-      duration: 300,
-      create: {
-        type: LayoutAnimation.Types.easeInEaseOut,
-        property: LayoutAnimation.Properties.opacity,
-      },
-      update: {
-        type: LayoutAnimation.Types.easeInEaseOut,
-      },
-      delete: {
-        type: LayoutAnimation.Types.easeInEaseOut,
-        property: LayoutAnimation.Properties.opacity,
-      },
-    });
-
-    setActiveMetrics((prev) => {
-      if (prev.includes(metricId)) {
-        return prev.filter((id) => id !== metricId);
-      } else {
-        return [...prev, metricId];
-      }
-    });
-  };
-
   const toggleVolumeExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setShowAllVolume((prev) => !prev);
-  };
-
-  const hasData = (metricId: MetricType): boolean => {
-    switch (metricId) {
-      case 'volume':
-        return weeklyVolume.length > 0;
-      case 'strength':
-        return strengthTrends.length > 0;
-      case 'movement':
-        return movementBalance.length > 0;
-      case 'records':
-        return bestLiftRows.length > 0;
-      default:
-        return false;
-    }
   };
 
   // Get available options based on category
@@ -435,64 +379,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         return [];
     }
   }, [trackingCategory, trackingDraft, muscleOptions, exerciseOptions, movementOptions]);
-
-  const renderMetricSelector = () => (
-    <View style={styles.metricSelector}>
-      <View style={styles.selectorHeader}>
-        <Text style={styles.selectorLabel}>Active Metrics</Text>
-        <TouchableOpacity
-          style={styles.selectorAction}
-          onPress={handleOpenTrackingModal}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.selectorActionText}>Manage Tracking</Text>
-        </TouchableOpacity>
-      </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.metricChips}
-      >
-        {AVAILABLE_METRICS.map((metric) => {
-          const isActive = activeMetrics.includes(metric.id);
-          const hasContent = hasData(metric.id);
-          
-          return (
-            <TouchableOpacity
-              key={metric.id}
-              style={[
-                styles.metricChip,
-                isActive && styles.metricChipActive,
-                !hasContent && styles.metricChipEmpty,
-              ]}
-              onPress={() => toggleMetric(metric.id)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.metricIcon}>{metric.icon}</Text>
-              <View style={styles.metricInfo}>
-                <Text
-                  style={[
-                    styles.metricLabel,
-                    isActive && styles.metricLabelActive,
-                  ]}
-                >
-                  {metric.label}
-                </Text>
-                <Text
-                  style={[
-                    styles.metricTime,
-                    isActive && styles.metricTimeActive,
-                  ]}
-                >
-                  {metric.timeframe}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
 
   const renderVolumeCard = () => {
     if (!activeMetrics.includes('volume')) return null;
@@ -537,7 +423,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           })}
         </View>
         {hasExtraVolume && (
-          <TouchableOpacity style={styles.volumeToggle} onPress={toggleVolumeExpand}>
+          <TouchableOpacity
+            style={styles.volumeToggle}
+            onPress={toggleVolumeExpand}
+            activeOpacity={0.9}
+          >
             <Text style={styles.volumeToggleText}>
               {showAllVolume ? 'Show Less' : `Show ${weeklyVolume.length - maxVolumeRows} More`}
             </Text>
@@ -724,8 +614,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           {showSyncNotice && (
             <Text style={styles.syncNotice}>⏳ Syncing latest progress data...</Text>
           )}
-
-          {renderMetricSelector()}
 
           <Animated.View
             style={{
@@ -925,6 +813,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
     paddingBottom: 100,
+    paddingTop: '20%',
   },
   header: {
     marginBottom: 24,
@@ -945,79 +834,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 13,
     marginBottom: 16,
-  },
-
-  // Metric Selector
-  metricSelector: {
-    marginBottom: 24,
-  },
-  selectorHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  selectorLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  selectorAction: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: COLORS.accentDim,
-  },
-  selectorActionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.accent,
-  },
-  metricChips: {
-    gap: 10,
-    paddingRight: 20,
-  },
-  metricChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.card,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    gap: 10,
-  },
-  metricChipActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentDim,
-  },
-  metricChipEmpty: {
-    opacity: 0.5,
-  },
-  metricIcon: {
-    fontSize: 18,
-  },
-  metricInfo: {
-    gap: 2,
-  },
-  metricLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  metricLabelActive: {
-    color: COLORS.accent,
-  },
-  metricTime: {
-    fontSize: 11,
-    color: COLORS.textTertiary,
-  },
-  metricTimeActive: {
-    color: COLORS.accent,
-    opacity: 0.8,
   },
 
   // Cards
