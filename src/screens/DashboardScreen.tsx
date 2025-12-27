@@ -25,6 +25,7 @@ import { useTodayMeals } from '../hooks/useTodayMeals';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { MealEntry } from '../services/mealService';
 import { useFabAction } from '../contexts/FabActionContext';
+import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
 import {
@@ -101,6 +102,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onCompleteAllToday,
 }) => {
   const { setFabAction } = useFabAction();
+  const { headerStyle, contentStyle } = useScreenAnimation();
   const navigation = useNavigation<any>();
   const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const derivedPhaseId = phase?.id ?? homeData?.phase?.id;
@@ -816,6 +818,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         <Animated.View
           style={[
             styles.header,
+            headerStyle,
             {
               opacity: headerFadeAnim,
               transform: [
@@ -845,8 +848,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           )}
         </Animated.View>
 
-        <ScrollView
-          style={styles.scrollView}
+        <Animated.ScrollView
+          style={[styles.scrollView, contentStyle]}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           bounces={true}
@@ -918,7 +921,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </View>
             </LinearGradient>
           </Animated.View>
-        </ScrollView>
+        </Animated.ScrollView>
 
         <View style={styles.stickyTabsContainer}>
           <View style={styles.tabs}>
@@ -1113,16 +1116,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(108, 99, 255, 0.08)',
   },
   activityLevel1: {
-    backgroundColor: 'rgba(108, 99, 255, 0.3)',
-    borderColor: 'rgba(108, 99, 255, 0.4)',
+    backgroundColor: 'rgba(0, 245, 160, 0.35)',
+    borderColor: 'rgba(0, 245, 160, 0.45)',
   },
   activityLevel2: {
-    backgroundColor: 'rgba(108, 99, 255, 0.5)',
-    borderColor: 'rgba(108, 99, 255, 0.6)',
+    backgroundColor: 'rgba(0, 245, 160, 0.6)',
+    borderColor: 'rgba(0, 245, 160, 0.7)',
   },
   activityLevel3: {
-    backgroundColor: '#6C63FF',
-    borderColor: '#00F5A0',
+    backgroundColor: '#00F5A0',
+    borderColor: 'rgba(0, 245, 160, 0.95)',
   },
   activityCellToday: {
     borderWidth: 2,

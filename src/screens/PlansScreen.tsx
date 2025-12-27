@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { useFabAction } from '../contexts/FabActionContext';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import {
   User,
   PhasePlan,
@@ -130,6 +131,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const { setFabAction } = useFabAction();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
+  const { headerStyle, contentStyle } = useScreenAnimation();
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
   
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
@@ -745,7 +747,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.stickyHeader}>
+          <Animated.View style={[styles.stickyHeader, headerStyle]}>
             <View style={styles.headerTop}>
               <Text style={styles.headerTitle}>Workouts</Text>
               <View style={styles.phaseChip}>
@@ -795,16 +797,16 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                 })}
               </ScrollView>
             </Animated.View>
-          </View>
+          </Animated.View>
 
-          <View style={styles.content}>
+          <Animated.View style={[styles.content, contentStyle]}>
             <View style={styles.dayHeader}>
               <View style={styles.dayInfo}>
                 {selectedDayMeta ? <Text style={styles.dayMeta}>{selectedDayMeta}</Text> : null}
               </View>
             </View>
             {renderSession()}
-          </View>
+          </Animated.View>
         </ScrollView>
       </LinearGradient>
 

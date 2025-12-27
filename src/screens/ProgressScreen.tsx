@@ -17,6 +17,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { useFabAction } from '../contexts/FabActionContext';
+import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import {
   PhasePlan,
   User,
@@ -110,6 +111,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   onUpdateTrackingPreferences,
 }) => {
   const { setFabAction } = useFabAction();
+  const { headerStyle, contentStyle } = useScreenAnimation();
   const { data, isLoading, refresh } = useProgressData(
     user.id,
     phase.id,
@@ -711,7 +713,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     <>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.container}>
         <Animated.ScrollView
-          style={styles.scrollView}
+          style={[styles.scrollView, contentStyle]}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
@@ -730,10 +732,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           )}
         >
           <Animated.View
-            style={{
-              opacity: headerFadeAnim,
-              transform: [{ translateY: headerSlideAnim }],
-            }}
+            style={[
+              headerStyle,
+              {
+                opacity: headerFadeAnim,
+                transform: [{ translateY: headerSlideAnim }],
+              },
+            ]}
           >
             <View style={styles.header}>
               <View>
