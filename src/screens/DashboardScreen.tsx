@@ -13,6 +13,7 @@ import {
   UIManager,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
 import {
   User,
   PhasePlan,
@@ -100,6 +101,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onCompleteAllToday,
 }) => {
   const { setFabAction } = useFabAction();
+  const navigation = useNavigation<any>();
   const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const derivedPhaseId = phase?.id ?? homeData?.phase?.id;
   const { sessions: phaseSessions, isLoading: isSessionsLoading } = useWorkoutSessions(
@@ -124,7 +126,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
-  const activePhaseId = resolvedPhase?.id ?? null;
+  console.log("resolved phase")
+  console.log(resolvedPhase)
+  const hasActivePlan = resolvedPhase?.status === 'active';
+  const activePhaseId = hasActivePlan ? resolvedPhase?.id ?? null : null;
   const resolvedSessions = useMemo(() => {
     const fallbackSessions = phaseSessions.length
       ? phaseSessions
@@ -167,7 +172,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     [displayExercises, isExerciseMarked]
   );
   
-  const hasAnySessions = resolvedSessions.length > 0;
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
   const displayName = user.name?.trim() || 'Athlete';
@@ -265,9 +269,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     isMutating: isMealsMutating,
     error: todayMealsError,
   } = useTodayMeals(
-    resolvedPhase ? user.id : undefined,
-    resolvedPhase ? today : undefined,
-    Boolean(resolvedPhase),
+    hasActivePlan ? user.id : undefined,
+    hasActivePlan ? today : undefined,
+    hasActivePlan,
     activePhaseId
   );
 
@@ -281,27 +285,58 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       .filter((group) => group.entries.length > 0);
   }, [baseMealTypes, mealsByType]);
 
-  const canLogWorkouts = !!resolvedPhase && !!onToggleWorkoutExercise;
+  const canLogWorkouts = hasActivePlan && !!onToggleWorkoutExercise;
 
   const pendingWorkoutCount = visibleWorkoutCards.length;
+  const shouldPromptPlan = hasActivePlan && !hasSyncedWorkout;
+  const shouldCreatePlan = !hasActivePlan && !!onStartPhase;
+  const handleOpenPlans = useCallback(() => {
+    navigation.navigate('Workouts', { openExerciseModal: true });
+  }, [navigation]);
 
   useEffect(() => {
-    if (!onCompleteAllToday) {
+    if (shouldCreatePlan) {
+      setFabAction('Home', {
+        label: 'Create Plan',
+        icon: '+',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: onStartPhase!,
+      });
+    } else if (shouldPromptPlan) {
+      setFabAction('Home', {
+        label: 'Session',
+        icon: '+',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: handleOpenPlans,
+      });
+    } else if (onCompleteAllToday && pendingWorkoutCount > 0) {
+      setFabAction('Home', {
+        label: 'Complete',
+        icon: '✓',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: onCompleteAllToday,
+      });
+    } else {
       setFabAction('Home', null);
-      return () => setFabAction('Home', null);
     }
 
-    setFabAction('Home', {
-      label: 'Complete',
-      icon: '✓',
-      colors: ['#6C63FF', '#4C3BFF'] as const,
-      iconColor: '#0A0E27',
-      labelColor: '#6C63FF',
-      onPress: onCompleteAllToday,
-    });
-
     return () => setFabAction('Home', null);
-  }, [onCompleteAllToday, setFabAction]);
+  }, [
+    handleOpenPlans,
+    hasActivePlan,
+    onCompleteAllToday,
+    pendingWorkoutCount,
+    setFabAction,
+    shouldCreatePlan,
+    shouldPromptPlan,
+    onStartPhase,
+  ]);
 
   // 🎨 Animation functions
   const getActivityCellAnimation = (iso: string) => {
@@ -430,12 +465,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       ])
     );
     
-    if (!resolvedPhase) {
+    if (!hasActivePlan) {
       pulseLoop.start();
     }
     
     return () => pulseLoop.stop();
-  }, [resolvedPhase]);
+  }, [hasActivePlan]);
 
   const flushPendingToggles = useCallback(async () => {
     if (toggleFlushTimeoutRef.current) {
@@ -648,7 +683,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const renderWorkoutsSection = () => (
     <View style={styles.section}>
-      {!resolvedPhase && !hasAnySessions && !isHomeLoading && !isSessionsLoading ? (
+      {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>🎯</Text>
           <Text style={styles.emptyTitle}>No active plan</Text>
@@ -674,14 +709,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <Text style={styles.emptyText}>
             Your workout for today will appear here once scheduled.
           </Text>
-          {onCreateSession && (
-            <TouchableOpacity
-              style={[styles.createPlanButton, styles.createSessionButton]}
-              onPress={() => onCreateSession(todayStr)}
-            >
-              <Text style={styles.createPlanButtonText}>Create Session</Text>
-            </TouchableOpacity>
-          )}
         </View>
       ) : pendingWorkoutCount === 0 ? (
         <View style={styles.emptyCard}>
@@ -757,7 +784,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const renderMealsSection = () => (
     <View style={styles.section}>
-      {!resolvedPhase ? (
+      {!hasActivePlan ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyEmoji}>🍽️</Text>
           <Text style={styles.emptyTitle}>Meals unlock soon</Text>

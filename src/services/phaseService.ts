@@ -118,11 +118,12 @@ export const createPhaseWithWorkouts = async (
     return phase;
   }
   
-  // 3. Auto-generate workout sessions for the week
+  // 3. Auto-generate workout sessions for the plan length
   const startDate = new Date(phase.startDate);
+  const totalDays = Math.max(phase.expectedWeeks, 1) * 7;
   
   try {
-    await generateWeekWorkouts(userId, phase.id, trainingSplit, startDate);
+    await generateWeekWorkouts(userId, phase.id, trainingSplit, startDate, totalDays);
     console.log('🎉 Phase created with workouts successfully');
   } catch (error) {
     console.error('⚠️ Phase created but workout generation failed:', error);

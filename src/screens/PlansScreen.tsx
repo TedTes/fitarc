@@ -19,6 +19,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { useFabAction } from '../contexts/FabActionContext';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   User,
   PhasePlan,
@@ -127,6 +128,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onDeleteExercise,
 }) => {
   const { setFabAction } = useFabAction();
+  const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
   
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
@@ -145,6 +148,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const handleOpenExerciseModal = useCallback(() => {
     setExerciseModalVisible(true);
   }, []);
+
+  useEffect(() => {
+    if (!route.params?.openExerciseModal) return;
+    setExerciseModalVisible(true);
+    navigation.setParams({ openExerciseModal: false });
+  }, [navigation, route.params?.openExerciseModal]);
 
   useFocusEffect(
     useCallback(() => {
@@ -535,8 +544,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   };
 
  
- 
 
+  
   const handleChangeSets = (index: number, value: string) => {
     const numeric = parseInt(value, 10);
     setEditingExercises((prev) => {

@@ -1152,7 +1152,8 @@ export const generateWeekWorkouts = async (
   userId: string,
   phaseId: string,
   trainingSplit: User['trainingSplit'],
-  startDate: Date = new Date()
+  startDate: Date = new Date(),
+  totalDays = 7
 ): Promise<void> => {
   try {
     console.log(`🏋️ Generating workouts for phase ${phaseId}, split: ${trainingSplit}`);
@@ -1182,7 +1183,7 @@ export const generateWeekWorkouts = async (
       splitDayId?: string | null;
     }> = [];
 
-    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+    for (let dayOffset = 0; dayOffset < totalDays; dayOffset++) {
       const workoutDate = new Date(startDate);
       workoutDate.setDate(startDate.getDate() + dayOffset);
       const dateStr = formatLocalDateYMD(workoutDate);

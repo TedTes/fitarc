@@ -587,7 +587,7 @@ function AppContent() {
     loadMealPlansFromSupabase,
   ]);
 
-  const handleStartPhaseFromDashboard = () => {
+  const handleStartPhaseFromDashboard = useCallback(() => {
     console.log('🎯 Create Plan clicked!');
     
     if (!state?.user) {
@@ -611,7 +611,7 @@ function AppContent() {
     setOnboardingStep('current_physique');
     
     console.log('✅ Onboarding step set to: current_physique');
-  };
+  }, [state?.user]);
 
   const handleLogout = async () => {
     try {
