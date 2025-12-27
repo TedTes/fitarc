@@ -103,6 +103,7 @@ const getPhaseWeek = (phase: PhasePlan) => {
 
 const createSessionExercises = (entries: WorkoutSessionExercise[]): WorkoutSessionExercise[] =>
   entries.map((exercise) => ({
+    id: exercise.id,
     name: exercise.name,
     bodyParts: [...exercise.bodyParts],
     completed: !!exercise.completed,
@@ -110,6 +111,7 @@ const createSessionExercises = (entries: WorkoutSessionExercise[]): WorkoutSessi
     reps: exercise.reps ?? '8-12',
     movementPattern: exercise.movementPattern,
     exerciseId: exercise.exerciseId,
+    displayOrder: exercise.displayOrder,
     setDetails: exercise.setDetails?.map((set, index) => ({
       setNumber: set?.setNumber ?? index + 1,
       weight: set?.weight,
@@ -226,6 +228,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const lastExerciseCountRef = useRef(0);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastSyncedKeyRef = useRef<string | null>(null);
+  const localEditsDateRef = useRef<string | null>(null);
+  const isDeletingRef = useRef(false);
   const sessionFingerprint =
     selectedPlan?.session?.exercises
       ?.map(
@@ -255,6 +259,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       setEditingExercises([]);
       setIsDirty(false);
       lastSyncedKeyRef.current = null;
+      localEditsDateRef.current = null;
       return;
     }
 
@@ -271,7 +276,14 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       return;
     }
 
-    // No session exists - clear exercises
+    // No session exists - keep local edits only for the same day
+    if (
+      editingExercisesRef.current.length > 0 &&
+      localEditsDateRef.current === selectedPlan.dateStr
+    ) {
+      lastSyncedKeyRef.current = planSyncKey;
+      return;
+    }
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setEditingExercises([]);
     setIsDirty(false);
@@ -403,6 +415,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       clearTimeout(autosaveTimeoutRef.current);
       autosaveTimeoutRef.current = null;
     }
+    if (isDeletingRef.current) return;
     if (!selectedPlan || !isDirty) return;
     try {
       await enqueueSave(selectedPlan, editingExercisesRef.current);
@@ -451,6 +464,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
     // Animate modal close first
     setExerciseModalVisible(false);
+    localEditsDateRef.current = selectedPlan.dateStr;
     
     const isDuplicate = editingExercisesRef.current.some(
       (exercise) =>
@@ -462,7 +476,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       return;
     }
 
-    const wasDirty = isDirty;
     const displayOrder = editingExercisesRef.current.length + 1;
     const newExercise = { ...convertCatalogExercise(entry), displayOrder };
     const next = [...editingExercisesRef.current, newExercise];
@@ -477,8 +490,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       },
     });
 
+    const canPersistImmediately = Boolean(selectedPlan.session?.id && onAddExercise);
     editingExercisesRef.current = next;
     setEditingExercises(next);
+    if (!canPersistImmediately) {
+      setIsDirty(true);
+    }
 
     // Animate the newly added card
     const cardKey = `${newExercise.name}-${next.length - 1}`;
@@ -504,7 +521,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
             return updated;
           });
         }
-        setIsDirty(wasDirty);
+        setIsDirty(false);
       }
     } catch (err) {
       if (err instanceof Error && err.message === 'duplicate_exercise') {
@@ -519,6 +536,16 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     const exercise = editingExercisesRef.current[index];
     const cardKey = `${exercise.name}-${index}`;
     const cardAnim = getExerciseAnimation(cardKey);
+    const needsRemoteDelete = Boolean(selectedPlan?.session?.id && exercise?.id && onDeleteExercise);
+    const shouldPersistLocally = !selectedPlan?.session?.id;
+    isDeletingRef.current = true;
+    if (selectedPlan) {
+      localEditsDateRef.current = selectedPlan.dateStr;
+    }
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current);
+      autosaveTimeoutRef.current = null;
+    }
 
     // Animate out before removing
     Animated.timing(cardAnim, {
@@ -533,14 +560,21 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         editingExercisesRef.current = next;
         return next;
       });
+      if (shouldPersistLocally) {
+        setIsDirty(true);
+      }
+      if (!needsRemoteDelete) {
+        isDeletingRef.current = false;
+      }
     });
 
-    setIsDirty(true);
-    if (selectedPlan?.session?.id && exercise?.id && onDeleteExercise) {
+    if (needsRemoteDelete) {
       try {
-        await onDeleteExercise(selectedPlan.session.id, exercise.id);
+        await onDeleteExercise!(selectedPlan!.session!.id, exercise!.id!);
       } catch (err) {
         console.error('Failed to delete workout exercise:', err);
+      } finally {
+        isDeletingRef.current = false;
       }
     }
   };
@@ -555,6 +589,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       next[index] = { ...next[index], sets: Number.isFinite(numeric) ? numeric : 0 };
       return next;
     });
+    if (selectedPlan) {
+      localEditsDateRef.current = selectedPlan.dateStr;
+    }
     setIsDirty(true);
   };
 
@@ -564,11 +601,15 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       next[index] = { ...next[index], reps: value };
       return next;
     });
+    if (selectedPlan) {
+      localEditsDateRef.current = selectedPlan.dateStr;
+    }
     setIsDirty(true);
   };
 
   useEffect(() => {
     if (!selectedPlan || !isDirty) return;
+    if (isDeletingRef.current) return;
     if (autosaveTimeoutRef.current) {
       clearTimeout(autosaveTimeoutRef.current);
     }

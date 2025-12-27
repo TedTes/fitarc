@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  Animated,
   TouchableOpacity,
   TextInput,
   Alert,
@@ -16,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { User, TrainingSplit, EatingMode, ExperienceLevel } from '../types/domain';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { useExerciseDefaults } from '../hooks/useExerciseDefaults';
+import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadUserAvatar } from '../services/userProfileService';
 
@@ -36,6 +38,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onChangeTargetLevel,
   onLogout,
 }) => {
+  const { headerStyle, contentStyle } = useScreenAnimation();
   const [name, setName] = useState(user.name ?? '');
   const [sex, setSex] = useState<'male' | 'female' | 'other'>(user.sex);
   const [age, setAge] = useState(user.age.toString());
@@ -345,17 +348,18 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         colors={['#0A0E27', '#151932', '#1E2340']}
         style={styles.gradient}
       >
-        <ScrollView 
+        <Animated.ScrollView
+          style={contentStyle}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
-          <View style={styles.header}>
+          <Animated.View style={[styles.header, headerStyle]}>
             <Text style={styles.title}>Settings</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Text style={styles.closeButtonText}>✕</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
 
           <View style={styles.avatarRow}>
             <TouchableOpacity
@@ -872,7 +876,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
           {/* Spacing for bottom */}
           <View style={{ height: 40 }} />
-        </ScrollView>
+        </Animated.ScrollView>
 
         <Modal
           animationType="fade"

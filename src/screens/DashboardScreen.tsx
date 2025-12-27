@@ -128,8 +128,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
-  console.log("resolved phase")
-  console.log(resolvedPhase)
   const hasActivePlan = resolvedPhase?.status === 'active';
   const activePhaseId = hasActivePlan ? resolvedPhase?.id ?? null : null;
   const resolvedSessions = useMemo(() => {
@@ -291,6 +289,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const pendingWorkoutCount = visibleWorkoutCards.length;
   const shouldPromptPlan = hasActivePlan && !hasSyncedWorkout;
+  const shouldPromptNext = hasActivePlan && hasSyncedWorkout && pendingWorkoutCount === 0;
   const shouldCreatePlan = !hasActivePlan && !!onStartPhase;
   const handleOpenPlans = useCallback(() => {
     navigation.navigate('Workouts', { openExerciseModal: true });
@@ -324,6 +323,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         labelColor: '#6C63FF',
         onPress: onCompleteAllToday,
       });
+    } else if (shouldPromptNext) {
+      setFabAction('Home', {
+        label: 'Session',
+        icon: '+',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: handleOpenPlans,
+      });
     } else {
       setFabAction('Home', null);
     }
@@ -336,6 +344,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     pendingWorkoutCount,
     setFabAction,
     shouldCreatePlan,
+    shouldPromptNext,
     shouldPromptPlan,
     onStartPhase,
   ]);
