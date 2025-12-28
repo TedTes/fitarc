@@ -649,7 +649,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                   placeholderTextColor={COLORS.textTertiary}
                   value={foodQuery}
                   onChangeText={handleFoodQueryChange}
-                  autoFocus
                 />
 
                 <ScrollView style={styles.foodList}>
@@ -675,7 +674,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                         <Text style={styles.foodSuggestionName}>{formatFoodDisplayName(food)}</Text>
                         <Text style={styles.foodSuggestionMeta}>{formatFoodMacroSummary(food)}</Text>
                       </View>
-                      <Text style={styles.foodSuggestionArrow}>→</Text>
+                      <Text style={styles.foodSuggestionArrow}>+</Text>
                     </TouchableOpacity>
                   ))}
                   {!foodQuery.trim() && storedFoods.length > 0 && (
@@ -691,7 +690,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                             <Text style={styles.foodSuggestionName}>{formatFoodDisplayName(food)}</Text>
                             <Text style={styles.foodSuggestionMeta}>{formatFoodMacroSummary(food)}</Text>
                           </View>
-                          <Text style={styles.foodSuggestionArrow}>→</Text>
+                          <Text style={styles.foodSuggestionArrow}>+</Text>
                         </TouchableOpacity>
                       ))}
                     </>

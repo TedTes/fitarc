@@ -11,6 +11,7 @@ import {
   LayoutAnimation,
   Platform,
   UIManager,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -55,7 +56,7 @@ const getMealTypeEmoji = (mealType: string): string => {
 };
 
 const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)'] as const;
-const CARD_GRADIENT_COMPLETE = ['rgba(0, 245, 160, 0.15)', 'rgba(0, 214, 143, 0.1)'] as const;
+
 const ACTIVITY_TOTAL_DAYS = 84;
 const DAYS_PER_ACTIVITY_COLUMN = 7;
 const ACTIVITY_GAP = 6;
@@ -167,10 +168,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     [localCompletionOverrides]
   );
 
-  const visibleWorkoutCards = useMemo(
-    () => displayExercises.filter((exercise) => !isExerciseMarked(exercise)),
-    [displayExercises, isExerciseMarked]
-  );
+  const sortedWorkoutCards = useMemo(() => {
+    return [...displayExercises].sort((a, b) => {
+      const aMarked = isExerciseMarked(a);
+      const bMarked = isExerciseMarked(b);
+      if (aMarked === bMarked) return 0;
+      return aMarked ? 1 : -1;
+    });
+  }, [displayExercises, isExerciseMarked]);
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
@@ -287,7 +292,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const canLogWorkouts = hasActivePlan && !!onToggleWorkoutExercise;
 
-  const pendingWorkoutCount = visibleWorkoutCards.length;
+  const pendingWorkoutCount = useMemo(
+    () => displayExercises.filter((exercise) => !isExerciseMarked(exercise)).length,
+    [displayExercises, isExerciseMarked]
+  );
   const shouldPromptPlan = hasActivePlan && !hasSyncedWorkout;
   const shouldPromptNext = hasActivePlan && hasSyncedWorkout && pendingWorkoutCount === 0;
   const shouldCreatePlan = !hasActivePlan && !!onStartPhase;
@@ -325,12 +333,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       });
     } else if (shouldPromptNext) {
       setFabAction('Home', {
-        label: 'Session',
-        icon: '+',
+        label: 'Completed',
+        icon: '✓',
         colors: ['#6C63FF', '#4C3BFF'] as const,
         iconColor: '#0A0E27',
         labelColor: '#6C63FF',
-        onPress: handleOpenPlans,
+        onPress: () =>
+          Alert.alert('Great job!', 'Congrats, you have already completed today’s workout.'),
       });
     } else {
       setFabAction('Home', null);
@@ -529,7 +538,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const target = displayExercises.find((ex) => ex.name === exerciseName);
     if (!target) return;
     
-    const key = `${todayStr}-${exerciseName}`;
+    const key = `${todayStr}-${getExerciseKey(target)}`;
     animateExerciseCompletion(key);
     
     Animated.sequence([
@@ -721,17 +730,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             Your workout for today will appear here once scheduled.
           </Text>
         </View>
-      ) : pendingWorkoutCount === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>✅</Text>
-          <Text style={styles.emptyTitle}>Workouts complete</Text>
-          <Text style={styles.emptyText}>Rest up and check Plans for tomorrow's session.</Text>
-        </View>
       ) : (
         <View style={styles.verticalList}>
-          {visibleWorkoutCards.map((exercise, index) => {
+          {sortedWorkoutCards.map((exercise, index) => {
             const isMarked = isExerciseMarked(exercise);
-            const cardKey = `${todayStr}-${exercise.name}-${index}`;
+            const cardKey = `${todayStr}-${getExerciseKey(exercise)}`;
             const scaleAnim = getExerciseCardAnimation(cardKey);
             
             return (
@@ -742,14 +745,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 }}
               >
                 <LinearGradient
-                  colors={isMarked ? CARD_GRADIENT_COMPLETE : CARD_GRADIENT_DEFAULT}
+                  colors={CARD_GRADIENT_DEFAULT}
                   style={[
                     styles.exerciseCard,
-                    isMarked && styles.exerciseCardCompleted,
                   ]}
                 >
-                  {isMarked && <View style={styles.completedTopBar} />}
-                  
                   <View style={styles.exerciseCardRow}>
                     <View style={styles.exerciseCardMain}>
                       <View style={styles.cardHeader}>
@@ -1308,17 +1308,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  exerciseCardCompleted: {
-    borderColor: 'rgba(0, 245, 160, 0.4)',
-  },
-  completedTopBar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-    backgroundColor: '#00F5A0',
-  },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1341,7 +1330,7 @@ const styles = StyleSheet.create({
   },
   checkBoxActive: {
     borderColor: 'rgba(0,245,160,0.6)',
-    backgroundColor: 'rgba(0,245,160,0.15)',
+    backgroundColor: 'transparent',
   },
   checkBoxDisabled: {
     opacity: 0.4,
