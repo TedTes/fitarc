@@ -8,7 +8,6 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
-  Switch,
   Modal,
   Pressable,
   Image,
@@ -61,10 +60,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     [name]
   );
 
-  // ✨ NEW: Settings toggles
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [darkModeEnabled, setDarkModeEnabled] = useState(true);
-  const [autoRestTimer, setAutoRestTimer] = useState(true);
 
   // ✨ NEW: Modal states for pickers
   const [showExperiencePicker, setShowExperiencePicker] = useState(false);
@@ -735,63 +730,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 ))}
               </View>
             )}
-          </View>
-
-          {/* ✨ APP SETTINGS SECTION */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>APP SETTINGS</Text>
-
-            {/* Notifications */}
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>🔔</Text>
-                <View>
-                  <Text style={styles.settingLabel}>Notifications</Text>
-                  <Text style={styles.settingSubtext}>Daily workout reminders</Text>
-                </View>
-              </View>
-              <Switch
-                value={notificationsEnabled}
-                onValueChange={setNotificationsEnabled}
-                trackColor={{ false: '#2A2F4F', true: '#6C63FF' }}
-                thumbColor={notificationsEnabled ? '#FFFFFF' : '#A0A3BD'}
-              />
-            </View>
-
-            {/* Auto Rest Timer */}
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>⏱️</Text>
-                <View>
-                  <Text style={styles.settingLabel}>Auto Rest Timer</Text>
-                  <Text style={styles.settingSubtext}>Start timer after each set</Text>
-                </View>
-              </View>
-              <Switch
-                value={autoRestTimer}
-                onValueChange={setAutoRestTimer}
-                trackColor={{ false: '#2A2F4F', true: '#6C63FF' }}
-                thumbColor={autoRestTimer ? '#FFFFFF' : '#A0A3BD'}
-              />
-            </View>
-
-            {/* Dark Mode (always on for now) */}
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>🌙</Text>
-                <View>
-                  <Text style={styles.settingLabel}>Dark Mode</Text>
-                  <Text style={styles.settingSubtext}>Currently enabled</Text>
-                </View>
-              </View>
-              <Switch
-                value={darkModeEnabled}
-                onValueChange={setDarkModeEnabled}
-                trackColor={{ false: '#2A2F4F', true: '#6C63FF' }}
-                thumbColor={darkModeEnabled ? '#FFFFFF' : '#A0A3BD'}
-                disabled
-              />
-            </View>
           </View>
 
           {/* ✨ ARC MANAGEMENT SECTION */}
