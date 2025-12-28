@@ -169,12 +169,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   );
 
   const sortedWorkoutCards = useMemo(() => {
-    return [...displayExercises].sort((a, b) => {
-      const aMarked = isExerciseMarked(a);
-      const bMarked = isExerciseMarked(b);
-      if (aMarked === bMarked) return 0;
-      return aMarked ? 1 : -1;
-    });
+    return displayExercises
+      .map((exercise, index) => ({ exercise, index }))
+      .sort((a, b) => {
+        const aMarked = isExerciseMarked(a.exercise);
+        const bMarked = isExerciseMarked(b.exercise);
+        if (aMarked === bMarked) return a.index - b.index;
+        return aMarked ? 1 : -1;
+      })
+      .map(({ exercise }) => exercise);
   }, [displayExercises, isExerciseMarked]);
   
   const hasSyncedWorkout = displayExercises.length > 0;
@@ -744,12 +747,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   transform: [{ scale: scaleAnim }],
                 }}
               >
-                <LinearGradient
-                  colors={CARD_GRADIENT_DEFAULT}
-                  style={[
-                    styles.exerciseCard,
-                  ]}
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  disabled={!canLogWorkouts}
+                  onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise.name)}
                 >
+                  <LinearGradient
+                    colors={CARD_GRADIENT_DEFAULT}
+                    style={[
+                      styles.exerciseCard,
+                      !canLogWorkouts && styles.exerciseCardDisabled,
+                    ]}
+                  >
                   <View style={styles.exerciseCardRow}>
                     <View style={styles.exerciseCardMain}>
                       <View style={styles.cardHeader}>
@@ -759,32 +768,25 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                             {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
                           </Text>
                         </View>
-
-                        <Animated.View
-                          style={{
-                            transform: [{ scale: isMarked ? checkboxPulseAnim : 1 }],
-                          }}
-                        >
-                          <TouchableOpacity
-                            style={[
-                              styles.checkBox,
-                              !canLogWorkouts && styles.checkBoxDisabled,
-                              isMarked && styles.checkBoxActive,
-                            ]}
-                            onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise.name)}
-                            disabled={!canLogWorkouts}
-                            activeOpacity={0.7}
+                        {isMarked && (
+                          <Animated.View
+                            style={{
+                              transform: [{ scale: checkboxPulseAnim }],
+                            }}
                           >
-                            <Text style={styles.checkBoxText}>{isMarked ? '✓' : ''}</Text>
-                          </TouchableOpacity>
-                        </Animated.View>
+                            <View style={styles.checkCircleActive}>
+                              <Text style={styles.checkCircleText}>✓</Text>
+                            </View>
+                          </Animated.View>
+                        )}
                       </View>
                       <Text style={styles.exerciseBodyParts}>
                         {formatBodyPartList(exercise.bodyParts)}
                       </Text>
                     </View>
                   </View>
-                </LinearGradient>
+                  </LinearGradient>
+                </TouchableOpacity>
               </Animated.View>
             );
           })}
@@ -1299,6 +1301,9 @@ const styles = StyleSheet.create({
     aspectRatio: 5,
     width: '100%',
   },
+  exerciseCardDisabled: {
+    opacity: 0.6,
+  },
   exerciseCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1318,24 +1323,17 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  checkBox: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
+  checkCircleActive: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.4)',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(0,245,160,0.9)',
+    backgroundColor: 'rgba(0,245,160,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkBoxActive: {
-    borderColor: 'rgba(0,245,160,0.6)',
-    backgroundColor: 'transparent',
-  },
-  checkBoxDisabled: {
-    opacity: 0.4,
-  },
-  checkBoxText: {
+  checkCircleText: {
     color: '#00F5A0',
     fontSize: 14,
     fontWeight: '800',
