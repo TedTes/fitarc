@@ -741,8 +741,13 @@ function AppContent() {
         <Tab.Navigator
           screenOptions={{
             headerShown: false,
+            animationEnabled: true,
+            lazy: false,
             tabBarStyle: {
               display: 'none',
+              backgroundColor: '#1E2340',
+              borderTopColor: '#2A2F4F',
+              borderTopWidth: 1,
             },
           }}
         >
@@ -973,8 +978,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     top: 0,
-    bottom: 64,
+    bottom: 88,
     backgroundColor: '#050714',
+    zIndex: 0,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     borderWidth: 1,
@@ -1024,6 +1030,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 88,
+    zIndex: 10,
   },
   tabBarBackground: {
     position: 'absolute',

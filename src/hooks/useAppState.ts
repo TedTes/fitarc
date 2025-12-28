@@ -337,24 +337,87 @@ export const useAppState = () => {
         reps: exercise.reps ?? '8-12',
         displayOrder: exercise.displayOrder ?? index + 1,
       }));
-      const session = current.workoutSessions.find(
+      let session = current.workoutSessions.find(
         (entry) => entry.phasePlanId === current.currentPhase!.id && entry.date === date
       );
-      if (!session) return;
+      if (!session) {
+        session = await createWorkoutSession({
+          userId: current.user.id,
+          planId: current.currentPhase.id,
+          date,
+        });
+      }
+
+      const refreshedSessions = await fetchWorkoutSessionEntries(
+        current.user.id,
+        current.currentPhase.id,
+        getAppTimeZone()
+      );
+      const existingSession = refreshedSessions.find((entry) => entry.id === session.id);
+      const exerciseIdToSessionId = new Map<string, string>();
+      const exerciseNameToSessionId = new Map<string, string>();
+      existingSession?.exercises.forEach((entry) => {
+        if (entry.exerciseId && entry.id) {
+          exerciseIdToSessionId.set(entry.exerciseId, entry.id);
+        }
+        if (entry.name && entry.id) {
+          exerciseNameToSessionId.set(entry.name.toLowerCase(), entry.id);
+        }
+      });
+
+      const validSessionExerciseIds = new Set([
+        ...exerciseIdToSessionId.values(),
+        ...exerciseNameToSessionId.values(),
+      ]);
+      const exercisesWithIds = await Promise.all(
+        normalizedExercises.map(async (exercise, index) => {
+          if (exercise.exerciseId && exerciseIdToSessionId.has(exercise.exerciseId)) {
+            return { ...exercise, id: exerciseIdToSessionId.get(exercise.exerciseId)! };
+          }
+          const nameKey = exercise.name?.toLowerCase();
+          if (nameKey && exerciseNameToSessionId.has(nameKey)) {
+            return { ...exercise, id: exerciseNameToSessionId.get(nameKey)! };
+          }
+          try {
+            const sessionExerciseId = await addExerciseToSession({
+              sessionId: session!.id,
+              exercise,
+              displayOrder: exercise.displayOrder ?? index + 1,
+            });
+            validSessionExerciseIds.add(sessionExerciseId);
+            return { ...exercise, id: sessionExerciseId };
+          } catch (err) {
+            if (err instanceof Error && err.message === 'duplicate_exercise') {
+              if (exercise.exerciseId && exerciseIdToSessionId.has(exercise.exerciseId)) {
+                return { ...exercise, id: exerciseIdToSessionId.get(exercise.exerciseId)! };
+              }
+              if (nameKey && exerciseNameToSessionId.has(nameKey)) {
+                return { ...exercise, id: exerciseNameToSessionId.get(nameKey)! };
+              }
+              return exercise;
+            }
+            throw err;
+          }
+        })
+      );
+
+      const exercisesForUpdate = exercisesWithIds.filter(
+        (exercise) => exercise.id && validSessionExerciseIds.has(exercise.id)
+      );
 
       await updateSessionExercises({
         sessionId: session.id,
-        exercises: normalizedExercises,
+        exercises: exercisesForUpdate,
       });
 
       const updatedSession: WorkoutSessionEntry = {
         ...session,
-        exercises: normalizedExercises,
+        exercises: exercisesWithIds,
       };
 
       updateState((prev) => ({
         ...prev,
-        workoutSessions: upsertWorkoutSession(prev.workoutSessions, updatedSession),
+        workoutSessions: refreshedSessions,
         workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(updatedSession)),
         workoutDataVersion: nextWorkoutVersion(prev),
       }));
@@ -409,20 +472,9 @@ export const useAppState = () => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
       await deleteWorkoutSessionExercise(sessionExerciseId);
-      const session = current.workoutSessions.find((entry) => entry.id === sessionId);
-      if (!session) return;
-      const updatedSession: WorkoutSessionEntry = {
-        ...session,
-        exercises: session.exercises.filter((exercise) => exercise.id !== sessionExerciseId),
-      };
-      updateState((prev) => ({
-        ...prev,
-        workoutSessions: upsertWorkoutSession(prev.workoutSessions, updatedSession),
-        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(updatedSession)),
-        workoutDataVersion: nextWorkoutVersion(prev),
-      }));
+      await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
     },
-    [updateState]
+    [loadWorkoutSessionsFromSupabase]
   );
 
   const deleteWorkoutSession = useCallback(
