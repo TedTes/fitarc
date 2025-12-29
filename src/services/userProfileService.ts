@@ -11,6 +11,8 @@ export type RemoteProfileRow = {
   height_cm: number | null;
   training_experience: ExperienceLevel | null;
   training_split?: User['trainingSplit'] | null;
+  eating_mode?: User['eatingMode'] | null;
+  current_physique_level?: number | null;
   avatar_url?: string | null;
   tracking_preferences?: TrackingPreferences | null;
   created_at: string;
@@ -45,9 +47,9 @@ const mapRowToUser = (row: RemoteProfileRow): User => ({
   age: calculateAgeFromBirthDate(row.birth_date),
   heightCm: row.height_cm ?? 0,
   experienceLevel: row.training_experience ?? 'beginner',
-  currentPhysiqueLevel: 1,
+  currentPhysiqueLevel: row.current_physique_level ?? 1,
   trainingSplit: row.training_split ?? 'full_body',
-  eatingMode: 'maintenance',
+  eatingMode: row.eating_mode ?? 'maintenance',
   avatarUrl: row.avatar_url ?? undefined,
   trackingPreferences: row.tracking_preferences ?? undefined,
   createdAt: row.created_at,
@@ -80,6 +82,8 @@ export const saveUserProfile = async (user: User): Promise<void> => {
     height_cm: user.heightCm,
     training_experience: user.experienceLevel,
     training_split: user.trainingSplit ?? 'full_body',
+    eating_mode: user.eatingMode ?? 'maintenance',
+    current_physique_level: user.currentPhysiqueLevel ?? 1,
     avatar_url: user.avatarUrl ?? null,
     created_at: user.createdAt,
   };

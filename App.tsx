@@ -1,5 +1,14 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, ActivityIndicator, Text, TouchableOpacity, Animated } from 'react-native';
+import {
+  StyleSheet,
+  View,
+  ActivityIndicator,
+  Text,
+  TouchableOpacity,
+  Animated,
+  Modal,
+  Pressable,
+} from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,13 +28,20 @@ import {
   AuthNavigator,
 } from './src/screens';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { PhotoCheckin, TrackingPreferences, User, WorkoutSessionEntry } from './src/types/domain';
+import {
+  PhotoCheckin,
+  TrackingPreferences,
+  User,
+  WorkoutSessionEntry,
+} from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile, updateTrackingPreferences } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/dashboardService';
-import { formatLocalDateYMD } from './src/utils/date';
+import { addDays, formatLocalDateYMD, parseYMDToDate } from './src/utils/date';
 import {
+  createMealPlanWithSeed,
   ensureDailyMealForDate,
+  hasDailyMealsInRange,
   setDailyMealsCompleted,
   setDailyMealEntriesDone,
 } from './src/services/mealService';
@@ -332,9 +348,9 @@ function AppContent() {
   const [isProfileVisible, setProfileVisible] = useState(false);
   const [isCreatingPlan, setIsCreatingPlan] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
-  const { getFabAction } = useFabAction();
+  const { getFabAction, setFabAction } = useFabAction();
   const tabFabPop = useRef(new Animated.Value(0)).current;
-  const showPlanTabs = Boolean(state?.currentPhase);
+  const showPlanTabs = Boolean(state?.user);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
 
   const handleCompleteAllToday = useCallback(async () => {
@@ -401,6 +417,7 @@ function AppContent() {
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('complete');
   const [tempProfileData, setTempProfileData] = useState<any>(null);
   const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
+  const [startPlanConfirmVisible, setStartPlanConfirmVisible] = useState(false);
 
   const closeProfileSheet = () => {
     setProfileVisible(false);
@@ -408,6 +425,30 @@ function AppContent() {
       navigationRef.navigate('Home');
     }
   };
+
+  const openStartPlanConfirm = () => {
+    setStartPlanConfirmVisible(true);
+  };
+
+  const closeStartPlanConfirm = () => {
+    setStartPlanConfirmVisible(false);
+  };
+
+  const confirmStartNewPlan = () => {
+    if (!state?.user) return;
+    closeStartPlanConfirm();
+    closeProfileSheet();
+    setTempProfileData({
+      sex: state.user.sex,
+      age: state.user.age,
+      heightCm: state.user.heightCm,
+      experienceLevel: state.user.experienceLevel,
+      trainingSplit: state.user.trainingSplit,
+      eatingMode: state.user.eatingMode,
+    });
+    setOnboardingStep('current_physique');
+  };
+
 
   useEffect(() => {
     if (!navigationRef.isReady()) return;
@@ -442,6 +483,13 @@ function AppContent() {
 
   const handleCurrentPhysiqueSelect = (levelId: number) => {
     setTempCurrentLevel(levelId);
+    if (state?.user) {
+      const updatedUser = { ...state.user, currentPhysiqueLevel: levelId };
+      updateUser(updatedUser);
+      saveUserProfile(updatedUser).catch((err) =>
+        console.error('Failed to persist current physique level', err)
+      );
+    }
     setOnboardingStep('target_physique');
   };
 
@@ -454,8 +502,9 @@ function AppContent() {
     }
   };
 
-  const handleTargetPhysiqueSelect = async (targetLevelId: number) => {
-    if (!tempCurrentLevel || !authUser || !state?.user) return;
+  const handleStartNewArc = async (targetLevelId: number, goalType?: string) => {
+    if (!authUser || !state?.user) return;
+    const currentLevel = tempCurrentLevel ?? state.user.currentPhysiqueLevel ?? 1;
 
     setIsCreatingPlan(true);
 
@@ -471,9 +520,9 @@ function AppContent() {
         state.user.trainingSplit,
         {
           name: `Arc ${new Date().getFullYear()}`,
-          goalType: 'general',
+          goalType: goalType ?? 'general',
           startDate: new Date().toISOString().split('T')[0],
-          currentLevelId: tempCurrentLevel,
+          currentLevelId: currentLevel,
           targetLevelId,
         }
       );
@@ -484,6 +533,23 @@ function AppContent() {
       const seededSessions = await waitForInitialSessions(authUser.id, remotePhase.id);
       if (seededSessions.length) {
         await hydrateFromRemote({ workoutSessions: seededSessions });
+      }
+      const mealStartDate = remotePhase.startDate;
+      const mealEndDate = formatLocalDateYMD(addDays(parseYMDToDate(mealStartDate), 6));
+      const hasMeals = await hasDailyMealsInRange(
+        authUser.id,
+        mealStartDate,
+        mealEndDate,
+        remotePhase.id
+      );
+      if (!hasMeals) {
+        await createMealPlanWithSeed({
+          userId: authUser.id,
+          startDate: mealStartDate,
+          days: 7,
+          planId: remotePhase.id,
+          eatingMode: state.user.eatingMode ?? 'maintenance',
+        });
       }
       await loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id);
       await loadMealPlansFromSupabase(authUser.id, remotePhase.id);
@@ -498,6 +564,10 @@ function AppContent() {
     } finally {
       setIsCreatingPlan(false);
     }
+  };
+
+  const handleTargetPhysiqueSelect = async (targetLevelId: number) => {
+    await handleStartNewArc(targetLevelId);
   };
 
   const handleProfileSetupComplete = (profileData: {
@@ -613,6 +683,32 @@ function AppContent() {
     console.log('✅ Onboarding step set to: current_physique');
   }, [state?.user]);
 
+  useEffect(() => {
+    if (!state?.user) return;
+    if (state.currentPhase) {
+      setFabAction('Workouts', null);
+      setFabAction('Menu', null);
+      setFabAction('Progress', null);
+      return;
+    }
+    const createPlanAction = {
+      label: 'Create Plan',
+      icon: '+',
+      colors: ['#6C63FF', '#4C3BFF'] as const,
+      iconColor: '#0A0E27',
+      labelColor: '#6C63FF',
+      onPress: handleStartPhaseFromDashboard,
+    };
+    setFabAction('Workouts', createPlanAction);
+    setFabAction('Menu', createPlanAction);
+    setFabAction('Progress', createPlanAction);
+    return () => {
+      setFabAction('Workouts', null);
+      setFabAction('Menu', null);
+      setFabAction('Progress', null);
+    };
+  }, [handleStartPhaseFromDashboard, setFabAction, state?.currentPhase, state?.user]);
+
   const handleLogout = async () => {
     try {
       await signOutAuth();
@@ -697,7 +793,9 @@ function AppContent() {
         <View style={styles.container}>
           <CurrentPhysiqueSelectionScreen 
             sex={tempProfileData.sex}
+            currentLevelId={state.user?.currentPhysiqueLevel ?? 1}
             onSelectLevel={handleCurrentPhysiqueSelect}
+            onCancel={() => setOnboardingStep('complete')}
           />
           <StatusBar style="light" />
         </View>
@@ -711,6 +809,7 @@ function AppContent() {
             sex={tempProfileData.sex}
             currentLevelId={tempCurrentLevel}
             onSelectTarget={handleTargetPhysiqueSelect}
+            onCancel={() => setOnboardingStep('current_physique')}
           />
           <StatusBar style="light" />
         </View>
@@ -772,45 +871,41 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          {showPlanTabs && (
-            <Tab.Screen name="Workouts">
-              {() =>
-                state?.user ? (
-                  <PlansScreen
-                    user={state.user}
-                    phase={state.currentPhase}
-                    workoutSessions={state.workoutSessions}
-                    onSaveCustomSession={saveCustomWorkoutSession}
-                    onAddExercise={addWorkoutExercise}
-                    onDeleteExercise={deleteWorkoutExercise}
-                    onDeleteSession={deleteWorkoutSession}
-                  />
-                ) : (
-                  <TabPlaceholder
-                    title="Workouts loading"
-                    subtitle="Finish onboarding to sync your workouts."
-                  />
-                )
-              }
-            </Tab.Screen>
-          )}
-          {showPlanTabs && (
-            <Tab.Screen name="Menu">
-              {() =>
-                state?.user ? (
-                  <MenuScreen
-                    user={state.user}
-                    phase={state.currentPhase}
-                  />
-                ) : (
-                  <TabPlaceholder
-                    title="Nutrition coming soon"
-                    subtitle="Complete onboarding to generate meal plans."
-                  />
-                )
-              }
-            </Tab.Screen>
-          )}
+          <Tab.Screen name="Workouts">
+            {() =>
+              state?.user && state.currentPhase ? (
+                <PlansScreen
+                  user={state.user}
+                  phase={state.currentPhase}
+                  workoutSessions={state.workoutSessions}
+                  onSaveCustomSession={saveCustomWorkoutSession}
+                  onAddExercise={addWorkoutExercise}
+                  onDeleteExercise={deleteWorkoutExercise}
+                  onDeleteSession={deleteWorkoutSession}
+                />
+              ) : (
+                <TabPlaceholder
+                  title="No active plan"
+                  subtitle="Create a plan to start building workout sessions."
+                />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen name="Menu">
+            {() =>
+              state?.user && state.currentPhase ? (
+                <MenuScreen
+                  user={state.user}
+                  phase={state.currentPhase}
+                />
+              ) : (
+                <TabPlaceholder
+                  title="No active plan"
+                  subtitle="Create a plan to generate meals."
+                />
+              )
+            }
+          </Tab.Screen>
           <Tab.Screen name="Progress">
             {() =>
               state?.currentPhase && state?.user ? (
@@ -827,7 +922,7 @@ function AppContent() {
               ) : (
                 <TabPlaceholder
                   title="Track progress"
-                  subtitle="Start an arc to unlock progress tracking."
+                  subtitle="Create plan to unlock progress tracking."
                 />
               )
             }
@@ -921,22 +1016,36 @@ function AppContent() {
                 setOnboardingStep('current_physique');
               }}
               onChangeTargetLevel={() => {
-                closeProfileSheet();
-                setTempProfileData({
-                  sex: state.user!.sex,
-                  age: state.user!.age,
-                  heightCm: state.user!.heightCm,
-                  experienceLevel: state.user!.experienceLevel,
-                  trainingSplit: state.user!.trainingSplit,
-                  eatingMode: state.user!.eatingMode,
-                });
-                setTempCurrentLevel(state.user!.currentPhysiqueLevel);
-                setOnboardingStep('target_physique');
+                openStartPlanConfirm();
               }}
             />
           </View>
         </View>
       )}
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={startPlanConfirmVisible}
+        onRequestClose={closeStartPlanConfirm}
+      >
+        <Pressable style={styles.confirmOverlay} onPress={closeStartPlanConfirm}>
+          <Pressable style={styles.confirmCard} onPress={() => {}}>
+            <Text style={styles.confirmTitle}>Start a new plan?</Text>
+            <Text style={styles.confirmBody}>
+              This will end your current plan and create a new one.
+            </Text>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity style={styles.confirmCancel} onPress={closeStartPlanConfirm}>
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.confirmPrimary} onPress={confirmStartNewPlan}>
+                <Text style={styles.confirmPrimaryText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
       <StatusBar style="light" />
     </View>
   );
@@ -1129,5 +1238,61 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(8,10,22,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  confirmCard: {
+    width: '100%',
+    borderRadius: 16,
+    backgroundColor: '#151932',
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    padding: 20,
+  },
+  confirmTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 8,
+  },
+  confirmBody: {
+    fontSize: 14,
+    color: '#A0A3BD',
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  confirmCancel: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    backgroundColor: '#101427',
+    alignItems: 'center',
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#A0A3BD',
+  },
+  confirmPrimary: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#00F5A0',
+    alignItems: 'center',
+  },
+  confirmPrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0A0E27',
   },
 });

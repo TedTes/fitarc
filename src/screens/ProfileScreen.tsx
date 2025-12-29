@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, TrainingSplit, EatingMode, ExperienceLevel } from '../types/domain';
+import { getPhysiqueLevelsBySex } from '../data/physiqueLevels';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { useExerciseDefaults } from '../hooks/useExerciseDefaults';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
@@ -45,6 +46,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>(user.experienceLevel);
   const [trainingSplit, setTrainingSplit] = useState<TrainingSplit>(user.trainingSplit);
   const [eatingMode, setEatingMode] = useState<EatingMode>(user.eatingMode);
+  const [currentPhysiqueLevel, setCurrentPhysiqueLevel] = useState<number>(
+    user.currentPhysiqueLevel ?? 1
+  );
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(user.avatarUrl);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const avatarInitials = useMemo(
@@ -65,6 +69,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [showExperiencePicker, setShowExperiencePicker] = useState(false);
   const [showSplitPicker, setShowSplitPicker] = useState(false);
   const [showEatingPicker, setShowEatingPicker] = useState(false);
+  const [showCurrentLevelPicker, setShowCurrentLevelPicker] = useState(false);
 
   const { exercises: exerciseCatalog, isLoading: exercisesLoading } = useSupabaseExercises();
   const {
@@ -110,13 +115,25 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         experienceLevel,
         trainingSplit,
         eatingMode,
+        currentPhysiqueLevel,
         avatarUrl,
       };
 
       onSave(updatedUser);
       return true;
     },
-    [age, eatingMode, experienceLevel, heightCm, name, onSave, sex, trainingSplit, user]
+    [
+      age,
+      currentPhysiqueLevel,
+      eatingMode,
+      experienceLevel,
+      heightCm,
+      name,
+      onSave,
+      sex,
+      trainingSplit,
+      user,
+    ]
   );
 
   const handlePickAvatar = useCallback(async () => {
@@ -146,6 +163,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         experienceLevel,
         trainingSplit,
         eatingMode,
+        currentPhysiqueLevel,
         avatarUrl: url,
       });
     } catch (err: any) {
@@ -184,7 +202,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         clearTimeout(autosaveTimeoutRef.current);
       }
     };
-  }, [sex, age, heightCm, experienceLevel, trainingSplit, eatingMode, persistProfile]);
+  }, [
+    sex,
+    age,
+    heightCm,
+    experienceLevel,
+    trainingSplit,
+    eatingMode,
+    currentPhysiqueLevel,
+    persistProfile,
+  ]);
 
   // Helper functions to format labels
   const formatTrainingSplit = (split: TrainingSplit): string => {
@@ -211,6 +238,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const formatExperience = (exp: ExperienceLevel): string => {
     return exp.charAt(0).toUpperCase() + exp.slice(1);
   };
+
+  const physiqueLevels = useMemo(() => getPhysiqueLevelsBySex(sex), [sex]);
+  const currentPhysiqueLabel =
+    physiqueLevels.find((level) => level.id === currentPhysiqueLevel)?.name ??
+    `Level ${currentPhysiqueLevel}`;
 
   useEffect(() => {
     const toDisplayString = (value?: number | null) =>
@@ -736,20 +768,48 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>ARC MANAGEMENT</Text>
 
-            {onChangeCurrentLevel && (
-              <TouchableOpacity 
-                style={styles.settingRow}
-                onPress={onChangeCurrentLevel}
-              >
-                <View style={styles.settingLeft}>
-                  <Text style={styles.settingIcon}>📍</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.settingLabel}>Current Physique Level</Text>
-                    <Text style={styles.settingSubtext}>Update where you are now</Text>
-                  </View>
+            <TouchableOpacity
+              style={styles.settingRow}
+              onPress={() => setShowCurrentLevelPicker((prev) => !prev)}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingIcon}>📍</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.settingLabel}>Current Physique Level</Text>
+                  <Text style={styles.settingValueInline}>{currentPhysiqueLabel}</Text>
                 </View>
-                <Text style={styles.settingChevron}>›</Text>
-              </TouchableOpacity>
+              </View>
+              <Text style={styles.settingChevron}>{showCurrentLevelPicker ? '▾' : '›'}</Text>
+            </TouchableOpacity>
+
+            {showCurrentLevelPicker && (
+              <View style={styles.pickerContainer}>
+                {physiqueLevels.map((level) => (
+                  <TouchableOpacity
+                    key={level.id}
+                    style={styles.pickerOption}
+                    onPress={() => {
+                      setCurrentPhysiqueLevel(level.id);
+                      setShowCurrentLevelPicker(false);
+                    }}
+                  >
+                    <View style={styles.pickerOptionTextWrap}>
+                      <Text
+                        style={[
+                          styles.pickerOptionText,
+                          currentPhysiqueLevel === level.id && styles.pickerOptionTextActive,
+                        ]}
+                      >
+                        Level {level.id}: {level.name}
+                      </Text>
+                      <Text style={styles.pickerOptionSubtext}>{level.description}</Text>
+                    </View>
+                    {currentPhysiqueLevel === level.id && (
+                      <Text style={styles.pickerCheck}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
             )}
 
             {onChangeTargetLevel && (
@@ -760,7 +820,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <View style={styles.settingLeft}>
                   <Text style={styles.settingIcon}>🎯</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.settingLabel}>Start New Arc</Text>
+                    <Text style={styles.settingLabel}>Start New Plan</Text>
                     <Text style={styles.settingSubtext}>Set a new target and begin fresh</Text>
                   </View>
                 </View>
@@ -1284,9 +1344,23 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
     fontWeight: '500',
   },
+  pickerOptionTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  pickerOptionSubtext: {
+    fontSize: 12,
+    color: '#7A7F98',
+    lineHeight: 16,
+  },
   pickerOptionTextActive: {
     color: '#FFFFFF',
     fontWeight: '600',
+  },
+  settingValueInline: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#8B93B0',
   },
   pickerCheck: {
     fontSize: 16,
