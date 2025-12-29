@@ -134,18 +134,21 @@ export const buildWorkoutAnalytics = (
         exercise.exerciseId && defaultWeights
           ? defaultWeights[exercise.exerciseId]
           : undefined;
-      const setCount = setDetails.length || exercise.sets || 0;
+      const setCount =
+        setDetails.length || (exercise.completed ? exercise.sets || 0 : 0);
       totalSets += setCount;
 
-      exercise.bodyParts.forEach((part) => {
-        musclesHit.add(part);
-        muscleVolume[part] += setCount;
-      });
+      if (setCount > 0) {
+        exercise.bodyParts.forEach((part) => {
+          musclesHit.add(part);
+          muscleVolume[part] += setCount;
+        });
+      }
 
       const movement =
         (exercise.movementPattern as MovementPattern | undefined | null) ||
         inferMovementPatternFromName(exercise.name);
-      if (movement) {
+      if (movement && setCount > 0) {
         movementHit.add(movement);
         movementVolume[movement] += setCount;
       }

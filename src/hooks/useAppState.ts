@@ -115,14 +115,27 @@ export const useAppState = () => {
       workoutSessions?: WorkoutSessionEntry[];
       mealPlans?: DailyMealPlan[];
     }) => {
-      updateState((prev) => ({
-        ...prev,
-        user: payload.user !== undefined ? payload.user : prev.user,
-        currentPhase: payload.phase !== undefined ? payload.phase : prev.currentPhase,
-        workoutSessions:
-          payload.workoutSessions !== undefined ? payload.workoutSessions : prev.workoutSessions,
-        mealPlans: payload.mealPlans !== undefined ? payload.mealPlans : prev.mealPlans,
-      }));
+      updateState((prev) => {
+        const nextPhase = payload.phase !== undefined ? payload.phase : prev.currentPhase;
+        const nextPhaseId = nextPhase?.id ?? null;
+        const phaseChanged = nextPhaseId !== (prev.currentPhase?.id ?? null);
+        const nextSessions =
+          payload.workoutSessions !== undefined
+            ? payload.workoutSessions.filter(
+                (session) => !nextPhaseId || session.phasePlanId === nextPhaseId
+              )
+            : prev.workoutSessions;
+        return {
+          ...prev,
+          user: payload.user !== undefined ? payload.user : prev.user,
+          currentPhase: nextPhase,
+          workoutSessions: nextSessions,
+          workoutLogs: phaseChanged ? [] : prev.workoutLogs,
+          strengthSnapshots: phaseChanged ? [] : prev.strengthSnapshots,
+          workoutDataVersion: phaseChanged ? nextWorkoutVersion(prev) : prev.workoutDataVersion,
+          mealPlans: payload.mealPlans !== undefined ? payload.mealPlans : prev.mealPlans,
+        };
+      });
     },
     [updateState]
   );
@@ -138,6 +151,10 @@ export const useAppState = () => {
     updateState((prev) => ({
       ...prev,
       currentPhase: phase,
+      workoutSessions: [],
+      workoutLogs: [],
+      strengthSnapshots: [],
+      workoutDataVersion: nextWorkoutVersion(prev),
     }));
   }, [updateState]);
 
@@ -508,6 +525,16 @@ export const useAppState = () => {
     setState(createEmptyAppState());
   }, []);
 
+  const resetWorkoutData = useCallback(() => {
+    updateState((prev) => ({
+      ...prev,
+      workoutSessions: [],
+      workoutLogs: [],
+      strengthSnapshots: [],
+      workoutDataVersion: nextWorkoutVersion(prev),
+    }));
+  }, [updateState]);
+
   return {
     state,
     isLoading,
@@ -530,5 +557,6 @@ export const useAppState = () => {
     deleteWorkoutSession,
     hydrateFromRemote,
     markAllWorkoutsComplete,
+    resetWorkoutData,
   };
 };

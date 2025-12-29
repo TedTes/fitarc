@@ -105,9 +105,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   user,
   phase,
   workoutDataVersion,
-  workoutSessions: sessionFallback,
-  workoutLogs: workoutLogFallback,
-  strengthSnapshots: snapshotFallback,
   onUpdateTrackingPreferences,
 }) => {
   const { setFabAction } = useFabAction();
@@ -121,7 +118,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     undefined,
     workoutDataVersion
   );
-
   // Animation refs
   const headerFadeAnim = useRef(new Animated.Value(0)).current;
   const headerSlideAnim = useRef(new Animated.Value(-20)).current;
@@ -318,34 +314,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const resolvedPhase = data?.phase ?? phase;
   const resolvedPhaseId = resolvedPhase.id;
   
-  const mergedSessions = useMemo(() => {
-    const map = new Map(
-      sessionFallback.map((session) => [`${session.phasePlanId}:${session.date}`, session])
-    );
-    (data?.sessions || []).forEach((session) => {
-      map.set(`${session.phasePlanId}:${session.date}`, session);
-    });
-    return Array.from(map.values());
-  }, [sessionFallback, data?.sessions]);
-
-  const mergedWorkoutLogs = useMemo(() => {
-    const map = new Map(
-      workoutLogFallback.map((log) => [`${log.phasePlanId}:${log.date}`, log])
-    );
-    (data?.workoutLogs || []).forEach((log) => {
-      map.set(`${log.phasePlanId}:${log.date}`, log);
-    });
-    return Array.from(map.values());
-  }, [workoutLogFallback, data?.workoutLogs]);
-
-  const mergedSnapshots = useMemo(() => {
-    const map = new Map(snapshotFallback.map((snap) => [snap.id, snap]));
-    (data?.strengthSnapshots || []).forEach((snap) => {
-      map.set(snap.id, snap);
-    });
-    return Array.from(map.values());
-  }, [snapshotFallback, data?.strengthSnapshots]);
-
+  const mergedSessions = useMemo(() => data?.sessions || [], [data?.sessions]);
+  const mergedWorkoutLogs = useMemo(() => data?.workoutLogs || [], [data?.workoutLogs]);
+  const mergedSnapshots = useMemo(() => data?.strengthSnapshots || [], [data?.strengthSnapshots]);
   const sessions = useMemo(
     () => mergedSessions.filter((session) => session.phasePlanId === resolvedPhaseId),
     [mergedSessions, resolvedPhaseId]
@@ -376,7 +347,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     });
     return result;
   }, [exerciseDefaults, exerciseOptions]);
+  const hasStrengthSnapshots = strengthSnapshots.length > 0;
   const strengthTrends = useMemo(() => {
+    if (!hasStrengthSnapshots) {
+      return [];
+    }
     const existingKeys = new Set(strengthTrendsRaw.map((trend) => toTrackingKey(trend.lift)));
     const selected = Object.entries(user.trackingPreferences?.lifts ?? {});
     const filled = strengthTrendsRaw.map((trend) => {
@@ -408,10 +383,48 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       return acc;
     }, []);
     return [...filled, ...fallback];
-  }, [strengthTrendsRaw, preferredWeightsByKey, user.trackingPreferences?.lifts]);
+  }, [hasStrengthSnapshots, strengthTrendsRaw, preferredWeightsByKey, user.trackingPreferences?.lifts]);
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs, labelMaps);
   const nonZeroWeeklyVolume = weeklyVolume.filter((entry) => entry.sets > 0);
   const movementBalance = buildMovementBalanceSummary(workoutLogs, labelMaps);
+
+  const selectedMuscles = Object.entries(user.trackingPreferences?.muscles ?? {}).map(
+    ([key, label]) => ({
+      key,
+      group: label,
+      sets: 0,
+    })
+  );
+  const volumeEntries =
+    weeklyVolume.length > 0 ? weeklyVolume : selectedMuscles.slice(0, 3);
+
+  const selectedMovements = Object.entries(user.trackingPreferences?.movements ?? {}).map(
+    ([key, label]) => ({
+      key,
+      name: label,
+      sessions: 0,
+    })
+  );
+  const movementEntries =
+    movementBalance.length > 0 ? movementBalance : selectedMovements.slice(0, 3);
+
+  const selectedLifts = Object.entries(user.trackingPreferences?.lifts ?? {}).map(
+    ([key, label]) => ({
+      key,
+      lift: label,
+    })
+  );
+  const strengthTrendEntries =
+    strengthTrends.length > 0
+      ? strengthTrends
+      : selectedLifts.slice(0, 3).map((lift) => ({
+          key: lift.key as any,
+          lift: lift.lift,
+          weights: [0],
+          glyph: '▁',
+          deltaLbs: 0,
+          deltaPercent: 0,
+        }));
 
   const bestLiftRows = strengthTrends
     .map((trend) => ({
@@ -424,6 +437,14 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     .slice(0, 3);
 
   const showSyncNotice = isLoading && sessions.length === 0;
+  const recordRows =
+    bestLiftRows.length > 0
+      ? bestLiftRows
+      : strengthTrendEntries.map((trend) => ({
+          lift: trend.lift,
+          current: trend.weights[trend.weights.length - 1] || 0,
+          delta: 0,
+        }));
 
   const getHeatColor = (intensity: number) => {
     if (intensity >= 0.8) return COLORS.success;
@@ -433,18 +454,24 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   };
 
   const maxVolumeRows = 3;
-  const hasExtraVolume = nonZeroWeeklyVolume.length > maxVolumeRows;
+  const volumeHasData = volumeEntries.length > 0;
+  const strengthHasData = strengthTrendEntries.length > 0;
+  const movementHasData = movementEntries.length > 0;
+  const recordsHasData = recordRows.length > 0;
+  const hasAnyMetricData =
+    volumeHasData || strengthHasData || movementHasData || recordsHasData;
+  const hasExtraVolume = volumeEntries.length > maxVolumeRows;
   const visibleVolume = showAllVolume
-    ? nonZeroWeeklyVolume
-    : nonZeroWeeklyVolume.slice(0, maxVolumeRows);
+    ? volumeEntries
+    : volumeEntries.slice(0, maxVolumeRows);
   const maxStrengthRows = 3;
-  const hasExtraStrength = strengthTrends.length > maxStrengthRows;
+  const hasExtraStrength = strengthTrendEntries.length > maxStrengthRows;
   const visibleStrength = showAllStrength
-    ? strengthTrends
-    : strengthTrends.slice(0, maxStrengthRows);
+    ? strengthTrendEntries
+    : strengthTrendEntries.slice(0, maxStrengthRows);
   const planWeeks = Math.max(resolvedPhase?.expectedWeeks ?? 8, 1);
   const volumeWindowWeeks = 4;
-  const maxWindowSets = Math.max(...weeklyVolume.map((entry) => entry.sets), 0);
+  const maxWindowSets = Math.max(...volumeEntries.map((entry) => entry.sets), 0);
   const maxWeeklyAvg = maxWindowSets / volumeWindowWeeks;
   const planBaseline = Math.max(maxWeeklyAvg * planWeeks, maxWindowSets, 1);
 
@@ -501,18 +528,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   }, [trackingCategory, trackingDraft, muscleOptions, exerciseOptions, movementOptions]);
 
   const renderVolumeCard = () => {
-    if (!activeMetrics.includes('volume')) return null;
-    if (nonZeroWeeklyVolume.length === 0) {
-      return (
-        <View style={[styles.card, styles.emptyStateCard]}>
-          <Text style={styles.emptyStateEmoji}>💪</Text>
-          <Text style={styles.emptyStateTitle}>No volume data yet</Text>
-          <Text style={styles.emptyStateText}>
-            Complete workouts to track muscle volume over time
-          </Text>
-        </View>
-      );
-    }
+    if (!activeMetrics.includes('volume') || !volumeHasData) return null;
 
     return (
       <View
@@ -554,7 +570,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             <Text style={styles.volumeToggleText}>
               {showAllVolume
                 ? 'Show Less'
-                : `Show ${nonZeroWeeklyVolume.length - maxVolumeRows} More`}
+                : `Show ${volumeEntries.length - maxVolumeRows} More`}
             </Text>
           </TouchableOpacity>
         )}
@@ -563,24 +579,15 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   };
 
   const renderStrengthCard = () => {
-    if (!activeMetrics.includes('strength')) return null;
-    if (strengthTrends.length === 0) {
-      return (
-        <View style={[styles.card, styles.emptyStateCard]}>
-          <Text style={styles.emptyStateEmoji}>📈</Text>
-          <Text style={styles.emptyStateTitle}>No strength data yet</Text>
-          <Text style={styles.emptyStateText}>
-            Log weights to track strength progression
-          </Text>
-        </View>
-      );
-    }
+    if (!activeMetrics.includes('strength') || !strengthHasData) return null;
 
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Strength Trends</Text>
-          <Text style={styles.cardSubtitle}>Last 4 weeks</Text>
+          <Text style={styles.cardSubtitle}>
+            {hasStrengthSnapshots ? 'Last 4 weeks' : 'Current starting weights'}
+          </Text>
         </View>
         <View style={styles.strengthList}>
           {visibleStrength.map((trend) => (
@@ -626,20 +633,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   };
 
   const renderMovementCard = () => {
-    if (!activeMetrics.includes('movement')) return null;
-    if (movementBalance.length === 0) {
-      return (
-        <View style={[styles.card, styles.emptyStateCard]}>
-          <Text style={styles.emptyStateEmoji}>🎯</Text>
-          <Text style={styles.emptyStateTitle}>No movement data yet</Text>
-          <Text style={styles.emptyStateText}>
-            Complete workouts to track movement patterns
-          </Text>
-        </View>
-      );
-    }
+    if (!activeMetrics.includes('movement') || !movementHasData) return null;
 
-    const maxSessions = Math.max(...movementBalance.map((m) => m.sessions), 1);
+    const maxSessions = Math.max(...movementEntries.map((m) => m.sessions), 1);
 
     return (
       <View style={styles.card}>
@@ -648,7 +644,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           <Text style={styles.cardSubtitle}>This month</Text>
         </View>
         <View style={styles.movementGrid}>
-          {movementBalance.map((movement) => {
+          {movementEntries.map((movement) => {
             const intensity = movement.sessions / maxSessions;
             const pillColor = getHeatColor(intensity);
             return (
@@ -667,18 +663,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   };
 
   const renderRecordsCard = () => {
-    if (!activeMetrics.includes('records')) return null;
-    if (bestLiftRows.length === 0) {
-      return (
-        <View style={[styles.card, styles.emptyStateCard]}>
-          <Text style={styles.emptyStateEmoji}>🏆</Text>
-          <Text style={styles.emptyStateTitle}>No records yet</Text>
-          <Text style={styles.emptyStateText}>
-            Keep lifting to set personal records
-          </Text>
-        </View>
-      );
-    }
+    if (!activeMetrics.includes('records') || !recordsHasData) return null;
 
     return (
       <View style={styles.card}>
@@ -687,7 +672,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           <Text style={styles.cardSubtitle}>Top 3 lifts</Text>
         </View>
         <View style={styles.prList}>
-          {bestLiftRows.map((row, idx) => {
+          {recordRows.map((row, idx) => {
             const rankEmojis = ['🥇', '🥈', '🥉'];
             return (
               <View key={row.lift} style={styles.prRow}>
@@ -721,6 +706,16 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const availableOptions = getAvailableOptions();
   const selectedItems = Object.entries(trackingDraft[trackingCategory] ?? {});
+
+  const renderEmptyMetrics = () => (
+    <View style={[styles.card, styles.emptyStateCard]}>
+      <Text style={styles.emptyStateEmoji}>📊</Text>
+      <Text style={styles.emptyStateTitle}>No progress data yet</Text>
+      <Text style={styles.emptyStateText}>
+        Complete workouts to unlock training volume, strength trends, and movement balance.
+      </Text>
+    </View>
+  );
 
   return (
     <>
@@ -765,18 +760,22 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             <Text style={styles.syncNotice}>⏳ Syncing latest progress data...</Text>
           )}
 
-          <Animated.View
-            style={{
-              opacity: cardFadeAnim,
-              transform: [{ translateY: cardSlideAnim }],
-              gap: 16,
-            }}
-          >
-            {renderVolumeCard()}
-            {renderStrengthCard()}
-            {renderMovementCard()}
-            {renderRecordsCard()}
-          </Animated.View>
+          {hasAnyMetricData ? (
+            <Animated.View
+              style={{
+                opacity: cardFadeAnim,
+                transform: [{ translateY: cardSlideAnim }],
+                gap: 16,
+              }}
+            >
+              {renderVolumeCard()}
+              {renderStrengthCard()}
+              {renderMovementCard()}
+              {renderRecordsCard()}
+            </Animated.View>
+          ) : (
+            renderEmptyMetrics()
+          )}
 
           {activeMetrics.length === 0 && (
             <View style={styles.noMetricsCard}>

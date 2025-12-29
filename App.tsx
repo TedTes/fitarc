@@ -337,6 +337,7 @@ function AppContent() {
     deleteWorkoutSession,
     markAllWorkoutsComplete,
     clearAllData,
+    resetWorkoutData,
     loadWorkoutSessionsFromSupabase,
     hydrateFromRemote,
     loadMealPlansFromSupabase,
@@ -530,6 +531,7 @@ function AppContent() {
       console.log('✅ Plan created:', remotePhase.id);
 
       await startPhase(remotePhase);
+      resetWorkoutData();
       const seededSessions = await waitForInitialSessions(authUser.id, remotePhase.id);
       if (seededSessions.length) {
         await hydrateFromRemote({ workoutSessions: seededSessions });
@@ -625,6 +627,7 @@ function AppContent() {
             workoutSessions: homeData.recentSessions,
             mealPlans: homeData.todayMealPlan ? [homeData.todayMealPlan] : undefined,
           });
+          resetWorkoutData();
 
           if (homeData.phase?.id) {
             await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);

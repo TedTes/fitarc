@@ -31,9 +31,9 @@ export const useProgressData = (
       setIsLoading(false);
       return;
     }
+    setData(null);
     load();
   }, [userId, planId, windowDays, version, load]);
-
   return useMemo(
     () => ({ data, isLoading, error, refresh: load }),
     [data, isLoading, error, load]
