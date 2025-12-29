@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getPhysiqueLevelsBySex } from '../data/physiqueLevels';
 
@@ -7,22 +7,47 @@ type TargetPhysiqueSelectionScreenProps = {
   sex: 'male' | 'female' | 'other';
   currentLevelId: number;
   onSelectTarget: (targetLevelId: number) => void;
+  onCancel?: () => void;
 };
 
 export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScreenProps> = ({
   sex,
   currentLevelId,
   onSelectTarget,
+  onCancel,
 }) => {
   const [selectedTarget, setSelectedTarget] = useState<number | null>(null);
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [pendingTarget, setPendingTarget] = useState<number | null>(null);
 
   const physiqueLevels = getPhysiqueLevelsBySex(sex);
-  const availableTargets = physiqueLevels.filter(level => level.id > currentLevelId);
+  const selectableLevels = physiqueLevels.filter((level) => level.id !== currentLevelId);
+
+  useEffect(() => {
+    if (selectedTarget !== null) return;
+    const nextLevel = selectableLevels.find((level) => level.id === currentLevelId + 1);
+    setSelectedTarget(nextLevel?.id ?? selectableLevels[0]?.id ?? null);
+  }, [currentLevelId, selectableLevels, selectedTarget]);
 
   const handleContinue = () => {
-    if (selectedTarget) {
-      onSelectTarget(selectedTarget);
-    }
+    if (!selectedTarget) return;
+    setPendingTarget(selectedTarget);
+    setConfirmVisible(true);
+  };
+
+  const handleCancel = () => {
+    onCancel?.();
+  };
+
+  const handleDismissConfirm = () => {
+    setConfirmVisible(false);
+    setPendingTarget(null);
+  };
+
+  const handleConfirmStart = () => {
+    if (!pendingTarget) return;
+    setConfirmVisible(false);
+    onSelectTarget(pendingTarget);
   };
 
   return (
@@ -33,7 +58,7 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>Where do you want to be?</Text>
+            <Text style={styles.title}>Please select your next goal</Text>
             <Text style={styles.subtitle}>
               Choose your target physique for this phase
             </Text>
@@ -46,9 +71,9 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
           </View>
 
           <View style={styles.levelGrid}>
-            {availableTargets.map((level) => {
+            {selectableLevels.map((level) => {
               const levelGap = level.id - currentLevelId;
-              const estimatedWeeks = levelGap * 8; // 8 weeks per level
+              const estimatedWeeks = levelGap * 8;
 
               return (
                 <TouchableOpacity
@@ -60,19 +85,16 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
                   onPress={() => setSelectedTarget(level.id)}
                   activeOpacity={0.8}
                 >
-                  <View style={styles.levelImageContainer}>
-                    <Image source={{ uri: level.imageUrl }} style={styles.levelImage} />
-                    <View style={styles.levelBadge}>
+                  <View style={styles.levelHeader}>
+                    <View style={styles.levelBadgePill}>
                       <Text style={styles.levelBadgeText}>Level {level.id}</Text>
                     </View>
-                    <View style={styles.durationBadge}>
-                      <LinearGradient
-                        colors={['#6C63FF', '#5449CC']}
-                        style={styles.durationBadgeGradient}
-                      >
-                        <Text style={styles.durationBadgeText}>~{estimatedWeeks} weeks</Text>
-                      </LinearGradient>
-                    </View>
+                    <LinearGradient
+                      colors={['#6C63FF', '#5449CC']}
+                      style={styles.durationBadgeGradient}
+                    >
+                      <Text style={styles.durationBadgeText}>~{estimatedWeeks} weeks</Text>
+                    </LinearGradient>
                   </View>
                   <View style={styles.levelInfo}>
                     <Text style={styles.levelName}>{level.name}</Text>
@@ -97,20 +119,53 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
             })}
           </View>
 
-          {selectedTarget && (
-            <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
-              <LinearGradient
-                colors={['#00F5A0', '#00D9A3']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.continueButtonGradient}
-              >
-                <Text style={styles.continueButtonText}>Start Phase</Text>
-              </LinearGradient>
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
+              <Text style={styles.cancelButtonText}>Previous</Text>
             </TouchableOpacity>
-          )}
+
+            {selectedTarget && (
+              <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
+                <LinearGradient
+                  colors={['#00F5A0', '#00D9A3']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.continueButtonGradient}
+                >
+                  <Text style={styles.continueButtonText}>Start Plan</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+          </View>
         </ScrollView>
       </LinearGradient>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={confirmVisible}
+        onRequestClose={handleDismissConfirm}
+      >
+        <Pressable style={styles.confirmOverlay} onPress={handleDismissConfirm}>
+          <Pressable style={styles.confirmCard} onPress={() => {}}>
+            <Text style={styles.confirmTitle}>Start this plan?</Text>
+            <Text style={styles.confirmBody}>
+              Target: Level {pendingTarget ?? '-'}
+            </Text>
+            <Text style={styles.confirmBody}>
+              Estimated duration: {((pendingTarget ?? currentLevelId) - currentLevelId) * 8} weeks
+            </Text>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity style={styles.confirmCancel} onPress={handleDismissConfirm}>
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.confirmPrimary} onPress={handleConfirmStart}>
+                <Text style={styles.confirmPrimaryText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 };
@@ -132,10 +187,11 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   title: {
-    fontSize: 32,
+    fontSize: 27,
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginBottom: 8,
+    marginTop: 30
   },
   subtitle: {
     fontSize: 16,
@@ -165,7 +221,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
     borderColor: '#2A2F4F',
-    overflow: 'hidden',
     position: 'relative',
   },
   levelCardSelected: {
@@ -176,38 +231,30 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
   },
-  levelImageContainer: {
-    position: 'relative',
+  levelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
-  levelImage: {
-    width: '100%',
-    height: 200,
-    backgroundColor: '#1E2340',
-  },
-  levelBadge: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
+  levelBadgePill: {
     backgroundColor: '#0A0E27',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
   },
   levelBadgeText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: 'bold',
   },
-  durationBadge: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
   durationBadgeGradient: {
     paddingHorizontal: 12,
     paddingVertical: 6,
+    borderRadius: 8,
   },
   durationBadgeText: {
     color: '#FFFFFF',
@@ -269,9 +316,9 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   continueButton: {
-    marginTop: 16,
     borderRadius: 12,
     overflow: 'hidden',
+    flex: 1,
   },
   continueButtonGradient: {
     paddingVertical: 16,
@@ -281,5 +328,82 @@ const styles = StyleSheet.create({
     color: '#0A0E27',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 16,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    backgroundColor: '#151932',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#A0A3BD',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(8,10,22,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  confirmCard: {
+    width: '100%',
+    borderRadius: 16,
+    backgroundColor: '#151932',
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    padding: 20,
+  },
+  confirmTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 8,
+  },
+  confirmBody: {
+    fontSize: 14,
+    color: '#A0A3BD',
+    marginBottom: 4,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  confirmCancel: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    backgroundColor: '#101427',
+    alignItems: 'center',
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#A0A3BD',
+  },
+  confirmPrimary: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#00F5A0',
+    alignItems: 'center',
+  },
+  confirmPrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0A0E27',
   },
 });

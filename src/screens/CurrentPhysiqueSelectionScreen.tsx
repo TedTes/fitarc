@@ -1,25 +1,41 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getPhysiqueLevelsBySex } from '../data/physiqueLevels';
 
 type CurrentPhysiqueSelectionScreenProps = {
   sex: 'male' | 'female' | 'other';
+  currentLevelId?: number;
   onSelectLevel: (levelId: number) => void;
+  onCancel?: () => void;
 };
 
 export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionScreenProps> = ({
   sex,
+  currentLevelId,
   onSelectLevel,
+  onCancel,
 }) => {
-  const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
+  const [selectedLevel, setSelectedLevel] = useState<number | null>(
+    currentLevelId ?? null
+  );
 
   const physiqueLevels = getPhysiqueLevelsBySex(sex);
+
+  useEffect(() => {
+    if (currentLevelId !== undefined && currentLevelId !== null) {
+      setSelectedLevel(currentLevelId);
+    }
+  }, [currentLevelId]);
 
   const handleContinue = () => {
     if (selectedLevel) {
       onSelectLevel(selectedLevel);
     }
+  };
+
+  const handleCancel = () => {
+    onCancel?.();
   };
 
   return (
@@ -30,10 +46,15 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>Where are you now?</Text>
+            <Text style={styles.title}>Please select current Level</Text>
             <Text style={styles.subtitle}>
               Select the physique level that best matches your current state
             </Text>
+            {currentLevelId ? (
+              <Text style={styles.currentLevelText}>
+                Current level: {currentLevelId}
+              </Text>
+            ) : null}
           </View>
 
           <View style={styles.levelGrid}>
@@ -61,18 +82,24 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
             ))}
           </View>
 
-          <TouchableOpacity 
-            style={[styles.continueButton, !selectedLevel && styles.continueButtonDisabled]} 
-            onPress={handleContinue}
-            disabled={!selectedLevel}
-          >
-            <LinearGradient
-              colors={selectedLevel ? ['#6C63FF', '#5449CC'] : ['#2A2F4F', '#1E2340']}
-              style={styles.continueButtonGradient}
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.continueButton, !selectedLevel && styles.continueButtonDisabled]}
+              onPress={handleContinue}
+              disabled={!selectedLevel}
             >
-              <Text style={styles.continueButtonText}>Continue</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+              <LinearGradient
+                colors={selectedLevel ? ['#6C63FF', '#5449CC'] : ['#2A2F4F', '#1E2340']}
+                style={styles.continueButtonGradient}
+              >
+                <Text style={styles.continueButtonText}>Continue</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </LinearGradient>
     </View>
@@ -97,15 +124,22 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   title: {
-    fontSize: 32,
+    fontSize: 27,
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginBottom: 8,
+    marginTop: 30
   },
   subtitle: {
     fontSize: 16,
     color: '#A0A3BD',
     lineHeight: 24,
+  },
+  currentLevelText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#6C63FF',
+    fontWeight: '600',
   },
   levelGrid: {
     gap: 16,
@@ -114,9 +148,10 @@ const styles = StyleSheet.create({
   levelCard: {
     backgroundColor: '#151932',
     borderRadius: 16,
-    padding: 20,
+    padding: 12,
     borderWidth: 2,
     borderColor: '#2A2F4F',
+  
   },
   levelCardSelected: {
     borderColor: '#6C63FF',
@@ -161,6 +196,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     marginTop: 8,
+    flex: 1,
   },
   continueButtonDisabled: {
     opacity: 0.5,
@@ -173,5 +209,25 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 8,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    backgroundColor: '#151932',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#A0A3BD',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

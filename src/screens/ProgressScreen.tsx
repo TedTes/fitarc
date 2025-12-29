@@ -313,6 +313,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   );
 
   const resolvedPhase = data?.phase ?? phase;
+  const resolvedPhaseId = resolvedPhase.id;
   
   const mergedSessions = useMemo(() => {
     const map = new Map(
@@ -342,9 +343,18 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     return Array.from(map.values());
   }, [snapshotFallback, data?.strengthSnapshots]);
 
-  const sessions = mergedSessions;
-  const workoutLogs = mergedWorkoutLogs;
-  const strengthSnapshots = mergedSnapshots;
+  const sessions = useMemo(
+    () => mergedSessions.filter((session) => session.phasePlanId === resolvedPhaseId),
+    [mergedSessions, resolvedPhaseId]
+  );
+  const workoutLogs = useMemo(
+    () => mergedWorkoutLogs.filter((log) => log.phasePlanId === resolvedPhaseId),
+    [mergedWorkoutLogs, resolvedPhaseId]
+  );
+  const strengthSnapshots = useMemo(
+    () => mergedSnapshots.filter((snap) => snap.phasePlanId === resolvedPhaseId),
+    [mergedSnapshots, resolvedPhaseId]
+  );
 
   const strengthTrendsRaw = buildStrengthTrends(strengthSnapshots, labelMaps);
 

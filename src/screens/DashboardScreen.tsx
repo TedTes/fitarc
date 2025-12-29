@@ -540,10 +540,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const handleToggleExerciseAnimated = (exerciseName: string) => {
     const target = displayExercises.find((ex) => ex.name === exerciseName);
     if (!target) return;
-    
+
     const key = `${todayStr}-${getExerciseKey(target)}`;
     animateExerciseCompletion(key);
-    
+
     Animated.sequence([
       Animated.spring(checkboxPulseAnim, {
         toValue: 1.3,
@@ -759,7 +759,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                       !canLogWorkouts && styles.exerciseCardDisabled,
                     ]}
                   >
-                  <View style={styles.exerciseCardRow}>
+                    <View style={styles.exerciseCardRow}>
                     <View style={styles.exerciseCardMain}>
                       <View style={styles.cardHeader}>
                         <View style={styles.exerciseHeaderText}>
@@ -1297,7 +1297,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.2)',
     position: 'relative',
-    overflow: 'hidden',
+    overflow: 'visible',
     aspectRatio: 5,
     width: '100%',
   },
