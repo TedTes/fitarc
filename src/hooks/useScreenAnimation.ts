@@ -2,7 +2,14 @@ import { useContext, useEffect, useRef, useState } from 'react';
 import { Animated } from 'react-native';
 import { NavigationContext } from '@react-navigation/native';
 
-export const useScreenAnimation = () => {
+type ScreenAnimationOptions = {
+  headerDuration?: number;
+  contentDuration?: number;
+};
+
+export const useScreenAnimation = (options: ScreenAnimationOptions = {}) => {
+  const headerDuration = options.headerDuration ?? 220;
+  const contentDuration = options.contentDuration ?? 200;
   const navigation = useContext(NavigationContext);
   const [isFocused, setIsFocused] = useState(() =>
     navigation ? navigation.isFocused() : true
@@ -33,29 +40,37 @@ export const useScreenAnimation = () => {
       Animated.parallel([
         Animated.timing(headerOpacity, {
           toValue: 1,
-          duration: 220,
+          duration: headerDuration,
           useNativeDriver: true,
         }),
         Animated.timing(headerTranslateY, {
           toValue: 0,
-          duration: 220,
+          duration: headerDuration,
           useNativeDriver: true,
         }),
       ]),
       Animated.parallel([
         Animated.timing(contentOpacity, {
           toValue: 1,
-          duration: 200,
+          duration: contentDuration,
           useNativeDriver: true,
         }),
         Animated.timing(contentTranslateY, {
           toValue: 0,
-          duration: 200,
+          duration: contentDuration,
           useNativeDriver: true,
         }),
       ]),
     ]).start();
-  }, [contentOpacity, contentTranslateY, headerOpacity, headerTranslateY, isFocused]);
+  }, [
+    contentDuration,
+    contentOpacity,
+    contentTranslateY,
+    headerDuration,
+    headerOpacity,
+    headerTranslateY,
+    isFocused,
+  ]);
 
   return {
     headerStyle: {

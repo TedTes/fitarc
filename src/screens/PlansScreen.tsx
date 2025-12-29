@@ -133,7 +133,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const { setFabAction } = useFabAction();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const { headerStyle, contentStyle } = useScreenAnimation();
+  const { headerStyle, contentStyle } = useScreenAnimation({
+    headerDuration: 140,
+    contentDuration: 140,
+  });
   const { exercises: exerciseCatalog, isLoading: catalogLoading } = useSupabaseExercises();
   
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));

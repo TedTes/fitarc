@@ -111,7 +111,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   onUpdateTrackingPreferences,
 }) => {
   const { setFabAction } = useFabAction();
-  const { headerStyle, contentStyle } = useScreenAnimation();
+  const { headerStyle, contentStyle } = useScreenAnimation({
+    headerDuration: 140,
+    contentDuration: 140,
+  });
   const { data, isLoading, refresh } = useProgressData(
     user.id,
     phase.id,
@@ -149,13 +152,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     Animated.parallel([
       Animated.timing(headerFadeAnim, {
         toValue: 1,
-        duration: 400,
+        duration: 200,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.timing(headerSlideAnim, {
         toValue: 0,
-        duration: 400,
+        duration: 200,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
@@ -167,15 +170,15 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     Animated.parallel([
       Animated.timing(cardFadeAnim, {
         toValue: 1,
-        duration: 500,
-        delay: 200,
+        duration: 240,
+        delay: 120,
         easing: Easing.out(Easing.ease),
         useNativeDriver: true,
       }),
       Animated.timing(cardSlideAnim, {
         toValue: 0,
-        duration: 500,
-        delay: 200,
+        duration: 240,
+        delay: 120,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
