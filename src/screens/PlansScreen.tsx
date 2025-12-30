@@ -730,7 +730,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                     <View style={styles.exerciseHeaderActions}>
                       {exercise.completed && (
                         <View style={styles.planCompleteBadge}>
-                          <Text style={styles.planCompleteBadgeText}>Done</Text>
+                          <Text style={styles.planCompleteBadgeText}>✓</Text>
                         </View>
                       )}
                       {!exercise.completed && (
@@ -1095,17 +1095,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   planCompleteBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.success,
     backgroundColor: 'rgba(0, 245, 160, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   planCompleteBadgeText: {
     color: COLORS.success,
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
   },
   exerciseInputs: {
     flexDirection: 'row',

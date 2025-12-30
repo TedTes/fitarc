@@ -516,6 +516,19 @@ export const setDailyMealEntriesDone = async (
   if (error) throw error;
 };
 
+export const setMealTypeEntriesDone = async (
+  dailyMealId: string,
+  mealType: string,
+  isDone: boolean
+): Promise<void> => {
+  const { error } = await supabase
+    .from('fitarc_meal_entries')
+    .update({ is_done: isDone })
+    .eq('daily_meal_id', dailyMealId)
+    .eq('meal_type', normalizeMealType(mealType));
+  if (error) throw error;
+};
+
 export type FoodItem = {
   id: string;
   userId: string | null;

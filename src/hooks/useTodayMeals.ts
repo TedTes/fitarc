@@ -10,6 +10,7 @@ import {
   deleteMealEntry,
   setDailyMealsCompleted,
   setDailyMealEntriesDone,
+  setMealTypeEntriesDone,
 } from '../services/mealService';
 import { addMealEntryFromFood, FoodItem } from '../services/mealService';
 import { formatLocalDateYMD } from '../utils/date';
@@ -145,6 +146,30 @@ const getEntriesForMealType = (map: MealsByType, mealType: string): MealEntry[] 
     (type) => type.trim().toLowerCase() === normalizedType
   );
   return matchingKey ? map[matchingKey] : [];
+};
+
+const resolveMealTypeKey = (map: MealsByType, mealType: string): string | null => {
+  if (map[mealType]) return mealType;
+  const normalizedType = mealType.trim().toLowerCase();
+  return (
+    Object.keys(map).find((type) => type.trim().toLowerCase() === normalizedType) || null
+  );
+};
+
+const updateEntriesCompletionForType = (
+  map: MealsByType,
+  mealType: string,
+  completed: boolean
+): MealsByType => {
+  const key = resolveMealTypeKey(map, mealType);
+  if (!key) return map;
+  return {
+    ...map,
+    [key]: map[key].map((entry) => ({
+      ...entry,
+      isDone: completed,
+    })),
+  };
 };
 
 const getFoodDisplayName = (food: FoodItem): string =>
@@ -381,6 +406,27 @@ export const useTodayMeals = (
     [dateKey, ensureDailyMeal, userId]
   );
 
+  const toggleMealTypeCompleted = useCallback(
+    async (mealType: string, completed: boolean) => {
+      if (!userId || !dateKey) throw new Error('Missing user or date');
+      setIsMutating(true);
+      try {
+        const dailyMeal = await ensureDailyMeal();
+        await setMealTypeEntriesDone(dailyMeal.id, mealType, completed);
+        updateMealsState((prev) => ({
+          dailyMeal: prev.dailyMeal,
+          mealsByType: updateEntriesCompletionForType(prev.mealsByType, mealType, completed),
+        }));
+      } catch (err) {
+        console.error('Failed to toggle meal type completion', err);
+        throw err;
+      } finally {
+        setIsMutating(false);
+      }
+    },
+    [dateKey, ensureDailyMeal, userId]
+  );
+
   const mealsByType = useMemo(() => mealsState.mealsByType, [mealsState.mealsByType]);
 
   return {
@@ -395,5 +441,6 @@ export const useTodayMeals = (
     editEntry,
     removeEntry,
     toggleDayCompleted,
+    toggleMealTypeCompleted,
   };
 };

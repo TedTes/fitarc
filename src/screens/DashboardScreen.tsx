@@ -127,6 +127,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
   const activityCellAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const createButtonPulse = useRef(new Animated.Value(1)).current;
+  const pendingOrderRef = useRef<string[]>([]);
+  const completedOrderRef = useRef<string[]>([]);
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const hasActivePlan = resolvedPhase?.status === 'active';
@@ -145,10 +147,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const todaySession = resolvedSessions.find((session) => session.date === todayStr) || null;
 
   const displayExercises = todaySession?.exercises ?? [];
-  const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) =>
-    (exercise.id as string) ||
-    (exercise.exerciseId as string) ||
-    `${exercise.name}-${exercise.sets ?? ''}-${exercise.reps ?? ''}`;
+  const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) => {
+    if (exercise.id) return exercise.id;
+    if (exercise.exerciseId) return exercise.exerciseId;
+    const orderSuffix = exercise.displayOrder ?? '';
+    const parts = [
+      exercise.name,
+      orderSuffix,
+      exercise.sets ?? '',
+      exercise.reps ?? '',
+      exercise.movementPattern ?? '',
+    ];
+    return parts.filter(Boolean).join('-');
+  };
 
   useEffect(() => {
     setLocalCompletionOverrides({});
@@ -168,16 +179,43 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     [localCompletionOverrides]
   );
 
+  useEffect(() => {
+    const nextKeys = displayExercises.map((exercise) => getExerciseKey(exercise));
+    const nextSet = new Set(nextKeys);
+    const pending = pendingOrderRef.current.filter((key) => nextSet.has(key));
+    const completed = completedOrderRef.current.filter((key) => nextSet.has(key));
+    const seen = new Set([...pending, ...completed]);
+
+    displayExercises.forEach((exercise) => {
+      const key = getExerciseKey(exercise);
+      if (seen.has(key)) return;
+      if (isExerciseMarked(exercise)) {
+        completed.push(key);
+      } else {
+        pending.push(key);
+      }
+      seen.add(key);
+    });
+
+    pendingOrderRef.current = pending;
+    completedOrderRef.current = completed;
+  }, [displayExercises, isExerciseMarked]);
+
   const sortedWorkoutCards = useMemo(() => {
-    return displayExercises
-      .map((exercise, index) => ({ exercise, index }))
-      .sort((a, b) => {
-        const aMarked = isExerciseMarked(a.exercise);
-        const bMarked = isExerciseMarked(b.exercise);
-        if (aMarked === bMarked) return a.index - b.index;
-        return aMarked ? 1 : -1;
-      })
-      .map(({ exercise }) => exercise);
+    const byKey = new Map(displayExercises.map((exercise) => [getExerciseKey(exercise), exercise]));
+    const pending: typeof displayExercises = [];
+    const completed: typeof displayExercises = [];
+    pendingOrderRef.current.forEach((key) => {
+      const exercise = byKey.get(key);
+      if (!exercise) return;
+      pending.push(exercise);
+    });
+    completedOrderRef.current.forEach((key) => {
+      const exercise = byKey.get(key);
+      if (!exercise) return;
+      completed.push(exercise);
+    });
+    return [...pending, ...completed];
   }, [displayExercises, isExerciseMarked]);
   
   const hasSyncedWorkout = displayExercises.length > 0;
@@ -271,11 +309,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   };
 
   const {
-
     mealsByType,
     isLoading: isMealsLoading,
     isMutating: isMealsMutating,
     error: todayMealsError,
+    toggleDayCompleted,
+    toggleMealTypeCompleted,
   } = useTodayMeals(
     hasActivePlan ? user.id : undefined,
     hasActivePlan ? today : undefined,
@@ -292,6 +331,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       }))
       .filter((group) => group.entries.length > 0);
   }, [baseMealTypes, mealsByType]);
+  const pendingMealCount = useMemo(
+    () => mealGroups.reduce((sum, group) => sum + group.entries.filter((e) => !e.isDone).length, 0),
+    [mealGroups]
+  );
 
   const canLogWorkouts = hasActivePlan && !!onToggleWorkoutExercise;
 
@@ -325,6 +368,27 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         labelColor: '#6C63FF',
         onPress: handleOpenPlans,
       });
+    } else if (activeTab === 'meals' && pendingMealCount > 0) {
+      setFabAction('Home', {
+        label: 'Complete',
+        icon: '✓',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: () => {
+          void toggleDayCompleted?.(true);
+        },
+      });
+    } else if (activeTab === 'meals' && pendingMealCount === 0) {
+      setFabAction('Home', {
+        label: 'Completed',
+        icon: '✓',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: () =>
+          Alert.alert('Great job!', 'You have already completed today’s meals.'),
+      });
     } else if (onCompleteAllToday && pendingWorkoutCount > 0) {
       setFabAction('Home', {
         label: 'Complete',
@@ -354,11 +418,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     hasActivePlan,
     onCompleteAllToday,
     pendingWorkoutCount,
+    pendingMealCount,
     setFabAction,
     shouldCreatePlan,
     shouldPromptNext,
     shouldPromptPlan,
     onStartPhase,
+    activeTab,
+    toggleDayCompleted,
   ]);
 
   // 🎨 Animation functions
@@ -520,6 +587,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       const key = getExerciseKey(target);
       const current = prev[key] ?? target.completed;
       const nextValue = !current;
+      if (nextValue) {
+        pendingOrderRef.current = pendingOrderRef.current.filter((entry) => entry !== key);
+        if (!completedOrderRef.current.includes(key)) {
+          completedOrderRef.current.push(key);
+        }
+      } else {
+        completedOrderRef.current = completedOrderRef.current.filter((entry) => entry !== key);
+        if (!pendingOrderRef.current.includes(key)) {
+          pendingOrderRef.current.push(key);
+        }
+      }
       if (nextValue === target.completed) {
         const { [key]: _removed, ...rest } = prev;
         return rest;
@@ -579,6 +657,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const renderMealGroup = (group: { mealType: string; entries: MealEntry[] }) => {
     const { mealType, entries } = group;
     if (entries.length === 0) return null;
+    const isMealComplete = entries.every((entry) => entry.isDone);
 
     const totals = computeEntriesMacroTotals(entries);
     const macroSummary = formatMacroSummaryLine(totals);
@@ -599,6 +678,25 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 : 'Suggested by your plan'}
             </Text>
           </View>
+          <TouchableOpacity
+            style={[
+              styles.mealGroupToggle,
+              isMealComplete && styles.mealGroupToggleActive,
+            ]}
+            onPress={() => {
+              void toggleMealTypeCompleted?.(mealType, !isMealComplete);
+            }}
+            disabled={isMealsMutating}
+          >
+            <Text
+              style={[
+                styles.mealGroupToggleText,
+                isMealComplete && styles.mealGroupToggleTextActive,
+              ]}
+            >
+              ✓
+            </Text>
+          </TouchableOpacity>
         </View>
         {entries.map((entry) => (
           <View key={entry.id} style={styles.mealEntry}>
@@ -606,11 +704,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <Text style={styles.mealEntryName}>{entry.foodName}</Text>
               <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
             </View>
-            {entry.isDone && (
-              <View style={styles.mealEntryDoneBadge}>
-                <Text style={styles.mealEntryDoneText}>Done</Text>
-              </View>
-            )}
           </View>
         ))}
       </LinearGradient>
@@ -1401,18 +1494,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8B93B0',
   },
+  mealGroupToggle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mealGroupToggleActive: {
+    backgroundColor: 'rgba(0,245,160,0.15)',
+    borderColor: '#00F5A0',
+  },
+  mealGroupToggleText: {
+    fontSize: 14,
+    color: '#A0A3BD',
+    fontWeight: '700',
+  },
+  mealGroupToggleTextActive: {
+    color: '#00F5A0',
+  },
   mealEntryDoneBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,245,160,0.15)',
     borderWidth: 1,
     borderColor: '#00F5A0',
-    backgroundColor: 'rgba(0,245,160,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   mealEntryDoneText: {
+    fontSize: 14,
     color: '#00F5A0',
-    fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.3,
   },
 });
