@@ -323,14 +323,30 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   );
 
   const baseMealTypes = useMemo(() => Object.keys(mealsByType), [mealsByType]);
+  const orderedMealTypes = useMemo(() => {
+    const preferredOrder = ['breakfast', 'lunch', 'dinner'];
+    const baseIndex = new Map(
+      baseMealTypes.map((mealType, index) => [mealType, index])
+    );
+    return [...baseMealTypes].sort((a, b) => {
+      const aKey = a.toLowerCase();
+      const bKey = b.toLowerCase();
+      const aRank = preferredOrder.indexOf(aKey);
+      const bRank = preferredOrder.indexOf(bKey);
+      const aOrder = aRank === -1 ? Number.POSITIVE_INFINITY : aRank;
+      const bOrder = bRank === -1 ? Number.POSITIVE_INFINITY : bRank;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return (baseIndex.get(a) ?? 0) - (baseIndex.get(b) ?? 0);
+    });
+  }, [baseMealTypes]);
   const mealGroups = useMemo(() => {
-    return baseMealTypes
+    return orderedMealTypes
       .map((mealType) => ({
         mealType,
         entries: mealsByType[mealType] ?? [],
       }))
       .filter((group) => group.entries.length > 0);
-  }, [baseMealTypes, mealsByType]);
+  }, [mealsByType, orderedMealTypes]);
   const pendingMealCount = useMemo(
     () => mealGroups.reduce((sum, group) => sum + group.entries.filter((e) => !e.isDone).length, 0),
     [mealGroups]
@@ -663,50 +679,58 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const macroSummary = formatMacroSummaryLine(totals);
     const totalCount = entries.length;
     return (
-      <LinearGradient
+      <TouchableOpacity
         key={mealType}
-        colors={CARD_GRADIENT_DEFAULT}
-        style={styles.mealCard}
+        activeOpacity={0.9}
+        disabled={isMealsMutating}
+        onPress={() => {
+          void toggleMealTypeCompleted?.(mealType, !isMealComplete);
+        }}
       >
-        <View style={styles.mealCardHeader}>
-          <Text style={styles.mealEmoji}>{getMealTypeEmoji(mealType)}</Text>
-          <View style={styles.mealInfo}>
-            <Text style={styles.mealName}>{mealType}</Text>
-            <Text style={styles.mealMeta}>
-              {totalCount
-                ? `${totalCount} item${totalCount > 1 ? 's' : ''} · ${macroSummary}`
-                : 'Suggested by your plan'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={[
-              styles.mealGroupToggle,
-              isMealComplete && styles.mealGroupToggleActive,
-            ]}
-            onPress={() => {
-              void toggleMealTypeCompleted?.(mealType, !isMealComplete);
-            }}
-            disabled={isMealsMutating}
-          >
-            <Text
-              style={[
-                styles.mealGroupToggleText,
-                isMealComplete && styles.mealGroupToggleTextActive,
-              ]}
-            >
-              ✓
-            </Text>
-          </TouchableOpacity>
-        </View>
-        {entries.map((entry) => (
-          <View key={entry.id} style={styles.mealEntry}>
-            <View>
-              <Text style={styles.mealEntryName}>{entry.foodName}</Text>
-              <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
+        <LinearGradient
+          colors={CARD_GRADIENT_DEFAULT}
+          style={styles.mealCard}
+        >
+          <View style={styles.mealCardHeader}>
+            <Text style={styles.mealEmoji}>{getMealTypeEmoji(mealType)}</Text>
+            <View style={styles.mealInfo}>
+              <Text style={styles.mealName}>{mealType}</Text>
+              <Text style={styles.mealMeta}>
+                {totalCount
+                  ? `${totalCount} item${totalCount > 1 ? 's' : ''} · ${macroSummary}`
+                  : 'Suggested by your plan'}
+              </Text>
             </View>
+            <TouchableOpacity
+              style={[
+                styles.mealGroupToggle,
+                isMealComplete && styles.mealGroupToggleActive,
+              ]}
+              onPress={() => {
+                void toggleMealTypeCompleted?.(mealType, !isMealComplete);
+              }}
+              disabled={isMealsMutating}
+            >
+              <Text
+                style={[
+                  styles.mealGroupToggleText,
+                  isMealComplete && styles.mealGroupToggleTextActive,
+                ]}
+              >
+                ✓
+              </Text>
+            </TouchableOpacity>
           </View>
-        ))}
-      </LinearGradient>
+          {entries.map((entry) => (
+            <View key={entry.id} style={styles.mealEntry}>
+              <View>
+                <Text style={styles.mealEntryName}>{entry.foodName}</Text>
+                <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
+              </View>
+            </View>
+          ))}
+        </LinearGradient>
+      </TouchableOpacity>
     );
   };
 
@@ -1417,19 +1441,19 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   checkCircleActive: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 1.5,
-    borderColor: 'rgba(0,245,160,0.9)',
-    backgroundColor: 'rgba(0,245,160,0.15)',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#00F5A0',
+    backgroundColor: 'rgba(0, 245, 160, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkCircleText: {
     color: '#00F5A0',
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   exerciseName: {
     fontSize: 18,

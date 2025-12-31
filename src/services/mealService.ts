@@ -296,7 +296,7 @@ export const getDailyMealForDate = async (
   if (!rows.length) return null;
   if (planId) {
     const match = rows.find((row) => row.plan_id === planId);
-    if (match) return match;
+    return match ?? null;
   }
   return rows[0];
 };
@@ -309,16 +309,6 @@ export const ensureDailyMealForDate = async (
 ): Promise<DailyMealRecord> => {
   const existing = await getDailyMealForDate(userId, mealDate, planId);
   if (existing) {
-    if (planId && existing.plan_id !== planId) {
-      const { data, error } = await supabase
-        .from('fitarc_daily_meals')
-        .update({ plan_id: planId })
-        .eq('id', existing.id)
-        .select('id, user_id, plan_id, meal_plan_id, meal_date, completed')
-        .single();
-      if (error) throw error;
-      return data as DailyMealRecord;
-    }
     return existing;
   }
 
