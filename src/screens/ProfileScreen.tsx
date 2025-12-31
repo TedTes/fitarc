@@ -11,6 +11,8 @@ import {
   Modal,
   Pressable,
   Image,
+  Linking,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, TrainingSplit, EatingMode, ExperienceLevel } from '../types/domain';
@@ -86,6 +88,27 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [defaultModalVisible, setDefaultModalVisible] = useState(false);
   const [savingDefaultId, setSavingDefaultId] = useState<string | null>(null);
   const [removingDefaultId, setRemovingDefaultId] = useState<string | null>(null);
+  const [termsModalVisible, setTermsModalVisible] = useState(false);
+  const appVersion = '1.0.0';
+
+  const handleSendFeedback = useCallback(async () => {
+    const subject = encodeURIComponent('Fitarc Feedback');
+    const body = encodeURIComponent(
+      `App version: ${appVersion}\nPlatform: ${Platform.OS} ${Platform.Version}\nUser ID: ${user.id}\n\nFeedback:\n`
+    );
+    const mailtoUrl = `mailto:tedtfu@gmail.com?subject=${subject}&body=${body}`;
+    try {
+      const canOpen = await Linking.canOpenURL(mailtoUrl);
+      if (!canOpen) {
+        Alert.alert('Unable to open mail app', 'Please email tedtfu@gmail.com.');
+        return;
+      }
+      await Linking.openURL(mailtoUrl);
+    } catch (error) {
+      console.error('Failed to open mail client', error);
+      Alert.alert('Unable to open mail app', 'Please email tedtfu@gmail.com.');
+    }
+  }, [appVersion, user.id]);
 
   const persistProfile = useCallback(
     (options?: { showErrors?: boolean }) => {
@@ -855,7 +878,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <Text style={styles.settingValue}>1.0.0</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingRow}>
+            <TouchableOpacity style={styles.settingRow} onPress={() => setTermsModalVisible(true)}>
               <View style={styles.settingLeft}>
                 <Text style={styles.settingIcon}>📖</Text>
                 <Text style={styles.settingLabel}>Terms & Privacy</Text>
@@ -863,7 +886,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <Text style={styles.settingChevron}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingRow}>
+            <TouchableOpacity style={styles.settingRow} onPress={handleSendFeedback}>
               <View style={styles.settingLeft}>
                 <Text style={styles.settingIcon}>💬</Text>
                 <Text style={styles.settingLabel}>Send Feedback</Text>
@@ -929,6 +952,45 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     );
                   })
                 )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={termsModalVisible}
+          onRequestClose={() => setTermsModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <Pressable style={styles.modalBackdrop} onPress={() => setTermsModalVisible(false)} />
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <View style={styles.modalHeaderRow}>
+                <Text style={styles.modalTitle}>Terms & Privacy</Text>
+                <TouchableOpacity onPress={() => setTermsModalVisible(false)}>
+                  <Text style={styles.closeButtonText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.termsBody} showsVerticalScrollIndicator={false}>
+                <Text style={styles.termsHeading}>Terms of Service</Text>
+                <Text style={styles.termsText}>
+                  By using Fitarc, you agree to use the app responsibly and understand that
+                  training guidance is for informational purposes only. Use movements
+                  that match your experience level, stop if something feels wrong, and
+                  adjust volume or intensity as needed.
+                </Text>
+                <Text style={styles.termsHeading}>Privacy Policy</Text>
+                <Text style={styles.termsText}>
+                  We collect account details and workout/meal activity to personalize your
+                  plan. Your data is stored securely and used only to provide core features
+                  of the app. We do not sell personal data.
+                </Text>
+                <Text style={styles.termsHeading}>Contact</Text>
+                <Text style={styles.termsText}>
+                  For questions or data requests, contact support at tedtfu@gmail.com.
+                </Text>
               </ScrollView>
             </View>
           </View>
@@ -1257,12 +1319,9 @@ const styles = StyleSheet.create({
   },
   modalSheet: {
     backgroundColor: '#0F1224',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 32,
-    maxHeight: '75%',
+    marginBottom: 30,
+    height: '60%',
   },
   modalHandle: {
     alignSelf: 'center',
@@ -1282,6 +1341,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
+    marginBottom: 20
   },
   modalSearchInput: {
     backgroundColor: '#151932',
@@ -1295,6 +1355,21 @@ const styles = StyleSheet.create({
   },
   modalList: {
     maxHeight: '70%',
+  },
+  termsBody: {
+    maxHeight: '70%',
+  },
+  termsHeading: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  termsText: {
+    color: '#A0A3BD',
+    fontSize: 13,
+    lineHeight: 20,
   },
   modalListItem: {
     flexDirection: 'row',
