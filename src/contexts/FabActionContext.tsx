@@ -3,7 +3,7 @@ import React, { createContext, useCallback, useContext, useMemo, useState } from
 export type FabActionConfig = {
   label: string;
   icon: string;
-  colors: readonly string[];
+  colors: readonly [string, string, ...string[]];
   iconColor: string;
   labelColor: string;
   onPress: () => void;

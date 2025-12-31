@@ -61,9 +61,16 @@ const ACTIVITY_TOTAL_DAYS = 84;
 const DAYS_PER_ACTIVITY_COLUMN = 7;
 const ACTIVITY_GAP = 6;
 
+const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
+
 const formatBodyPartList = (parts: MuscleGroup[]): string => {
   if (!parts.length) return 'Full Body';
-  return parts.map((part) => getBodyPartLabel(part)).join(' • ');
+  return parts
+    .map((part) => {
+      const key = part.toLowerCase();
+      return KNOWN_BODY_PARTS.has(key) ? getBodyPartLabel(key as any) : part;
+    })
+    .join(' • ');
 };
 
 const getGreetingMessage = () => {
@@ -99,7 +106,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onProfilePress,
   onStartPhase,
   onToggleWorkoutExercise,
-  onCreateSession,
+  onCreateSession: _onCreateSession,
   onCompleteAllToday,
 }) => {
   const { setFabAction } = useFabAction();
@@ -315,7 +322,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     mealsByType,
     isLoading: isMealsLoading,
     isMutating: isMealsMutating,
-    error: todayMealsError,
+    error: _todayMealsError,
     toggleDayCompleted,
     toggleMealTypeCompleted,
   } = useTodayMeals(
@@ -854,7 +861,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </View>
       ) : (
         <View style={styles.verticalList}>
-          {sortedWorkoutCards.map((exercise, index) => {
+          {sortedWorkoutCards.map((exercise) => {
             const isMarked = isExerciseMarked(exercise);
             const cardKey = `${todayStr}-${getExerciseKey(exercise)}`;
             const scaleAnim = getExerciseCardAnimation(cardKey);

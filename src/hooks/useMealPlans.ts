@@ -43,7 +43,9 @@ export const useMealPlans = (
       }
       const data = await fetchMealPlansForRange(userId, from, to, planId ?? undefined);
       const key = buildKey(userId, from, to, planId);
-      cache.set(key, data);
+      if (key) {
+        cache.set(key, data);
+      }
       setPlans(data);
     } catch (err: any) {
       setError(err?.message || 'Unable to load meal plans');

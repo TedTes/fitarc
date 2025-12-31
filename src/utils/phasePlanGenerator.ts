@@ -1,7 +1,7 @@
 import { PhasePlan, User } from '../types/domain';
 
 export const generatePhase = (
-  user: User,
+  _user: User,
   currentLevelId: number,
   targetLevelId: number
 ): PhasePlan => {

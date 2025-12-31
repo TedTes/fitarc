@@ -14,7 +14,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAppState } from './src/hooks';
-import { FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
+import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import { 
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
@@ -194,14 +194,7 @@ const AnimatedTabButton: React.FC<{
 
 // Animated FAB component
 const AnimatedFAB: React.FC<{
-  config: {
-    icon: string;
-    label: string;
-    colors: string[];
-    iconColor: string;
-    labelColor: string;
-    onPress: () => void;
-  } | null;
+  config: FabActionConfig | null;
   popAnim: Animated.Value;
 }> = ({ config, popAnim }) => {
   const scaleAnim = useRef(new Animated.Value(0)).current;
@@ -777,8 +770,9 @@ function AppContent() {
     );
   }
 
-  const shouldShowOnboarding = 
-    onboardingStep === 'current_physique' || 
+  const shouldShowOnboarding =
+    onboardingStep === 'profile' ||
+    onboardingStep === 'current_physique' ||
     onboardingStep === 'target_physique';
 
   if (shouldShowOnboarding) {
@@ -843,7 +837,6 @@ function AppContent() {
         <Tab.Navigator
           screenOptions={{
             headerShown: false,
-            animationEnabled: true,
             lazy: false,
             tabBarStyle: {
               display: 'none',

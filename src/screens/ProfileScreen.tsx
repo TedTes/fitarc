@@ -37,7 +37,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   user,
   onSave,
   onClose,
-  onChangeCurrentLevel,
+  onChangeCurrentLevel: _onChangeCurrentLevel,
   onChangeTargetLevel,
   onLogout,
 }) => {

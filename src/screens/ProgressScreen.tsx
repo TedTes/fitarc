@@ -126,7 +126,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const scrollY = useRef(new Animated.Value(0)).current;
   const volumeCardRef = useRef<View | null>(null);
 
-  const [activeMetrics, setActiveMetrics] = useState<MetricType[]>(['volume', 'strength', 'movement']);
+  const [activeMetrics] = useState<MetricType[]>(['volume', 'strength', 'movement']);
   const [showAllVolume, setShowAllVolume] = useState(false);
   const [showAllStrength, setShowAllStrength] = useState(false);
   const [trackingModalVisible, setTrackingModalVisible] = useState(false);
@@ -385,7 +385,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     return [...filled, ...fallback];
   }, [hasStrengthSnapshots, strengthTrendsRaw, preferredWeightsByKey, user.trackingPreferences?.lifts]);
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs, labelMaps);
-  const nonZeroWeeklyVolume = weeklyVolume.filter((entry) => entry.sets > 0);
   const movementBalance = buildMovementBalanceSummary(workoutLogs, labelMaps);
 
   const selectedMuscles = Object.entries(user.trackingPreferences?.muscles ?? {}).map(
@@ -497,7 +496,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       const pageY = event.nativeEvent.pageY;
       const node = volumeCardRef.current;
       if (!node) return;
-      node.measureInWindow((x, y, width, height) => {
+      node.measureInWindow((_x, y, _width, height) => {
         if (pageY < y || pageY > y + height) {
           collapseVolumeIfExpanded();
         }
@@ -733,7 +732,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             collapseVolumeIfExpanded();
             setShowAllStrength(false);
           }}
-          onTouchStartCapture={handleContentTap}
+          onTouchStart={handleContentTap}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
             { useNativeDriver: true }

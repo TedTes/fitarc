@@ -42,7 +42,7 @@ export const PhaseCompleteScreen: React.FC<PhaseCompleteScreenProps> = ({
         </View>
         <View style={styles.statRow}>
           <Text style={styles.statLabel}>Phase Type:</Text>
-          <Text style={styles.statValue}>{phase.phaseType}</Text>
+          <Text style={styles.statValue}>{phase.goalType ?? 'General'}</Text>
         </View>
       </View>
 

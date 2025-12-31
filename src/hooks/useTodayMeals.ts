@@ -192,7 +192,7 @@ export const useTodayMeals = (
   const dateKey = date ? formatLocalDateYMD(date) : undefined;
   const cacheKey =
     enabled && userId && dateKey ? `${userId}:${dateKey}:${planId ?? 'none'}` : undefined;
-  const subscriberIdRef = useRef<symbol>();
+  const subscriberIdRef = useRef<symbol | null>(null);
 
   const [mealsState, setMealsState] = useState<TodayMealsResult>(() =>
     cacheKey && cache.has(cacheKey) ? cache.get(cacheKey)! : emptyMealsState()
@@ -200,6 +200,27 @@ export const useTodayMeals = (
   const [isLoading, setIsLoading] = useState<boolean>(!!cacheKey && !cache.has(cacheKey));
   const [isMutating, setIsMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const updateMealsState = useCallback(
+    (
+      updater:
+        | TodayMealsResult
+        | ((prev: TodayMealsResult) => TodayMealsResult)
+    ) => {
+      setMealsState((prev) => {
+        const next =
+          typeof updater === 'function'
+            ? (updater as (p: TodayMealsResult) => TodayMealsResult)(prev)
+            : updater;
+        if (cacheKey) {
+          cache.set(cacheKey, next);
+          notifyListeners(cacheKey, next, subscriberIdRef.current ?? undefined);
+        }
+        return next;
+      });
+    },
+    [cacheKey]
+  );
 
   const loadMeals = useCallback(async () => {
     if (!enabled || !userId || !dateKey) return;
@@ -259,26 +280,6 @@ export const useTodayMeals = (
     return created;
   }, [dateKey, mealsState.dailyMeal, planId, updateMealsState, userId]);
 
-  const updateMealsState = useCallback(
-    (
-      updater:
-        | TodayMealsResult
-        | ((prev: TodayMealsResult) => TodayMealsResult)
-    ) => {
-      setMealsState((prev) => {
-        const next =
-          typeof updater === 'function'
-            ? (updater as (p: TodayMealsResult) => TodayMealsResult)(prev)
-            : updater;
-        if (cacheKey) {
-          cache.set(cacheKey, next);
-          notifyListeners(cacheKey, next, subscriberIdRef.current);
-        }
-        return next;
-      });
-    },
-    [cacheKey]
-  );
 
   const addEntry = useCallback(
     async ({ mealType, foodName, calories, protein, carbs, fats }: AddEntryPayload) => {

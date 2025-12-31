@@ -25,18 +25,16 @@ export const toggleExerciseCompletion = (
   session: WorkoutSessionEntry,
   exerciseName: string
 ): WorkoutSessionEntry => {
+  const nextExercises = session.exercises.map((exercise) =>
+    exercise.name === exerciseName
+      ? { ...exercise, completed: !exercise.completed }
+      : exercise
+  );
+  const isCompleted = nextExercises.every((exercise) => exercise.completed);
   return {
     ...session,
-    exercises: session.exercises.map((exercise) =>
-      exercise.name === exerciseName
-        ? { ...exercise, completed: !exercise.completed }
-        : exercise
-    ),
-    completedAt: session.exercises.every((exercise) =>
-      exercise.name === exerciseName ? !exercise.completed : exercise.completed
-    )
-      ? new Date().toISOString()
-      : session.completedAt,
+    exercises: nextExercises,
+    completed: isCompleted,
   };
 };
 
@@ -66,8 +64,14 @@ export const sessionToWorkoutLog = (session: WorkoutSessionEntry): WorkoutLog =>
     .filter((exercise) => exercise.completed)
     .forEach((exercise) => {
       exercise.bodyParts.forEach((part) => {
-        muscleVolume[part] += BASE_SETS_PER_EXERCISE;
-        BODY_PART_TO_MOVEMENT[part]?.forEach((pattern) => {
+        const normalized = part.toLowerCase() as BodyPart;
+        if ((muscleVolume as Record<string, number>)[part] === undefined) {
+          (muscleVolume as Record<string, number>)[part] = 0;
+        }
+        (muscleVolume as Record<string, number>)[part] += BASE_SETS_PER_EXERCISE;
+        const patterns = BODY_PART_TO_MOVEMENT[normalized];
+        if (!patterns) return;
+        patterns.forEach((pattern: MovementPattern) => {
           movementPatterns[pattern] += 1;
         });
       });

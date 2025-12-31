@@ -485,7 +485,7 @@ export const useAppState = () => {
   );
 
   const deleteWorkoutExercise = useCallback(
-    async (sessionId: string, sessionExerciseId: string) => {
+    async (_sessionId: string, sessionExerciseId: string) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
       await deleteWorkoutSessionExercise(sessionExerciseId);

@@ -51,7 +51,7 @@ export const fetchExerciseCatalog = async (): Promise<ExerciseCatalogEntry[]> =>
     throw error;
   }
 
-  const rows = (data as ExerciseRow[]) || [];
+  const rows = (data as unknown as ExerciseRow[]) || [];
 
   return rows.map((exercise) => {
     const primary: string[] = [];
@@ -638,7 +638,7 @@ type UpdateSessionExercisesInput = {
 };
 
 export const updateSessionExercises = async ({
-  sessionId,
+  sessionId: _sessionId,
   exercises,
 }: UpdateSessionExercisesInput): Promise<void> => {
   for (let index = 0; index < exercises.length; index += 1) {

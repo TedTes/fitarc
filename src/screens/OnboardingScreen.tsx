@@ -32,6 +32,9 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }
       age: ageNum,
       heightCm: heightNum,
       experienceLevel,
+      currentPhysiqueLevel: 1,
+      trainingSplit: 'full_body',
+      eatingMode: 'maintenance',
       createdAt: new Date().toISOString(),
     };
 

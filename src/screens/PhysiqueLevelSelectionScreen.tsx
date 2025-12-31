@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-
-const { width } = Dimensions.get('window');
 
 type PhysiqueLevel = {
   id: number;
@@ -44,7 +42,7 @@ type PhysiqueLevelSelectionScreenProps = {
 };
 
 export const PhysiqueLevelSelectionScreen: React.FC<PhysiqueLevelSelectionScreenProps> = ({
-  sex,
+  sex: _sex,
   onSelect,
 }) => {
   const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
