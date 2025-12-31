@@ -115,7 +115,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [localCompletionOverrides, setLocalCompletionOverrides] = useState<Record<string, boolean>>(
     {}
   );
-  const pendingToggleRef = useRef<Map<string, number>>(new Map());
+  const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastActiveTabRef = useRef<'workouts' | 'meals'>('workouts');
   
@@ -149,6 +149,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const displayExercises = todaySession?.exercises ?? [];
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (exercise.id) return exercise.id;
+    if (exercise.exerciseId && exercise.displayOrder !== undefined && exercise.displayOrder !== null) {
+      return `${exercise.exerciseId}-${exercise.displayOrder}`;
+    }
     if (exercise.exerciseId) return exercise.exerciseId;
     const orderSuffix = exercise.displayOrder ?? '';
     const parts = [
@@ -590,18 +593,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     pending.clear();
     await Promise.all(
       entries
-        .filter(([, count]) => count % 2 === 1)
-        .map(([exerciseName]) => onToggleWorkoutExercise(todayStr, exerciseName))
+        .filter(([, payload]) => payload.count % 2 === 1)
+        .map(([, payload]) => onToggleWorkoutExercise(todayStr, payload.name))
     );
   }, [onToggleWorkoutExercise, todayStr]);
 
-  const handleToggleExercise = (exerciseName: string) => {
+  const handleToggleExercise = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (!canLogWorkouts) return;
     setLocalCompletionOverrides((prev) => {
-      const target = displayExercises.find((exercise) => exercise.name === exerciseName);
-      if (!target) return prev;
-      const key = getExerciseKey(target);
-      const current = prev[key] ?? target.completed;
+      const key = getExerciseKey(exercise);
+      const current = prev[key] ?? exercise.completed;
       const nextValue = !current;
       if (nextValue) {
         pendingOrderRef.current = pendingOrderRef.current.filter((entry) => entry !== key);
@@ -614,7 +615,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           pendingOrderRef.current.push(key);
         }
       }
-      if (nextValue === target.completed) {
+      if (nextValue === exercise.completed) {
         const { [key]: _removed, ...rest } = prev;
         return rest;
       }
@@ -622,7 +623,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     });
 
     const pending = pendingToggleRef.current;
-    pending.set(exerciseName, (pending.get(exerciseName) ?? 0) + 1);
+    const entry = pending.get(getExerciseKey(exercise));
+    pending.set(getExerciseKey(exercise), {
+      name: exercise.name,
+      count: (entry?.count ?? 0) + 1,
+    });
     if (toggleFlushTimeoutRef.current) {
       clearTimeout(toggleFlushTimeoutRef.current);
     }
@@ -631,11 +636,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }, 700);
   };
 
-  const handleToggleExerciseAnimated = (exerciseName: string) => {
-    const target = displayExercises.find((ex) => ex.name === exerciseName);
-    if (!target) return;
-
-    const key = `${todayStr}-${getExerciseKey(target)}`;
+  const handleToggleExerciseAnimated = (exercise: WorkoutSessionEntry['exercises'][number]) => {
+    const key = `${todayStr}-${getExerciseKey(exercise)}`;
     animateExerciseCompletion(key);
 
     Animated.sequence([
@@ -653,7 +655,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       }),
     ]).start();
     
-    handleToggleExercise(exerciseName);
+    handleToggleExercise(exercise);
   };
 
   useEffect(() => {
@@ -867,7 +869,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <TouchableOpacity
                   activeOpacity={0.8}
                   disabled={!canLogWorkouts}
-                  onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise.name)}
+                  onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise)}
                 >
                   <LinearGradient
                     colors={CARD_GRADIENT_DEFAULT}

@@ -21,6 +21,7 @@ import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { useExerciseDefaults } from '../hooks/useExerciseDefaults';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import * as ImagePicker from 'expo-image-picker';
+import Constants from 'expo-constants';
 import { uploadUserAvatar } from '../services/userProfileService';
 
 type ProfileScreenProps = {
@@ -89,7 +90,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [savingDefaultId, setSavingDefaultId] = useState<string | null>(null);
   const [removingDefaultId, setRemovingDefaultId] = useState<string | null>(null);
   const [termsModalVisible, setTermsModalVisible] = useState(false);
-  const appVersion = '1.0.0';
+  const appVersion =
+    Constants.expoConfig?.version ??
+    (Constants as any).manifest?.version ??
+    '1.0.0';
 
   const handleSendFeedback = useCallback(async () => {
     const subject = encodeURIComponent('Fitarc Feedback');

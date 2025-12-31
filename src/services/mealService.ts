@@ -324,7 +324,13 @@ export const ensureDailyMealForDate = async (
     .select('id, user_id, plan_id, meal_plan_id, meal_date, completed')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if ((error as any).code === '23505') {
+      const fallback = await getDailyMealForDate(userId, mealDate);
+      if (fallback) return fallback;
+    }
+    throw error;
+  }
   return data as DailyMealRecord;
 };
 
