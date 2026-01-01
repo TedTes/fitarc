@@ -325,7 +325,7 @@ export default function Home() {
                 <a href="#" className="footer-link">Features</a>
                 <a href="#" className="footer-link">About</a>
                 <a href="#" className="footer-link">Support</a>
-                <a href="#" className="footer-link">Privacy</a>
+                <a href="/privacy" className="footer-link">Privacy</a>
               </div>
               <div className="footer-copyright">
                 © 2025 Fitarc. Built for discipline.
