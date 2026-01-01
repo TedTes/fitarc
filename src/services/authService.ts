@@ -63,7 +63,10 @@ export const getCurrentUser = async (): Promise<AuthUser | null> => {
   const { data: { user }, error } = await supabase.auth.getUser();
 
   if (error) {
-    console.error('Error getting current user:', error);
+    const message = (error as Error).message ?? '';
+    if (!message.toLowerCase().includes('auth session missing')) {
+      console.error('Error getting current user:', error);
+    }
     return null;
   }
 
@@ -77,7 +80,10 @@ export const getSession = async () => {
   const { data: { session }, error } = await supabase.auth.getSession();
 
   if (error) {
-    console.error('Error getting session:', error);
+    const message = (error as Error).message ?? '';
+    if (!message.toLowerCase().includes('auth session missing')) {
+      console.error('Error getting session:', error);
+    }
     return null;
   }
 
