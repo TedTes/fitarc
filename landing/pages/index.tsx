@@ -5,7 +5,7 @@ import Head from 'next/head'
 export default function Home() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const carouselRef = useRef<HTMLDivElement>(null)
-  const autoScrollRef = useRef<NodeJS.Timeout | null>(null)
+  const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const screenshots = [
     { src: '/images/workouts.png', label: 'Workout Tracking', alt: 'Workouts' },
