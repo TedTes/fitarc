@@ -139,6 +139,7 @@ button {
   position: relative;
 }
 
+
 .hero-frame {
   border-radius: 20px;
   overflow: hidden;
@@ -150,6 +151,18 @@ button {
   position: relative;
   transform: perspective(900px) rotateY(-15deg) rotateZ(12deg);
   transform-origin: left bottom;
+}
+
+.hero-frame::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 92px;
+  backdrop-filter: blur(12px);
+  background: #0A0E27;
+  z-index: 2;
 }
 
 .hero-caption {
