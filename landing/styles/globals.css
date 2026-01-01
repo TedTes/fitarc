@@ -101,18 +101,42 @@ button {
 .hero-copy {
   max-width: 560px;
   margin-right: -16px;
+  position: relative;
 }
 
-.hero-shot {
+.hero-copy-content {
+  position: relative;
+  z-index: 3;
+}
+
+.hero-visual {
+  position: relative;
+}
+.hero-images {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-  margin-top: -48px;
-  margin-left: -40px;
-  margin-right: 40px;
-  margin-bottom: 24px;
-  padding-bottom: 72px;
+  justify-content: flex-start;
+  align-items: flex-start;
+  width: min(480px, 100%);
+  margin-left: 0;
+  z-index:-1;
+ 
+}
+
+.hero-meals {
+  position: relative;
+  pointer-events: none;
+}
+
+.hero-meals-frame {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 12, 26, 0.8);
+  box-shadow: var(--shadow);
+  width: 300px;
+  height: 620px;
+  position: relative;
 }
 
 .hero-frame {
@@ -571,11 +595,35 @@ button {
     font-size: 2.4rem;
   }
 
+  .hero-images {
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    width: 100%;
+  }
+
   .hero-shot {
     align-items: flex-start;
   }
 
+  .hero-visual {
+    min-height: 0;
+  }
+
   .phone-frame {
+    width: 260px;
+    height: 560px;
+  }
+
+  .hero-meals {
+    align-items: flex-start;
+    right: auto;
+    top: auto;
+    left: auto;
+    margin-left: 0;
+  }
+
+  .hero-meals-frame {
     width: 260px;
     height: 560px;
   }
