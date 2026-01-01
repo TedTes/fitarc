@@ -205,7 +205,7 @@ export default function Home() {
               <div className="hero-meals">
                   <div className="hero-meals-frame">
                     <Image
-                      src="/images/dashboard_meals.png"
+                      src="/images/dashboard_diet.png"
                       alt="Fitarc meals dashboard preview"
                       fill
                       sizes="(max-width: 720px) 260px, 300px"
