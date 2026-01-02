@@ -20,6 +20,9 @@ export const signUp = async ({ email, password }: SignUpCredentials) => {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
+    options: {
+      emailRedirectTo: 'fitarc://auth',
+    },
   });
 
   if (error) {

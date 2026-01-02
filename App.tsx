@@ -9,6 +9,7 @@ import {
   Modal,
   Pressable,
   Alert,
+  Linking,
 } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -51,6 +52,7 @@ import {
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
 import { fetchWorkoutSessionEntries } from './src/services/workoutService';
+import { supabase } from './src/lib/supabaseClient';
 
 type RootTabParamList = {
   Home: undefined;
@@ -68,6 +70,18 @@ const TAB_ICONS: Record<keyof RootTabParamList, { default: IoniconName; active: 
   Workouts: { default: 'barbell-outline', active: 'barbell' },
   Menu: { default: 'fast-food-outline', active: 'fast-food' },
   Progress: { default: 'stats-chart-outline', active: 'stats-chart' },
+};
+
+const linking = {
+  prefixes: ['fitarc://'],
+  config: {
+    screens: {
+      Home: 'home',
+      Workouts: 'workouts',
+      Menu: 'menu',
+      Progress: 'progress',
+    },
+  },
 };
 
 type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'complete';
@@ -452,6 +466,44 @@ function AppContent() {
       navigationRef.navigate('Home');
     }
   }, [currentRouteName, navigationRef, showPlanTabs]);
+
+  useEffect(() => {
+    const handleDeepLink = async (url: string | null) => {
+      if (!url) return;
+      const parsed = Linking.parse(url);
+      const code = parsed.queryParams?.code as string | undefined;
+      const accessToken = parsed.queryParams?.access_token as string | undefined;
+      const refreshToken = parsed.queryParams?.refresh_token as string | undefined;
+
+      try {
+        if (code) {
+          await supabase.auth.exchangeCodeForSession(code);
+        } else if (accessToken && refreshToken) {
+          await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+        }
+      } catch (error) {
+        Alert.alert(
+          'Authentication failed',
+          'We could not complete sign-in from the confirmation link.'
+        );
+      }
+    };
+
+    Linking.getInitialURL().then((url) => {
+      void handleDeepLink(url);
+    });
+
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      void handleDeepLink(url);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   const waitForInitialSessions = useCallback(async (
     userId: string,
@@ -851,6 +903,7 @@ function AppContent() {
     <View style={styles.appShell}>
       <NavigationContainer
         ref={navigationRef}
+        linking={linking}
         onReady={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
         onStateChange={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
       >
