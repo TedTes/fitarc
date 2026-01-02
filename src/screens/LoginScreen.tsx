@@ -29,6 +29,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  const getLoginErrorMessage = (error: any) => {
+    const rawMessage = (error?.message ?? '').toString();
+    const message = rawMessage.toLowerCase();
+
+    if (message.includes('invalid login credentials')) {
+      return 'Incorrect email or password. Please try again.';
+    }
+    if (message.includes('email not confirmed')) {
+      return 'Please confirm your email before signing in.';
+    }
+    if (message.includes('user not found')) {
+      return 'No account found with that email. Create a new account?';
+    }
+    if (message.includes('network') || message.includes('timeout')) {
+      return 'Network issue. Please check your connection and try again.';
+    }
+
+    return rawMessage || 'Unable to sign in. Please check your credentials.';
+  };
+
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
       Alert.alert('Error', 'Please enter both email and password');
@@ -47,10 +67,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       await signIn({ email: email.trim().toLowerCase(), password });
       // Auth context will handle the user state update
     } catch (error: any) {
-      console.error('Login error:', error);
       Alert.alert(
         'Login Failed',
-        error.message || 'Unable to sign in. Please check your credentials.'
+        getLoginErrorMessage(error)
       );
     } finally {
       setIsLoading(false);

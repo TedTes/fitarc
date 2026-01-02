@@ -8,6 +8,7 @@ import {
   Animated,
   Modal,
   Pressable,
+  Alert,
 } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -565,7 +566,7 @@ function AppContent() {
     await handleStartNewArc(targetLevelId);
   };
 
-  const handleProfileSetupComplete = (profileData: {
+  const handleProfileSetupComplete = async (profileData: {
     name: string;
     sex: 'male' | 'female' | 'other';
     age: number;
@@ -574,23 +575,36 @@ function AppContent() {
     trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
     eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
   }) => {
-    setTempProfileData(profileData);
-    if (authUser) {
-      const newUser: User = {
-        id: authUser.id,
-        name: profileData.name,
-        sex: profileData.sex,
-        age: profileData.age,
-        heightCm: profileData.heightCm,
-        experienceLevel: profileData.experienceLevel,
-        trainingSplit: profileData.trainingSplit,
-        eatingMode: profileData.eatingMode,
-        currentPhysiqueLevel: 1,
-        createdAt: new Date().toISOString(),
-      };
-      updateUser(newUser);
-      void saveUserProfile(newUser);
+    if (!authUser) {
+      Alert.alert('Error', 'Unable to complete setup. Please sign in again.');
+      return;
     }
+
+    const newUser: User = {
+      id: authUser.id,
+      name: profileData.name,
+      sex: profileData.sex,
+      age: profileData.age,
+      heightCm: profileData.heightCm,
+      experienceLevel: profileData.experienceLevel,
+      trainingSplit: profileData.trainingSplit,
+      eatingMode: profileData.eatingMode,
+      currentPhysiqueLevel: 1,
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      await saveUserProfile(newUser);
+    } catch (error) {
+      Alert.alert(
+        'Profile save failed',
+        'We could not save your profile. Please try again.'
+      );
+      return;
+    }
+
+    updateUser(newUser);
+    setTempProfileData(profileData);
     setOnboardingStep('current_physique');
   };
 
@@ -599,10 +613,12 @@ function AppContent() {
     if (!state) return;
     if (state.currentPhase) {
       setBootstrapComplete(true);
+      setOnboardingStep('complete');
       return;
     }
     let cancelled = false;
     setBootstrapComplete(false);
+    setOnboardingStep('complete');
 
     const bootstrapUser = async () => {
       try {
@@ -632,6 +648,10 @@ function AppContent() {
         }
       } catch (err) {
         console.error('Failed to bootstrap user', err);
+        Alert.alert(
+          'Profile load failed',
+          'We could not load your profile. Please check your connection and try again.'
+        );
       } finally {
         if (!cancelled) {
           setBootstrapComplete(true);
