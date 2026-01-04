@@ -10,6 +10,7 @@ import {
   Pressable,
   Alert,
   Linking,
+  AppState,
 } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -37,7 +38,7 @@ import {
   WorkoutSessionEntry,
 } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
-import { fetchUserProfile, saveUserProfile, updateTrackingPreferences } from './src/services/userProfileService';
+import { fetchUserProfile, saveUserProfile, updateTrackingPreferences, getSignedAvatarUrl } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/dashboardService';
 import { addDays, formatLocalDateYMD, parseYMDToDate } from './src/utils/date';
 import {
@@ -467,6 +468,25 @@ function AppContent() {
       navigationRef.navigate('Home');
     }
   }, [currentRouteName, navigationRef, showPlanTabs]);
+
+  useEffect(() => {
+    const refreshAvatar = async () => {
+      if (!state?.user?.avatarPath) return;
+      const signedUrl = await getSignedAvatarUrl(state.user.avatarPath);
+      if (!signedUrl) return;
+      updateUser({ ...state.user, avatarUrl: signedUrl });
+    };
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshAvatar();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [state?.user, updateUser]);
 
   useEffect(() => {
     const handleDeepLink = async (url: string | null) => {

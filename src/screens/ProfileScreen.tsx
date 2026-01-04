@@ -56,6 +56,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     user.currentPhysiqueLevel ?? 1
   );
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(user.avatarUrl);
+  const [avatarPath, setAvatarPath] = useState<string | undefined>(user.avatarPath);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const avatarInitials = useMemo(
     () =>
@@ -189,6 +190,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         eatingMode,
         currentPhysiqueLevel,
         avatarUrl,
+        avatarPath,
       };
 
       onSave(updatedUser);
@@ -215,8 +217,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         Alert.alert('Permission needed', 'Allow access to photos to upload an avatar.');
         return;
       }
+      const mediaTypes =
+        (ImagePicker as any).MediaType?.Images ?? ImagePicker.MediaTypeOptions.Images;
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes,
         allowsEditing: true,
         quality: 0.8,
         aspect: [1, 1],
@@ -225,8 +229,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       const asset = result.assets?.[0];
       if (!asset?.uri) return;
       setIsUploadingAvatar(true);
-      const url = await uploadUserAvatar(user.id, asset.uri);
-      setAvatarUrl(url);
+      const { path, signedUrl } = await uploadUserAvatar(user.id, asset.uri);
+      setAvatarPath(path);
+      setAvatarUrl(signedUrl);
       onSave({
         ...user,
         sex,
@@ -236,7 +241,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         trainingSplit,
         eatingMode,
         currentPhysiqueLevel,
-        avatarUrl: url,
+        avatarUrl: signedUrl,
+        avatarPath: path,
       });
     } catch (err: any) {
       Alert.alert('Upload failed', err?.message || 'Unable to upload avatar.');

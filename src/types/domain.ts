@@ -78,6 +78,7 @@ export type User = {
   trainingSplit: TrainingSplit;
   eatingMode: EatingMode;
   avatarUrl?: string;
+  avatarPath?: string;
   trackingPreferences?: TrackingPreferences;
   createdAt: string;
 };

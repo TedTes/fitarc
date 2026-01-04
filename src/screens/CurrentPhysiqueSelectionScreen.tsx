@@ -83,9 +83,11 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
           </View>
 
           <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
+            {onCancel ? (
+              <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <TouchableOpacity
               style={[styles.continueButton, !selectedLevel && styles.continueButtonDisabled]}

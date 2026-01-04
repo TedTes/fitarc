@@ -1,4 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Buffer } from 'buffer';
 import { User, ExperienceLevel, TrackingPreferences } from '../types/domain';
 
 const PROFILE_TABLE = process.env.EXPO_PUBLIC_PROFILE_TABLE || 'fitarc_user_profiles';
@@ -40,20 +42,36 @@ const convertAgeToBirthDate = (age: number) => {
   return birthDate.toISOString().split('T')[0];
 };
 
-const mapRowToUser = (row: RemoteProfileRow): User => ({
-  id: row.user_id,
-  name: row.name ?? undefined,
-  sex: row.gender ?? 'male',
-  age: calculateAgeFromBirthDate(row.birth_date),
-  heightCm: row.height_cm ?? 0,
-  experienceLevel: row.training_experience ?? 'beginner',
-  currentPhysiqueLevel: row.current_physique_level ?? 1,
-  trainingSplit: row.training_split ?? 'full_body',
-  eatingMode: row.eating_mode ?? 'maintenance',
-  avatarUrl: row.avatar_url ?? undefined,
-  trackingPreferences: row.tracking_preferences ?? undefined,
-  createdAt: row.created_at,
-});
+const mapRowToUser = (row: RemoteProfileRow): User => {
+  const storedAvatar = row.avatar_url ?? undefined;
+  const isUrl = typeof storedAvatar === 'string' && storedAvatar.startsWith('http');
+  return {
+    id: row.user_id,
+    name: row.name ?? undefined,
+    sex: row.gender ?? 'male',
+    age: calculateAgeFromBirthDate(row.birth_date),
+    heightCm: row.height_cm ?? 0,
+    experienceLevel: row.training_experience ?? 'beginner',
+    currentPhysiqueLevel: row.current_physique_level ?? 1,
+    trainingSplit: row.training_split ?? 'full_body',
+    eatingMode: row.eating_mode ?? 'maintenance',
+    avatarUrl: isUrl ? storedAvatar : undefined,
+    avatarPath: isUrl ? undefined : storedAvatar,
+    trackingPreferences: row.tracking_preferences ?? undefined,
+    createdAt: row.created_at,
+  };
+};
+
+export const getSignedAvatarUrl = async (path: string): Promise<string | undefined> => {
+  const { data, error } = await supabase.storage
+    .from('avatars')
+    .createSignedUrl(path, 60 * 60);
+  if (error) {
+    console.warn('Failed to create signed avatar URL', error);
+    return undefined;
+  }
+  return data?.signedUrl;
+};
 
 export const fetchUserProfile = async (userId: string): Promise<User | null> => {
   const { data, error } = await supabase
@@ -70,7 +88,11 @@ export const fetchUserProfile = async (userId: string): Promise<User | null> => 
     return null;
   }
   
-  return mapRowToUser(data as RemoteProfileRow);
+  const user = mapRowToUser(data as RemoteProfileRow);
+  if (user.avatarPath) {
+    user.avatarUrl = await getSignedAvatarUrl(user.avatarPath);
+  }
+  return user;
 };
 
 export const saveUserProfile = async (user: User): Promise<void> => {
@@ -84,7 +106,7 @@ export const saveUserProfile = async (user: User): Promise<void> => {
     training_split: user.trainingSplit ?? 'full_body',
     eating_mode: user.eatingMode ?? 'maintenance',
     current_physique_level: user.currentPhysiqueLevel ?? 1,
-    avatar_url: user.avatarUrl ?? null,
+    avatar_url: user.avatarPath ?? user.avatarUrl ?? null,
     created_at: user.createdAt,
   };
 
@@ -115,18 +137,26 @@ export const updateTrackingPreferences = async (
 export const uploadUserAvatar = async (
   userId: string,
   uri: string
-): Promise<string> => {
+): Promise<{ path: string; signedUrl?: string }> => {
   const fileExt = uri.split('.').pop() || 'jpg';
   const fileName = `${Date.now()}.${fileExt}`;
   const filePath = `${userId}/${fileName}`;
 
-  const response = await fetch(uri);
-  const blob = await response.blob();
+  const info = await FileSystem.getInfoAsync(uri);
+  if (!info.exists || !info.size) {
+    throw new Error('Avatar file is empty or missing.');
+  }
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const bytes = Buffer.from(base64, 'base64');
+  const normalizedExt = fileExt.toLowerCase();
+  const contentType = normalizedExt === 'jpg' ? 'image/jpeg' : `image/${normalizedExt}`;
 
   const { error: uploadError } = await supabase.storage
     .from('avatars')
-    .upload(filePath, blob, {
-      contentType: blob.type || 'image/jpeg',
+    .upload(filePath, bytes, {
+      contentType,
       upsert: true,
     });
 
@@ -134,6 +164,9 @@ export const uploadUserAvatar = async (
     throw uploadError;
   }
 
-  const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
-  return data.publicUrl;
+  const signedUrl = await getSignedAvatarUrl(filePath);
+  if (!signedUrl) {
+    throw new Error('Unable to generate avatar URL. Check storage policies.');
+  }
+  return { path: filePath, signedUrl };
 };
