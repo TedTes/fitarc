@@ -53,6 +53,7 @@ import {
 } from './src/services/phaseService';
 import { fetchWorkoutSessionEntries } from './src/services/workoutService';
 import { supabase } from './src/lib/supabaseClient';
+import { deleteAccount as deleteAccountService } from './src/services/accountService';
 
 type RootTabParamList = {
   Home: undefined;
@@ -568,7 +569,7 @@ function AppContent() {
         {
           name: `Arc ${new Date().getFullYear()}`,
           goalType: goalType ?? 'general',
-          startDate: new Date().toISOString().split('T')[0],
+          startDate: formatLocalDateYMD(new Date()),
           currentLevelId: currentLevel,
           targetLevelId,
         }
@@ -725,6 +726,22 @@ function AppContent() {
     loadMealPlansFromSupabase,
   ]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !bootstrapComplete) return;
+    if (!state?.user || state.currentPhase) return;
+    if (onboardingStep !== 'complete') return;
+    setTempProfileData({
+      sex: state.user.sex,
+      age: state.user.age,
+      heightCm: state.user.heightCm,
+      experienceLevel: state.user.experienceLevel,
+      trainingSplit: state.user.trainingSplit,
+      eatingMode: state.user.eatingMode,
+    });
+    setTempCurrentLevel(state.user.currentPhysiqueLevel);
+    setOnboardingStep('current_physique');
+  }, [bootstrapComplete, isAuthenticated, onboardingStep, state?.currentPhase, state?.user]);
+
   const handleStartPhaseFromDashboard = useCallback(() => {
     console.log('🎯 Create Plan clicked!');
     
@@ -795,6 +812,36 @@ function AppContent() {
     setOnboardingStep('profile');
   };
 
+  const handleDeleteAccount = async () => {
+    try {
+      await deleteAccountService();
+    } catch (error: any) {
+      Alert.alert(
+        'Delete failed',
+        error?.message || 'Unable to delete your account. Please try again.'
+      );
+      return;
+    }
+
+    try {
+      await signOutAuth();
+    } catch (error) {
+      console.error('Sign out failed', error);
+    }
+
+    try {
+      await clearAllData();
+    } catch (error) {
+      console.error('Failed to clear local data', error);
+    }
+
+    setProfileVisible(false);
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Home');
+    }
+    setOnboardingStep('profile');
+  };
+
   const closePhotoCapture = () => {
     setPhotoCaptureVisible(false);
     setPhotoCapturePhaseId(null);
@@ -858,13 +905,14 @@ function AppContent() {
     }
 
     if (onboardingStep === 'current_physique' && tempProfileData) {
+      const canCancel = Boolean(state?.currentPhase);
       return (
         <View style={styles.container}>
           <CurrentPhysiqueSelectionScreen 
             sex={tempProfileData.sex}
             currentLevelId={state.user?.currentPhysiqueLevel ?? 1}
             onSelectLevel={handleCurrentPhysiqueSelect}
-            onCancel={() => setOnboardingStep('complete')}
+            onCancel={canCancel ? () => setOnboardingStep('complete') : undefined}
           />
           <StatusBar style="light" />
         </View>
@@ -872,13 +920,14 @@ function AppContent() {
     }
 
     if (onboardingStep === 'target_physique' && tempCurrentLevel && tempProfileData) {
+      const canCancel = Boolean(state?.currentPhase);
       return (
         <View style={styles.container}>
           <TargetPhysiqueSelectionScreen 
             sex={tempProfileData.sex}
             currentLevelId={tempCurrentLevel}
             onSelectTarget={handleTargetPhysiqueSelect}
-            onCancel={() => setOnboardingStep('current_physique')}
+            onCancel={canCancel ? () => setOnboardingStep('current_physique') : undefined}
           />
           <StatusBar style="light" />
         </View>
@@ -1072,6 +1121,7 @@ function AppContent() {
               onSave={handleProfileSave}
               onClose={closeProfileSheet}
               onLogout={handleLogout}
+              onDeleteAccount={handleDeleteAccount}
               onChangeCurrentLevel={() => {
                 closeProfileSheet();
                 setTempProfileData({

@@ -10,6 +10,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  ActivityIndicator,
   Image,
   Linking,
   Platform,
@@ -31,6 +32,7 @@ type ProfileScreenProps = {
   onChangeCurrentLevel?: () => void;
   onChangeTargetLevel?: () => void;
   onLogout?: () => void;
+  onDeleteAccount?: () => Promise<void> | void;
 };
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
@@ -40,6 +42,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onChangeCurrentLevel: _onChangeCurrentLevel,
   onChangeTargetLevel,
   onLogout,
+  onDeleteAccount,
 }) => {
   const { headerStyle, contentStyle } = useScreenAnimation();
   const [name, setName] = useState(user.name ?? '');
@@ -90,6 +93,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [savingDefaultId, setSavingDefaultId] = useState<string | null>(null);
   const [removingDefaultId, setRemovingDefaultId] = useState<string | null>(null);
   const [termsModalVisible, setTermsModalVisible] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const appVersion =
     Constants.expoConfig?.version ??
     (Constants as any).manifest?.version ??
@@ -113,6 +118,46 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       Alert.alert('Unable to open mail app', 'Please email tedtfu@gmail.com.');
     }
   }, [appVersion, user.id]);
+
+  const confirmDeleteAccount = useCallback(() => {
+    if (!onDeleteAccount || isDeletingAccount) return;
+    Alert.alert(
+      'Delete account?',
+      'This will permanently delete your account and data. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setIsDeletingAccount(true);
+            setDeleteError(null);
+            try {
+              await onDeleteAccount();
+            } catch (err: any) {
+              setDeleteError(err?.message || 'Unable to delete your account. Please try again.');
+            } finally {
+              setIsDeletingAccount(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [isDeletingAccount, onDeleteAccount]);
+
+  const handleDeleteRetry = useCallback(async () => {
+    if (!onDeleteAccount) return;
+    setIsDeletingAccount(true);
+    setDeleteError(null);
+    try {
+      await onDeleteAccount();
+      setDeleteError(null);
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Unable to delete your account. Please try again.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  }, [onDeleteAccount]);
 
   const persistProfile = useCallback(
     (options?: { showErrors?: boolean }) => {
@@ -867,6 +912,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </View>
                 <Text style={styles.settingChevron}>›</Text>
               </TouchableOpacity>
+              {onDeleteAccount && (
+                <TouchableOpacity
+                  style={[styles.settingRow, styles.deleteRow]}
+                  onPress={confirmDeleteAccount}
+                  disabled={isDeletingAccount}
+                >
+                  <View style={styles.settingLeft}>
+                    <Text style={styles.settingIcon}>🗑️</Text>
+                    <Text style={[styles.settingLabel, styles.deleteLabel]}>
+                      Delete Account
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -957,6 +1016,46 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   })
                 )}
               </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={isDeletingAccount || !!deleteError}
+          onRequestClose={() => setDeleteError(null)}
+        >
+          <View style={styles.deleteOverlay}>
+            <View style={styles.deleteCard}>
+              {isDeletingAccount ? (
+                <>
+                  <ActivityIndicator size="large" color="#6C63FF" />
+                  <Text style={styles.deleteTitle}>Deleting your account…</Text>
+                  <Text style={styles.deleteBody}>This may take a few seconds.</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.deleteTitle}>Delete failed</Text>
+                  <Text style={styles.deleteBody}>
+                    {deleteError || 'Unable to delete your account. Please try again.'}
+                  </Text>
+                  <View style={styles.deleteActions}>
+                    <TouchableOpacity
+                      style={styles.deleteSecondary}
+                      onPress={() => setDeleteError(null)}
+                    >
+                      <Text style={styles.deleteSecondaryText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deletePrimary}
+                      onPress={handleDeleteRetry}
+                    >
+                      <Text style={styles.deletePrimaryText}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
             </View>
           </View>
         </Modal>
@@ -1146,6 +1245,12 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#A0A3BD',
     fontWeight: '300',
+  },
+  deleteRow: {
+    borderBottomColor: 'rgba(255, 107, 107, 0.3)',
+  },
+  deleteLabel: {
+    color: '#FF6B6B',
   },
 
   // Input
@@ -1390,6 +1495,36 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
+  },
+  deleteOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(10, 14, 39, 0.72)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  deleteCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#151932',
+    borderRadius: 16,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+  },
+  deleteTitle: {
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  deleteBody: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#A0A3BD',
+    textAlign: 'center',
   },
   modalListItemSubtitle: {
     color: '#A0A3BD',
