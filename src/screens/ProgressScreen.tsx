@@ -1,9 +1,9 @@
 import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
   TouchableOpacity,
   Modal,
   Pressable,
@@ -82,7 +82,7 @@ type MetricType = 'volume' | 'strength' | 'movement' | 'records';
 
 const TRACKING_CATEGORIES = [
   { id: 'muscles', label: 'Training Volume' },
-  { id: 'lifts', label: 'Strength Trends' },
+  { id: 'lifts', label: 'Strength Training' },
   { id: 'movements', label: 'Movement Balance' },
 ] as const;
 
@@ -118,6 +118,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     undefined,
     workoutDataVersion
   );
+
   // Animation refs
   const headerFadeAnim = useRef(new Animated.Value(0)).current;
   const headerSlideAnim = useRef(new Animated.Value(-20)).current;
@@ -133,9 +134,12 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const [trackingDraft, setTrackingDraft] = useState<TrackingPreferences>(() =>
     createTrackingDraft(user.trackingPreferences)
   );
+
+  // Dropdown (category) + tabs (selected/available)
   const [trackingCategory, setTrackingCategory] = useState<TrackingCategory>('muscles');
   const [trackingTab, setTrackingTab] = useState<'selected' | 'available'>('selected');
-  
+  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+
   // DB-backed options state
   const [muscleOptions, setMuscleOptions] = useState<MuscleGroupOption[]>([]);
   const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
@@ -159,7 +163,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         useNativeDriver: true,
       }),
     ]).start();
-  }, []);
+  }, [headerFadeAnim, headerSlideAnim]);
 
   // Card entrance animation
   useEffect(() => {
@@ -179,7 +183,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         useNativeDriver: true,
       }),
     ]).start();
-  }, []);
+  }, [cardFadeAnim, cardSlideAnim]);
 
   useFocusEffect(
     useCallback(() => {
@@ -213,10 +217,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const loadTrackingOptions = useCallback(async () => {
     setLoadingOptions(true);
     try {
-      const [muscles, exercises] = await Promise.all([
-        fetchMuscleGroups(),
-        fetchExercises(),
-      ]);
+      const [muscles, exercises] = await Promise.all([fetchMuscleGroups(), fetchExercises()]);
       setMuscleOptions(muscles);
       setExerciseOptions(exercises);
       setMovementOptions(deriveMovementPatterns(exercises));
@@ -232,11 +233,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     setTrackingDraft(createTrackingDraft(user.trackingPreferences));
     setTrackingCategory('muscles');
     setTrackingTab('selected');
+    setShowCategoryMenu(false);
     setTrackingModalVisible(true);
     await loadTrackingOptions();
   }, [user.trackingPreferences, loadTrackingOptions]);
 
   const handleCloseTrackingModal = useCallback(() => {
+    setShowCategoryMenu(false);
     setTrackingModalVisible(false);
   }, []);
 
@@ -261,31 +264,37 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     }, [handleOpenTrackingModal, setFabAction])
   );
 
-  const handleAddTrackingItem = useCallback((label: string) => {
-    const key = toTrackingKey(label);
-    if (!key) return;
-    
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setTrackingDraft((prev) => {
-      const next = createTrackingDraft(prev);
-      const bucket = next[trackingCategory] ?? {};
-      if (bucket[key]) return prev;
-      next[trackingCategory] = { ...bucket, [key]: label };
-      return next;
-    });
-  }, [trackingCategory]);
+  const handleAddTrackingItem = useCallback(
+    (label: string) => {
+      const key = toTrackingKey(label);
+      if (!key) return;
 
-  const handleRemoveTrackingItem = useCallback((key: string) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setTrackingDraft((prev) => {
-      const next = createTrackingDraft(prev);
-      const bucket = { ...(next[trackingCategory] ?? {}) };
-      if (!bucket[key]) return prev;
-      delete bucket[key];
-      next[trackingCategory] = bucket;
-      return next;
-    });
-  }, [trackingCategory]);
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setTrackingDraft((prev) => {
+        const next = createTrackingDraft(prev);
+        const bucket = next[trackingCategory] ?? {};
+        if (bucket[key]) return prev;
+        next[trackingCategory] = { ...bucket, [key]: label };
+        return next;
+      });
+    },
+    [trackingCategory]
+  );
+
+  const handleRemoveTrackingItem = useCallback(
+    (key: string) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setTrackingDraft((prev) => {
+        const next = createTrackingDraft(prev);
+        const bucket = { ...(next[trackingCategory] ?? {}) };
+        if (!bucket[key]) return prev;
+        delete bucket[key];
+        next[trackingCategory] = bucket;
+        return next;
+      });
+    },
+    [trackingCategory]
+  );
 
   const handleSaveTracking = useCallback(async () => {
     if (!onUpdateTrackingPreferences) {
@@ -300,8 +309,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     }
   }, [handleCloseTrackingModal, onUpdateTrackingPreferences, trackingDraft]);
 
-
-
   const labelMaps = useMemo(
     () => ({
       lifts: user.trackingPreferences?.lifts,
@@ -313,10 +320,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const resolvedPhase = data?.phase ?? phase;
   const resolvedPhaseId = resolvedPhase.id;
-  
+
   const mergedSessions = useMemo(() => data?.sessions || [], [data?.sessions]);
   const mergedWorkoutLogs = useMemo(() => data?.workoutLogs || [], [data?.workoutLogs]);
   const mergedSnapshots = useMemo(() => data?.strengthSnapshots || [], [data?.strengthSnapshots]);
+
   const sessions = useMemo(
     () => mergedSessions.filter((session) => session.phasePlanId === resolvedPhaseId),
     [mergedSessions, resolvedPhaseId]
@@ -347,13 +355,15 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     });
     return result;
   }, [exerciseDefaults, exerciseOptions]);
+
   const hasStrengthSnapshots = strengthSnapshots.length > 0;
+
   const strengthTrends = useMemo(() => {
-    if (!hasStrengthSnapshots) {
-      return [];
-    }
+    if (!hasStrengthSnapshots) return [];
+
     const existingKeys = new Set(strengthTrendsRaw.map((trend) => toTrackingKey(trend.lift)));
     const selected = Object.entries(user.trackingPreferences?.lifts ?? {});
+
     const filled = strengthTrendsRaw.map((trend) => {
       if (trend.weights.length > 0) return trend;
       const key = toTrackingKey(trend.lift);
@@ -367,6 +377,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         deltaPercent: 0,
       };
     });
+
     const fallback = selected.reduce<StrengthTrendView[]>((acc, [key, label]) => {
       const normalizedKey = key || toTrackingKey(label);
       if (existingKeys.has(normalizedKey)) return acc;
@@ -382,36 +393,25 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       });
       return acc;
     }, []);
+
     return [...filled, ...fallback];
   }, [hasStrengthSnapshots, strengthTrendsRaw, preferredWeightsByKey, user.trackingPreferences?.lifts]);
+
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs, labelMaps);
   const movementBalance = buildMovementBalanceSummary(workoutLogs, labelMaps);
 
   const selectedMuscles = Object.entries(user.trackingPreferences?.muscles ?? {}).map(
-    ([key, label]) => ({
-      key,
-      group: label,
-      sets: 0,
-    })
+    ([key, label]) => ({ key, group: label, sets: 0 })
   );
-  const volumeEntries =
-    weeklyVolume.length > 0 ? weeklyVolume : selectedMuscles.slice(0, 3);
+  const volumeEntries = weeklyVolume.length > 0 ? weeklyVolume : selectedMuscles.slice(0, 3);
 
   const selectedMovements = Object.entries(user.trackingPreferences?.movements ?? {}).map(
-    ([key, label]) => ({
-      key,
-      name: label,
-      sessions: 0,
-    })
+    ([key, label]) => ({ key, name: label, sessions: 0 })
   );
-  const movementEntries =
-    movementBalance.length > 0 ? movementBalance : selectedMovements.slice(0, 3);
+  const movementEntries = movementBalance.length > 0 ? movementBalance : selectedMovements.slice(0, 3);
 
   const selectedLifts = Object.entries(user.trackingPreferences?.lifts ?? {}).map(
-    ([key, label]) => ({
-      key,
-      lift: label,
-    })
+    ([key, label]) => ({ key, lift: label })
   );
   const strengthTrendEntries =
     strengthTrends.length > 0
@@ -436,6 +436,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     .slice(0, 3);
 
   const showSyncNotice = isLoading && sessions.length === 0;
+
   const recordRows =
     bestLiftRows.length > 0
       ? bestLiftRows
@@ -457,19 +458,19 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const strengthHasData = strengthTrendEntries.length > 0;
   const movementHasData = movementEntries.length > 0;
   const recordsHasData = recordRows.length > 0;
-  const hasAnyMetricData =
-    volumeHasData || strengthHasData || movementHasData || recordsHasData;
+
+  const hasAnyMetricData = volumeHasData || strengthHasData || movementHasData || recordsHasData;
+
   const hasExtraVolume = volumeEntries.length > maxVolumeRows;
-  const visibleVolume = showAllVolume
-    ? volumeEntries
-    : volumeEntries.slice(0, maxVolumeRows);
+  const visibleVolume = showAllVolume ? volumeEntries : volumeEntries.slice(0, maxVolumeRows);
+
   const maxStrengthRows = 3;
   const hasExtraStrength = strengthTrendEntries.length > maxStrengthRows;
-  const visibleStrength = showAllStrength
-    ? strengthTrendEntries
-    : strengthTrendEntries.slice(0, maxStrengthRows);
+  const visibleStrength = showAllStrength ? strengthTrendEntries : strengthTrendEntries.slice(0, maxStrengthRows);
+
   const planWeeks = Math.max(resolvedPhase?.expectedWeeks ?? 8, 1);
   const volumeWindowWeeks = 4;
+
   const maxWindowSets = Math.max(...volumeEntries.map((entry) => entry.sets), 0);
   const maxWeeklyAvg = maxWindowSets / volumeWindowWeeks;
   const planBaseline = Math.max(maxWeeklyAvg * planWeeks, maxWindowSets, 1);
@@ -508,7 +509,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   // Get available options based on category
   const getAvailableOptions = useCallback((): string[] => {
     const selectedKeys = new Set(Object.keys(trackingDraft[trackingCategory] ?? {}));
-    
+
     switch (trackingCategory) {
       case 'muscles':
         return muscleOptions
@@ -519,8 +520,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           .map((e) => e.name)
           .filter((name) => !selectedKeys.has(toTrackingKey(name)));
       case 'movements':
-        return movementOptions
-          .filter((pattern) => !selectedKeys.has(toTrackingKey(pattern)));
+        return movementOptions.filter((pattern) => !selectedKeys.has(toTrackingKey(pattern)));
       default:
         return [];
     }
@@ -530,16 +530,12 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     if (!activeMetrics.includes('volume') || !volumeHasData) return null;
 
     return (
-      <View
-        style={styles.card}
-        ref={volumeCardRef}
-      >
+      <View style={styles.card} ref={volumeCardRef}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Training Volume</Text>
-          <Text style={styles.cardSubtitle}>
-            Last 4 weeks • Scaled to plan progress
-          </Text>
+          <Text style={styles.cardSubtitle}>Last 4 weeks • Scaled to plan progress</Text>
         </View>
+
         <View style={styles.volumeGrid}>
           {visibleVolume.map((volume) => {
             const intensity = Math.min(volume.sets / planBaseline, 1);
@@ -548,28 +544,18 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               <View key={volume.key} style={styles.volumeRow}>
                 <Text style={styles.volumeLabel}>{volume.group}</Text>
                 <View style={styles.volumeBarContainer}>
-                  <View
-                    style={[
-                      styles.volumeBar,
-                      { width: `${intensity * 100}%`, backgroundColor: barColor },
-                    ]}
-                  />
+                  <View style={[styles.volumeBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
                 </View>
                 <Text style={styles.volumeValue}>{volume.sets}</Text>
               </View>
             );
           })}
         </View>
+
         {hasExtraVolume && (
-          <TouchableOpacity
-            style={styles.volumeToggle}
-            onPress={toggleVolumeExpand}
-            activeOpacity={0.9}
-          >
+          <TouchableOpacity style={styles.volumeToggle} onPress={toggleVolumeExpand} activeOpacity={0.9}>
             <Text style={styles.volumeToggleText}>
-              {showAllVolume
-                ? 'Show Less'
-                : `Show ${volumeEntries.length - maxVolumeRows} More`}
+              {showAllVolume ? 'Show Less' : `Show ${volumeEntries.length - maxVolumeRows} More`}
             </Text>
           </TouchableOpacity>
         )}
@@ -588,6 +574,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             {hasStrengthSnapshots ? 'Last 4 weeks' : 'Current starting weights'}
           </Text>
         </View>
+
         <View style={styles.strengthList}>
           {visibleStrength.map((trend) => (
             <View key={trend.key} style={styles.strengthRow}>
@@ -596,16 +583,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                 <Text style={styles.strengthGlyph}>{trend.glyph}</Text>
               </View>
               <View style={styles.strengthStats}>
-                <Text style={styles.strengthWeight}>
-                  {trend.weights[trend.weights.length - 1]} lbs
-                </Text>
+                <Text style={styles.strengthWeight}>{trend.weights[trend.weights.length - 1]} lbs</Text>
                 {trend.deltaLbs !== 0 && (
-                  <Text
-                    style={[
-                      styles.strengthDelta,
-                      trend.deltaLbs > 0 && styles.strengthDeltaPositive,
-                    ]}
-                  >
+                  <Text style={[styles.strengthDelta, trend.deltaLbs > 0 && styles.strengthDeltaPositive]}>
                     {trend.deltaLbs > 0 ? '+' : ''}
                     {trend.deltaLbs} lbs
                   </Text>
@@ -614,16 +594,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </View>
           ))}
         </View>
+
         {hasExtraStrength && (
-          <TouchableOpacity
-            style={styles.volumeToggle}
-            onPress={toggleStrengthExpand}
-            activeOpacity={0.9}
-          >
+          <TouchableOpacity style={styles.volumeToggle} onPress={toggleStrengthExpand} activeOpacity={0.9}>
             <Text style={styles.volumeToggleText}>
-              {showAllStrength
-                ? 'Show Less'
-                : `Show ${strengthTrends.length - maxStrengthRows} More`}
+              {showAllStrength ? 'Show Less' : `Show ${strengthTrends.length - maxStrengthRows} More`}
             </Text>
           </TouchableOpacity>
         )}
@@ -642,15 +617,14 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           <Text style={styles.cardTitle}>🎯 Movement Balance</Text>
           <Text style={styles.cardSubtitle}>This month</Text>
         </View>
+
         <View style={styles.movementGrid}>
           {movementEntries.map((movement) => {
             const intensity = movement.sessions / maxSessions;
             const pillColor = getHeatColor(intensity);
             return (
               <View key={movement.key} style={styles.movementPill}>
-                <View
-                  style={[styles.movementIndicator, { backgroundColor: pillColor }]}
-                />
+                <View style={[styles.movementIndicator, { backgroundColor: pillColor }]} />
                 <Text style={styles.movementName}>{movement.name}</Text>
                 <Text style={styles.movementCount}>×{movement.sessions}</Text>
               </View>
@@ -670,19 +644,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           <Text style={styles.cardTitle}>🏆 Personal Records</Text>
           <Text style={styles.cardSubtitle}>Top 3 lifts</Text>
         </View>
+
         <View style={styles.prList}>
           {recordRows.map((row, idx) => {
             const rankEmojis = ['🥇', '🥈', '🥉'];
             return (
               <View key={row.lift} style={styles.prRow}>
-                <View
-                  style={[
-                    styles.prRank,
-                    idx === 0 && styles.prRank1,
-                    idx === 1 && styles.prRank2,
-                    idx === 2 && styles.prRank3,
-                  ]}
-                >
+                <View style={[styles.prRank, idx === 0 && styles.prRank1, idx === 1 && styles.prRank2, idx === 2 && styles.prRank3]}>
                   <Text style={styles.prRankEmoji}>{rankEmojis[idx]}</Text>
                 </View>
                 <View style={styles.prInfo}>
@@ -705,6 +673,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const availableOptions = getAvailableOptions();
   const selectedItems = Object.entries(trackingDraft[trackingCategory] ?? {});
+  const selectedCategoryLabel = TRACKING_CATEGORIES.find((c) => c.id === trackingCategory)?.label ?? 'Training Volume';
 
   const renderEmptyMetrics = () => (
     <View style={[styles.card, styles.emptyStateCard]}>
@@ -733,10 +702,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             setShowAllStrength(false);
           }}
           onTouchStart={handleContentTap}
-          onScroll={Animated.event(
-            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: true }
-          )}
+          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         >
           <Animated.View
             style={[
@@ -755,9 +721,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </View>
           </Animated.View>
 
-          {showSyncNotice && (
-            <Text style={styles.syncNotice}>⏳ Syncing latest progress data...</Text>
-          )}
+          {showSyncNotice && <Text style={styles.syncNotice}>⏳ Syncing latest progress data...</Text>}
 
           {hasAnyMetricData ? (
             <Animated.View
@@ -788,6 +752,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         </Animated.ScrollView>
       </LinearGradient>
 
+      {/* Tracking Modal */}
       <Modal
         transparent
         animationType="fade"
@@ -807,30 +772,86 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               </TouchableOpacity>
             </View>
 
-            <View style={styles.trackingCategoryRow}>
-              {TRACKING_CATEGORIES.map((category) => {
-                const isActive = trackingCategory === category.id;
-                return (
-                  <TouchableOpacity
-                    key={category.id}
+            <View style={styles.trackingControlRow}>
+              <View style={styles.dropdownWrapper}>
+                <TouchableOpacity
+                  style={styles.dropdownTrigger}
+                  onPress={() => setShowCategoryMenu((v) => !v)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.dropdownLabel}>{selectedCategoryLabel}</Text>
+                  <Text style={styles.dropdownChevron}>▾</Text>
+                </TouchableOpacity>
+
+                {showCategoryMenu && (
+                  <View style={styles.dropdownMenu}>
+                    {TRACKING_CATEGORIES.map((category) => {
+                      const isActive = trackingCategory === category.id;
+                      return (
+                        <TouchableOpacity
+                          key={category.id}
+                          style={[styles.dropdownItem, isActive && styles.dropdownItemActive]}
+                          onPress={() => {
+                            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                            setTrackingCategory(category.id);
+                            setTrackingTab('selected');
+                            setShowCategoryMenu(false);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.dropdownItemText, isActive && styles.dropdownItemTextActive]}>
+                            {category.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.trackingTabRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.trackingTabCompact,
+                    trackingTab === 'selected' && styles.trackingTabCompactActive,
+                  ]}
+                  onPress={() => {
+                    setShowCategoryMenu(false);
+                    setTrackingTab('selected');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text
                     style={[
-                      styles.trackingCategoryChip,
-                      isActive && styles.trackingCategoryChipActive,
+                      styles.trackingTabTextCompact,
+                      trackingTab === 'selected' && styles.trackingTabTextCompactActive,
                     ]}
-                    onPress={() => setTrackingCategory(category.id)}
-                    activeOpacity={0.7}
                   >
-                    <Text
-                      style={[
-                        styles.trackingCategoryText,
-                        isActive && styles.trackingCategoryTextActive,
-                      ]}
-                    >
-                      {category.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+                    Selected
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.trackingTabCompact,
+                    trackingTab === 'available' && styles.trackingTabCompactActive,
+                  ]}
+                  onPress={() => {
+                    setShowCategoryMenu(false);
+                    setTrackingTab('available');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.trackingTabTextCompact,
+                      trackingTab === 'available' && styles.trackingTabTextCompactActive,
+                    ]}
+                  >
+                    Available
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {loadingOptions ? (
@@ -840,55 +861,19 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               </View>
             ) : (
               <View style={styles.trackingContent}>
-                <View style={styles.trackingTabRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.trackingTab,
-                      trackingTab === 'selected' && styles.trackingTabActive,
-                    ]}
-                    onPress={() => setTrackingTab('selected')}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.trackingTabText,
-                        trackingTab === 'selected' && styles.trackingTabTextActive,
-                      ]}
-                    >
-                      Selected ({selectedItems.length})
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.trackingTab,
-                      trackingTab === 'available' && styles.trackingTabActive,
-                    ]}
-                    onPress={() => setTrackingTab('available')}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.trackingTabText,
-                        trackingTab === 'available' && styles.trackingTabTextActive,
-                      ]}
-                    >
-                      Available ({availableOptions.length})
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
                 <Text style={styles.trackingHintText}>
-                  Tracked items only appear when there is actual data.
+                  Only selected items with logged workouts will appear on the Progress screen.
                 </Text>
 
                 <View style={styles.trackingPanel}>
                   <View style={styles.trackingPanelHeader}>
                     <Text style={styles.trackingPanelLabel}>
                       {trackingTab === 'selected'
-                        ? `Selected (${selectedItems.length})`
-                        : `Available (${availableOptions.length})`}
+                        ? `${selectedItems.length} Selected`
+                        : `${availableOptions.length} Available`}
                     </Text>
                   </View>
+
                   {trackingTab === 'selected' ? (
                     selectedItems.length > 0 ? (
                       <ScrollView
@@ -911,15 +896,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                       </ScrollView>
                     ) : (
                       <Text style={styles.trackingColumnEmptyText}>
-                        No selected items yet.
+                        No items selected yet.{'\n'}Switch to "Available" to add metrics.
                       </Text>
                     )
                   ) : availableOptions.length > 0 ? (
-                    <ScrollView
-                      style={styles.trackingPanelScroll}
-                      contentContainerStyle={styles.trackingPanelList}
-                      showsVerticalScrollIndicator={false}
-                    >
+                    <ScrollView style={styles.trackingPanelScroll} showsVerticalScrollIndicator={false}>
                       {availableOptions.map((option) => (
                         <TouchableOpacity
                           key={option}
@@ -928,24 +909,22 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                           activeOpacity={0.7}
                         >
                           <Text style={styles.optionText}>{option}</Text>
-                          <Text style={styles.optionAddIcon}>+</Text>
+                          <View style={styles.optionAddIcon}>
+                            <Text style={styles.optionAddText}>+</Text>
+                          </View>
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
                   ) : (
                     <Text style={styles.trackingColumnEmptyText}>
-                      No available items.
+                      No available items.{'\n'}All options have been added.
                     </Text>
                   )}
                 </View>
               </View>
             )}
 
-            <TouchableOpacity
-              style={styles.trackingSaveButton}
-              onPress={handleSaveTracking}
-              activeOpacity={0.8}
-            >
+            <TouchableOpacity style={styles.trackingSaveButton} onPress={handleSaveTracking} activeOpacity={0.8}>
               <Text style={styles.trackingSaveText}>Save Changes</Text>
             </TouchableOpacity>
           </View>
@@ -956,20 +935,15 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  scrollView: { flex: 1 },
   scrollContent: {
     padding: 20,
     paddingBottom: 100,
     paddingTop: '20%',
   },
-  header: {
-    marginBottom: 24,
-  },
+
+  header: { marginBottom: 24 },
   headerTitle: {
     fontSize: 32,
     fontWeight: '700',
@@ -996,9 +970,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  cardHeader: {
-    marginBottom: 16,
-  },
+  cardHeader: { marginBottom: 16 },
   cardTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -1011,9 +983,7 @@ const styles = StyleSheet.create({
   },
 
   // Volume
-  volumeGrid: {
-    gap: 10,
-  },
+  volumeGrid: { gap: 10 },
   volumeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1032,10 +1002,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
   },
-  volumeBar: {
-    height: '100%',
-    borderRadius: 12,
-  },
+  volumeBar: { height: '100%', borderRadius: 12 },
   volumeValue: {
     fontSize: 13,
     fontWeight: '700',
@@ -1059,18 +1026,14 @@ const styles = StyleSheet.create({
   },
 
   // Strength
-  strengthList: {
-    gap: 8,
-  },
+  strengthList: { gap: 8 },
   strengthRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 5,
   },
-  strengthInfo: {
-    flex: 1,
-  },
+  strengthInfo: { flex: 1 },
   strengthLift: {
     fontSize: 14,
     fontWeight: '600',
@@ -1082,9 +1045,7 @@ const styles = StyleSheet.create({
     color: COLORS.success,
     letterSpacing: 1,
   },
-  strengthStats: {
-    alignItems: 'flex-end',
-  },
+  strengthStats: { alignItems: 'flex-end' },
   strengthWeight: {
     fontSize: 15,
     fontWeight: '700',
@@ -1096,15 +1057,14 @@ const styles = StyleSheet.create({
     color: COLORS.textTertiary,
     marginTop: 2,
   },
-  strengthDeltaPositive: {
-    color: COLORS.success,
-  },
+  strengthDeltaPositive: { color: COLORS.success },
 
   // Movement
   movementGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    width: '100%',
   },
   movementPill: {
     flexDirection: 'row',
@@ -1114,6 +1074,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 20,
     gap: 6,
+    maxWidth: '100%',
   },
   movementIndicator: {
     width: 8,
@@ -1125,6 +1086,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.textPrimary,
     fontWeight: '500',
+    flexShrink: 1,
   },
   movementCount: {
     fontSize: 12,
@@ -1132,9 +1094,7 @@ const styles = StyleSheet.create({
   },
 
   // Personal Records
-  prList: {
-    gap: 12,
-  },
+  prList: { gap: 12 },
   prRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1151,21 +1111,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: COLORS.accent,
   },
-  prRank1: {
-    backgroundColor: '#FFD700',
-  },
-  prRank2: {
-    backgroundColor: '#C0C0C0',
-  },
-  prRank3: {
-    backgroundColor: '#CD7F32',
-  },
-  prRankEmoji: {
-    fontSize: 20,
-  },
-  prInfo: {
-    flex: 1,
-  },
+  prRank1: { backgroundColor: '#FFD700' },
+  prRank2: { backgroundColor: '#C0C0C0' },
+  prRank3: { backgroundColor: '#CD7F32' },
+  prRankEmoji: { fontSize: 20 },
+  prInfo: { flex: 1 },
   prLift: {
     fontSize: 14,
     fontWeight: '600',
@@ -1185,10 +1135,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 4,
   },
-  prArrow: {
-    fontSize: 14,
-    color: COLORS.success,
-  },
+  prArrow: { fontSize: 14, color: COLORS.success },
   prBadgeText: {
     fontSize: 11,
     fontWeight: '700',
@@ -1265,6 +1212,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     minHeight: '60%',
     maxHeight: '85%',
+    position: 'relative',
   },
   trackingHeader: {
     flexDirection: 'row',
@@ -1290,33 +1238,106 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontWeight: '400',
   },
-  trackingCategoryRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-    paddingRight: 8,
-    alignItems: 'center',
+
+  // Dropdown - Compact Style
+  dropdownWrapper: {
+    marginRight: 8,
+    zIndex: 50,
+    minWidth: 160,
   },
-  trackingCategoryChip: {
+  dropdownTrigger: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  dropdownLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    letterSpacing: 0.1,
+  },
+  dropdownChevron: {
+    fontSize: 14,
+    color: COLORS.textTertiary,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  dropdownMenu: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 46,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  dropdownItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  dropdownItemActive: {
+    backgroundColor: COLORS.accentDim,
+  },
+  dropdownItemText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  dropdownItemTextActive: {
+    color: COLORS.accent,
+  },
+
+  trackingControlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+  },
+  trackingTabRow: {
+    flexDirection: 'row',
+    gap: 6,
+    flex: 1,
+  },
+  trackingTabCompact: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.surface,
+    alignItems: 'center',
   },
-  trackingCategoryChipActive: {
-    borderColor: COLORS.success,
-    backgroundColor: COLORS.successDim,
+  trackingTabCompactActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentDim,
   },
-  trackingCategoryText: {
+  trackingTabTextCompact: {
     fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
+    fontWeight: '700',
+    color: COLORS.textTertiary,
+    letterSpacing: 0.3,
   },
-  trackingCategoryTextActive: {
-    color: COLORS.success,
+  trackingTabTextCompactActive: {
+    color: COLORS.accent,
   },
+
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -1332,126 +1353,136 @@ const styles = StyleSheet.create({
     flex: 1,
     marginBottom: 16,
   },
-  trackingTabRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
   trackingHintText: {
     fontSize: 12,
     color: COLORS.textMuted,
-    marginBottom: 10,
-  },
-  trackingTab: {
-    paddingVertical: 10,
-    paddingHorizontal: 7,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    alignItems: 'center',
-  },
-  trackingTabActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentDim,
-  },
-  trackingTabText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textSecondary,
-  },
-  trackingTabTextActive: {
-    color: COLORS.accent,
+    marginBottom: 12,
+    lineHeight: 16,
+    paddingHorizontal: 2,
   },
   trackingPanel: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.bgSecondary,
     overflow: 'hidden',
   },
   trackingPanelHeader: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: COLORS.bgSecondary,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(108, 99, 255, 0.08)',
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
   trackingPanelLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.accent,
     textTransform: 'uppercase',
-    letterSpacing: 0.4,
+    letterSpacing: 1.2,
   },
-  trackingPanelScroll: {
-    flex: 1,
-  },
+  trackingPanelScroll: { flex: 1 },
   trackingPanelList: {
-    padding: 10,
+    padding: 12,
     gap: 8,
   },
   trackingColumnEmptyText: {
-    padding: 12,
+    padding: 32,
+    textAlign: 'center',
     color: COLORS.textTertiary,
-    fontSize: 13,
+    fontSize: 14,
+    fontStyle: 'italic',
+    lineHeight: 20,
   },
   trackingItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: COLORS.surface,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   trackingItemLabel: {
+    flex: 1,
     fontSize: 14,
     color: COLORS.textPrimary,
     fontWeight: '600',
+    letterSpacing: 0.2,
   },
   trackingRemoveButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    backgroundColor: 'rgba(255, 68, 68, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 123, 123, 0.3)',
+    marginLeft: 12,
   },
   trackingRemoveText: {
-    color: '#FF7B7B',
-    fontSize: 18,
+    color: '#FF6B6B',
+    fontSize: 20,
     fontWeight: '600',
+    lineHeight: 20,
   },
   optionItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    backgroundColor: COLORS.card,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+    marginHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 8,
   },
   optionText: {
+    flex: 1,
     fontSize: 14,
     color: COLORS.textPrimary,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   optionAddIcon: {
-    fontSize: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.accentDim,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  optionAddText: {
+    fontSize: 18,
     color: COLORS.accent,
-    fontWeight: '600',
+    fontWeight: '700',
+    lineHeight: 18,
   },
   trackingSaveButton: {
-    paddingVertical: 14,
+    paddingVertical: 16,
     borderRadius: 14,
     backgroundColor: COLORS.accent,
     alignItems: 'center',
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   trackingSaveText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textPrimary,
+    color: COLORS.bgPrimary,
+    letterSpacing: 0.5,
   },
 });
 

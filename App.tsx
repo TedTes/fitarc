@@ -429,6 +429,7 @@ function AppContent() {
   const [tempProfileData, setTempProfileData] = useState<any>(null);
   const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
   const [startPlanConfirmVisible, setStartPlanConfirmVisible] = useState(false);
+  const previousPhaseIdRef = useRef<string | null>(null);
 
   const closeProfileSheet = () => {
     setProfileVisible(false);
@@ -790,29 +791,31 @@ function AppContent() {
 
   useEffect(() => {
     if (!state?.user) return;
-    if (state.currentPhase) {
-      setFabAction('Workouts', null);
-      setFabAction('Menu', null);
-      setFabAction('Progress', null);
-      return;
+    const phaseId = state.currentPhase?.id ?? null;
+    const hadPhase = previousPhaseIdRef.current;
+
+    if (phaseId) {
+      if (!hadPhase) {
+        setFabAction('Workouts', null);
+        setFabAction('Menu', null);
+        setFabAction('Progress', null);
+      }
+    } else {
+      const createPlanAction = {
+        label: 'Create Plan',
+        icon: '+',
+        colors: ['#6C63FF', '#4C3BFF'] as const,
+        iconColor: '#0A0E27',
+        labelColor: '#6C63FF',
+        onPress: handleStartPhaseFromDashboard,
+      };
+      setFabAction('Workouts', createPlanAction);
+      setFabAction('Menu', createPlanAction);
+      setFabAction('Progress', createPlanAction);
     }
-    const createPlanAction = {
-      label: 'Create Plan',
-      icon: '+',
-      colors: ['#6C63FF', '#4C3BFF'] as const,
-      iconColor: '#0A0E27',
-      labelColor: '#6C63FF',
-      onPress: handleStartPhaseFromDashboard,
-    };
-    setFabAction('Workouts', createPlanAction);
-    setFabAction('Menu', createPlanAction);
-    setFabAction('Progress', createPlanAction);
-    return () => {
-      setFabAction('Workouts', null);
-      setFabAction('Menu', null);
-      setFabAction('Progress', null);
-    };
-  }, [handleStartPhaseFromDashboard, setFabAction, state?.currentPhase, state?.user]);
+
+    previousPhaseIdRef.current = phaseId;
+  }, [handleStartPhaseFromDashboard, setFabAction, state?.currentPhase?.id, state?.user]);
 
   const handleLogout = async () => {
     try {
