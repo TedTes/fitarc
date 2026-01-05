@@ -566,6 +566,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const renderStrengthCard = () => {
     if (!activeMetrics.includes('strength') || !strengthHasData) return null;
 
+    const maxStrengthWeight = Math.max(
+      ...visibleStrength.map((trend) => trend.weights[trend.weights.length - 1] || 0),
+      1
+    );
+
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -576,23 +581,32 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         </View>
 
         <View style={styles.strengthList}>
-          {visibleStrength.map((trend) => (
-            <View key={trend.key} style={styles.strengthRow}>
-              <View style={styles.strengthInfo}>
-                <Text style={styles.strengthLift}>{trend.lift}</Text>
-                <Text style={styles.strengthGlyph}>{trend.glyph}</Text>
+          {visibleStrength.map((trend) => {
+            const weight = trend.weights[trend.weights.length - 1] || 0;
+            const intensity = Math.min(weight / maxStrengthWeight, 1);
+            const barColor = getHeatColor(intensity);
+
+            return (
+              <View key={trend.key} style={styles.strengthRow}>
+                <View style={styles.strengthInfo}>
+                  <Text style={styles.strengthLift}>{trend.lift}</Text>
+                  <Text style={styles.strengthGlyph}>{trend.glyph}</Text>
+                </View>
+                <View style={styles.strengthBarContainer}>
+                  <View style={[styles.strengthBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
+                </View>
+                <View style={styles.strengthStats}>
+                  <Text style={styles.strengthWeight}>{weight} lbs</Text>
+                  {trend.deltaLbs !== 0 && (
+                    <Text style={[styles.strengthDelta, trend.deltaLbs > 0 && styles.strengthDeltaPositive]}>
+                      {trend.deltaLbs > 0 ? '+' : ''}
+                      {trend.deltaLbs} lbs
+                    </Text>
+                  )}
+                </View>
               </View>
-              <View style={styles.strengthStats}>
-                <Text style={styles.strengthWeight}>{trend.weights[trend.weights.length - 1]} lbs</Text>
-                {trend.deltaLbs !== 0 && (
-                  <Text style={[styles.strengthDelta, trend.deltaLbs > 0 && styles.strengthDeltaPositive]}>
-                    {trend.deltaLbs > 0 ? '+' : ''}
-                    {trend.deltaLbs} lbs
-                  </Text>
-                )}
-              </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
 
         {hasExtraStrength && (
@@ -1032,6 +1046,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 5,
+    gap: 12,
   },
   strengthInfo: { flex: 1 },
   strengthLift: {
@@ -1044,6 +1059,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.success,
     letterSpacing: 1,
+  },
+  strengthBarContainer: {
+    flex: 1,
+    height: 22,
+    backgroundColor: COLORS.bgTertiary,
+    borderRadius: 11,
+    overflow: 'hidden',
+  },
+  strengthBar: {
+    height: '100%',
+    borderRadius: 11,
   },
   strengthStats: { alignItems: 'flex-end' },
   strengthWeight: {
