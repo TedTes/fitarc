@@ -120,6 +120,6 @@ export const fetchHomeData = async (
     todaySession,
     todayMealPlan,
     lastPhotoCheckin,
-    consistencySummary: buildConsistencySummary(recentSessions),
+    consistencySummary: buildConsistencySummary(recentSessions, phase?.startDate ?? null),
   };
 };
