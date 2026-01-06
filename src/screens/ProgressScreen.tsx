@@ -425,6 +425,19 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           deltaPercent: 0,
         }));
 
+  const sortedStrengthTrendEntries = useMemo(() => {
+    const sorted = [...strengthTrendEntries];
+    sorted.sort((a, b) => {
+      const aWeight = a.weights[a.weights.length - 1] || 0;
+      const bWeight = b.weights[b.weights.length - 1] || 0;
+      const aHasData = aWeight > 0 ? 1 : 0;
+      const bHasData = bWeight > 0 ? 1 : 0;
+      if (aHasData !== bHasData) return bHasData - aHasData;
+      return bWeight - aWeight;
+    });
+    return sorted;
+  }, [strengthTrendEntries]);
+
   const bestLiftRows = strengthTrends
     .map((trend) => ({
       lift: trend.lift,
@@ -455,7 +468,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const maxVolumeRows = 3;
   const volumeHasData = volumeEntries.length > 0;
-  const strengthHasData = strengthTrendEntries.length > 0;
+  const strengthHasData = sortedStrengthTrendEntries.length > 0;
   const movementHasData = movementEntries.length > 0;
   const recordsHasData = recordRows.length > 0;
 
@@ -465,8 +478,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const visibleVolume = showAllVolume ? volumeEntries : volumeEntries.slice(0, maxVolumeRows);
 
   const maxStrengthRows = 3;
-  const hasExtraStrength = strengthTrendEntries.length > maxStrengthRows;
-  const visibleStrength = showAllStrength ? strengthTrendEntries : strengthTrendEntries.slice(0, maxStrengthRows);
+  const hasExtraStrength = sortedStrengthTrendEntries.length > maxStrengthRows;
+  const visibleStrength = showAllStrength
+    ? sortedStrengthTrendEntries
+    : sortedStrengthTrendEntries.slice(0, maxStrengthRows);
 
   const planWeeks = Math.max(resolvedPhase?.expectedWeeks ?? 8, 1);
   const volumeWindowWeeks = 4;
@@ -566,8 +581,8 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const renderStrengthCard = () => {
     if (!activeMetrics.includes('strength') || !strengthHasData) return null;
 
-    const maxStrengthWeight = Math.max(
-      ...visibleStrength.map((trend) => trend.weights[trend.weights.length - 1] || 0),
+    const maxDelta = Math.max(
+      ...visibleStrength.map((trend) => Math.max(trend.deltaLbs || 0, 0)),
       1
     );
 
@@ -583,8 +598,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         <View style={styles.strengthList}>
           {visibleStrength.map((trend) => {
             const weight = trend.weights[trend.weights.length - 1] || 0;
-            const intensity = Math.min(weight / maxStrengthWeight, 1);
-            const barColor = getHeatColor(intensity);
+            const delta = Math.max(trend.deltaLbs || 0, 0);
+            const intensity = delta > 0 ? Math.min(delta / maxDelta, 1) : 0;
+            const barColor = delta > 0 ? COLORS.success : COLORS.bgTertiary;
 
             return (
               <View key={trend.key} style={styles.strengthRow}>

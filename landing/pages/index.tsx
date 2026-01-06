@@ -210,7 +210,7 @@ export default function Home() {
                 <div className="hero-visual">
                   <div className="hero-frame">
                     <Image
-                      src="/images/dashboard.png"
+                      src="/images/dashboard_workout.png"
                       alt="Fitarc dashboard preview"
                       fill
                       sizes="(max-width: 720px) 260px, 300px"
