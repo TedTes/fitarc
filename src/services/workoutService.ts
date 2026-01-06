@@ -164,7 +164,6 @@ export const upsertExerciseDefault = async (
   }
 
   const payload = {
-    id,
     user_id: userId,
     exercise_id: exerciseId,
     user_exercise_id: userExerciseId,
@@ -175,11 +174,13 @@ export const upsertExerciseDefault = async (
     notes,
   };
 
-  const { data, error } = await supabase
-    .from('fitarc_user_exercise_defaults')
-    .upsert(payload, { onConflict: 'user_id,exercise_id,user_exercise_id' })
-    .select()
-    .single();
+  const query = supabase.from('fitarc_user_exercise_defaults');
+  const { data, error } = id
+    ? await query.update(payload).eq('id', id).select().single()
+    : await query
+        .upsert(payload, { onConflict: 'user_id,exercise_id,user_exercise_id' })
+        .select()
+        .single();
 
   if (error) {
     throw error;
