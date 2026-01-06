@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  Dimensions,
   Animated,
   Easing,
   LayoutAnimation,
@@ -60,6 +61,8 @@ const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)']
 const ACTIVITY_TOTAL_DAYS = 84;
 const DAYS_PER_ACTIVITY_COLUMN = 7;
 const ACTIVITY_GAP = 6;
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(220, Math.round(SCREEN_HEIGHT * 0.32)));
 
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
 
@@ -308,7 +311,27 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     for (let i = 0; i < activityCells.length; i += DAYS_PER_ACTIVITY_COLUMN) {
       columns.push(activityCells.slice(i, i + DAYS_PER_ACTIVITY_COLUMN));
     }
-    return columns;
+    return columns.reverse();
+  }, [activityCells]);
+
+  const phaseStats = useMemo(() => {
+    if (!activityCells.length) {
+      return { completed: 0, total: 0, streak: 0, percentage: 0 };
+    }
+    const completed = activityCells.filter((cell) => cell.level > 0).length;
+    const total = activityCells.length;
+    const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    let streak = 0;
+    for (let i = activityCells.length - 1; i >= 0; i -= 1) {
+      if (activityCells[i].level > 0) {
+        streak += 1;
+      } else {
+        break;
+      }
+    }
+
+    return { completed, total, streak, percentage };
   }, [activityCells]);
 
   const getActivityLevelStyle = (level: number) => {
@@ -413,7 +436,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         iconColor: '#0A0E27',
         labelColor: '#6C63FF',
         onPress: () =>
-          Alert.alert('Great job!', 'You have already completed today’s meals.'),
+          Alert.alert("Great job!", "You have already completed today's meals."),
       });
     } else if (onCompleteAllToday && pendingWorkoutCount > 0) {
       setFabAction('Home', {
@@ -432,7 +455,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         iconColor: '#0A0E27',
         labelColor: '#6C63FF',
         onPress: () =>
-          Alert.alert('Great job!', 'Congrats, you have already completed today’s workout.'),
+          Alert.alert("Great job!", "Congrats, you have already completed today's workout."),
       });
     } else {
       setFabAction('Home', null);
@@ -701,15 +724,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           style={styles.mealCard}
         >
           <View style={styles.mealCardHeader}>
-            <Text style={styles.mealEmoji}>{getMealTypeEmoji(mealType)}</Text>
-            <View style={styles.mealInfo}>
-              <Text style={styles.mealName}>{mealType}</Text>
-              <Text style={styles.mealMeta}>
-                {totalCount
-                  ? `${totalCount} item${totalCount > 1 ? 's' : ''} · ${macroSummary}`
-                  : 'Suggested by your plan'}
-              </Text>
-            </View>
             <TouchableOpacity
               style={[
                 styles.mealGroupToggle,
@@ -729,6 +743,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 ✓
               </Text>
             </TouchableOpacity>
+            <View style={styles.mealInfo}>
+              <Text style={styles.mealName}>{mealType}</Text>
+              <Text style={styles.mealMeta}>
+                {totalCount
+                  ? `${totalCount} item${totalCount > 1 ? 's' : ''} · ${macroSummary}`
+                  : 'Suggested by your plan'}
+              </Text>
+            </View>
           </View>
           {entries.map((entry) => (
             <View key={entry.id} style={styles.mealEntry}>
@@ -886,31 +908,31 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     ]}
                   >
                     <View style={styles.exerciseCardRow}>
-                    <View style={styles.exerciseCardMain}>
-                      <View style={styles.cardHeader}>
-                        <View style={styles.exerciseHeaderText}>
-                          <Text style={styles.exerciseName}>{exercise.name}</Text>
-                          <Text style={styles.exerciseMetaLine}>
-                            {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
-                          </Text>
-                        </View>
-                        {isMarked && (
+                      <View style={styles.exerciseCardMain}>
+                        <View style={styles.cardHeader}>
                           <Animated.View
                             style={{
                               transform: [{ scale: checkboxPulseAnim }],
                             }}
                           >
-                            <View style={styles.checkCircleActive}>
-                              <Text style={styles.checkCircleText}>✓</Text>
+                            <View
+                              style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                            >
+                              {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
                             </View>
                           </Animated.View>
-                        )}
+                          <View style={styles.exerciseHeaderText}>
+                            <Text style={styles.exerciseName}>{exercise.name}</Text>
+                            <Text style={styles.exerciseMetaLine}>
+                              {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.exerciseBodyParts}>
+                          {formatBodyPartList(exercise.bodyParts)}
+                        </Text>
                       </View>
-                      <Text style={styles.exerciseBodyParts}>
-                        {formatBodyPartList(exercise.bodyParts)}
-                      </Text>
                     </View>
-                  </View>
                   </LinearGradient>
                 </TouchableOpacity>
               </Animated.View>
@@ -989,36 +1011,72 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           style={[styles.scrollView, contentStyle]}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          scrollEnabled={false}
           bounces={true}
         >
-          <Animated.View
-            style={{
-              opacity: headerFadeAnim,
-              transform: [{ translateY: activityCardSlideAnim }],
-            }}
-          >
-            <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
-              <View style={styles.activityHeader}>
+        <Animated.View
+          style={{
+            opacity: headerFadeAnim,
+            transform: [{ translateY: activityCardSlideAnim }],
+          }}
+        >
+          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
+            <View style={styles.activityHeader}>
+              <View style={styles.activityHeaderLeft}>
                 <Text style={styles.activityTitle}>ACTIVITY STREAK</Text>
-                <View style={styles.activityLegend}>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, styles.activityLevel1]} />
-                    <Text style={styles.legendText}>1</Text>
-                  </View>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, styles.activityLevel2]} />
-                    <Text style={styles.legendText}>2</Text>
-                  </View>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, styles.activityLevel3]} />
-                    <Text style={styles.legendText}>3+</Text>
-                  </View>
+                <Text style={styles.activitySubtitle}>
+                  {resolvedPhase?.name || 'Current Phase'}
+                </Text>
+              </View>
+              <View style={styles.activityStats}>
+                <View style={styles.statBadge}>
+                  <Text style={styles.statValue}>{phaseStats.streak}</Text>
+                  <Text style={styles.statLabel}>day streak</Text>
+                </View>
+                <View style={styles.statBadge}>
+                  <Text style={styles.statValue}>{phaseStats.percentage}%</Text>
+                  <Text style={styles.statLabel}>complete</Text>
                 </View>
               </View>
-              <View style={styles.activityGridWrapper}>
+            </View>
+            <View style={styles.progressBarContainer}>
+              <View style={styles.progressBarBg}>
                 <View
-                  style={styles.activityGrid}
-                  onLayout={(event) =>
+                  style={[
+                    styles.progressBarFill,
+                    { width: `${phaseStats.percentage}%` },
+                  ]}
+                />
+              </View>
+              <Text style={styles.progressText}>
+                {phaseStats.completed} of {phaseStats.total} days completed
+              </Text>
+            </View>
+            <View style={styles.activityLegendRow}>
+              <Text style={styles.legendLabel}>Sessions per day:</Text>
+              <View style={styles.activityLegend}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, styles.activityLevel0]} />
+                  <Text style={styles.legendText}>None</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, styles.activityLevel1]} />
+                  <Text style={styles.legendText}>1</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, styles.activityLevel2]} />
+                  <Text style={styles.legendText}>2</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, styles.activityLevel3]} />
+                  <Text style={styles.legendText}>3+</Text>
+                </View>
+              </View>
+            </View>
+            <View style={styles.activityGridWrapper}>
+              <View
+                style={styles.activityGrid}
+                onLayout={(event) =>
                     setGridLayout({
                       width: event.nativeEvent.layout.width,
                       height: event.nativeEvent.layout.height,
@@ -1060,45 +1118,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </Animated.View>
         </Animated.ScrollView>
 
-        <View style={styles.stickyTabsContainer}>
-          <View style={styles.tabs}>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'workouts' && styles.tabActive]}
-              onPress={() => setActiveTab('workouts')}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.tabText, activeTab === 'workouts' && styles.tabTextActive]}>
-                Workouts
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'meals' && styles.tabActive]}
-              onPress={() => setActiveTab('meals')}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.tabText, activeTab === 'meals' && styles.tabTextActive]}>
-                Meals
-              </Text>
-            </TouchableOpacity>
-            
-            <Animated.View
-              style={[
-                styles.tabIndicator,
-                {
-                  transform: [
-                    {
-                      translateX: tabSwitchAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, 180],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            />
-          </View>
-        </View>
-
         <ScrollView
           style={styles.contentScrollView}
           contentContainerStyle={styles.contentScrollContent}
@@ -1107,6 +1126,71 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         >
           {activeTab === 'workouts' ? renderWorkoutsSection() : renderMealsSection()}
         </ScrollView>
+
+        {/* Vertical Tab Sidebar - Right side, near FAB position */}
+        <View style={styles.verticalTabBar}>
+          <TouchableOpacity
+            style={[
+              styles.verticalTab,
+              activeTab === 'meals' && styles.verticalTabActive,
+            ]}
+            onPress={() => setActiveTab('meals')}
+            onLongPress={() => Alert.alert('Meals', 'View your nutrition plan')}
+            activeOpacity={0.7}
+          >
+            <Animated.View
+              style={{
+                transform: [
+                  {
+                    scale: tabSwitchAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 1.15],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <Text style={[
+                styles.verticalTabIcon,
+                activeTab === 'meals' && styles.verticalTabIconActive,
+              ]}>
+                🥗
+              </Text>
+            </Animated.View>
+          </TouchableOpacity>
+
+          <View style={styles.verticalTabDivider} />
+
+          <TouchableOpacity
+            style={[
+              styles.verticalTab,
+              activeTab === 'workouts' && styles.verticalTabActive,
+            ]}
+            onPress={() => setActiveTab('workouts')}
+            onLongPress={() => Alert.alert('Workouts', 'View your workout exercises')}
+            activeOpacity={0.7}
+          >
+            <Animated.View
+              style={{
+                transform: [
+                  {
+                    scale: tabSwitchAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1.15, 1],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <Text style={[
+                styles.verticalTabIcon,
+                activeTab === 'workouts' && styles.verticalTabIconActive,
+              ]}>
+                💪
+              </Text>
+            </Animated.View>
+          </TouchableOpacity>
+        </View>
 
       </LinearGradient>
     </View>
@@ -1171,31 +1255,23 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 0,
-    maxHeight: 180,
+    maxHeight: ACTIVITY_SECTION_HEIGHT,
   },
   scrollContent: {
     paddingHorizontal: 20,
     paddingBottom: 20,
-  },
-  stickyTabsContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 12,
-    backgroundColor: '#0A0E27',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(108, 99, 255, 0.1)',
   },
   contentScrollView: {
     flex: 1,
   },
   contentScrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingTop: 0,
     paddingBottom: 120,
   },
   activityCard: {
     borderRadius: 20,
-    padding: 20,
+    padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.15)',
     marginBottom: 8,
@@ -1203,14 +1279,71 @@ const styles = StyleSheet.create({
   activityHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 16,
+  },
+  activityHeaderLeft: {
+    flex: 1,
   },
   activityTitle: {
     fontSize: 11,
     color: '#8B93B0',
     fontWeight: '700',
     letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  activitySubtitle: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  activityStats: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  statBadge: {
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#00F5A0',
+  },
+  statLabel: {
+    fontSize: 10,
+    color: '#8B93B0',
+    marginTop: 2,
+  },
+  progressBarContainer: {
+    marginBottom: 16,
+  },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#00F5A0',
+    borderRadius: 3,
+  },
+  progressText: {
+    fontSize: 12,
+    color: '#8B93B0',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  activityLegendRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  legendLabel: {
+    fontSize: 11,
+    color: '#8B93B0',
+    fontWeight: '600',
   },
   activityLegend: {
     flexDirection: 'row',
@@ -1326,46 +1459,56 @@ const styles = StyleSheet.create({
     height: 12,
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
   },
-  tabs: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(30, 35, 64, 0.4)',
-    padding: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.15)',
-    gap: 12,
-    marginBottom: 12,
-    position: 'relative',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  tabActive: {
-    // backgroundColor is now handled by animated indicator
-  },
-  tabIndicator: {
+  
+  verticalTabBar: {
     position: 'absolute',
-    bottom: 6,
-    left: 6,
-    width: 170,
+    right: 20,
+    bottom: 160, // Above FAB (typically at 100)
+    backgroundColor: 'rgba(30, 35, 64, 0.95)',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.25)',
+    padding: 8,
+    gap: 8,
+    flexDirection: 'column',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 12,
+    zIndex: 50,
+  },
+  verticalTab: {
+    width: 48,
     height: 48,
-    borderRadius: 12,
-    backgroundColor: 'rgba(108, 99, 255, 0.3)',
-    zIndex: 0,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(108, 99, 255, 0.05)',
   },
-  tabText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#8B93B0',
+  verticalTabActive: {
+    backgroundColor: 'rgba(108, 99, 255, 0.25)',
+    borderWidth: 2,
+    borderColor: 'rgba(108, 99, 255, 0.5)',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  tabTextActive: {
-    color: '#FFFFFF',
+  verticalTabIcon: {
+    fontSize: 24,
+    opacity: 0.6,
   },
+  verticalTabIconActive: {
+    opacity: 1,
+  },
+  verticalTabDivider: {
+    height: 1,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    marginVertical: 4,
+  },
+
   section: {
     gap: 16,
   },
@@ -1456,6 +1599,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#00F5A0',
     backgroundColor: 'rgba(0, 245, 160, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkCircleInactive: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
   },
