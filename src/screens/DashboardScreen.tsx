@@ -734,14 +734,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               }}
               disabled={isMealsMutating}
             >
-              <Text
-                style={[
-                  styles.mealGroupToggleText,
-                  isMealComplete && styles.mealGroupToggleTextActive,
-                ]}
-              >
-                ✓
-              </Text>
+              {isMealComplete && (
+                <Text
+                  style={[
+                    styles.mealGroupToggleText,
+                    styles.mealGroupToggleTextActive,
+                  ]}
+                >
+                  ✓
+                </Text>
+              )}
             </TouchableOpacity>
             <View style={styles.mealInfo}>
               <Text style={styles.mealName}>{mealType}</Text>
@@ -1684,19 +1686,18 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   mealGroupToggleActive: {
-    backgroundColor: 'rgba(0,245,160,0.15)',
     borderColor: '#00F5A0',
+    backgroundColor: 'rgba(0, 245, 160, 0.12)',
   },
   mealGroupToggleText: {
     fontSize: 14,
-    color: '#A0A3BD',
     fontWeight: '700',
   },
   mealGroupToggleTextActive: {
