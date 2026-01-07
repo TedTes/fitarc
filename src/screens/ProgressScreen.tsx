@@ -338,6 +338,23 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     [mergedSnapshots, resolvedPhaseId]
   );
 
+  const completedDaysCount = useMemo(() => {
+    const completedDays = new Set<string>();
+    workoutLogs.forEach((log) => {
+      const hasCompletedWork =
+        Object.values(log.muscleVolume).some((value) => value > 0) ||
+        Object.values(log.movementPatterns).some((value) => value > 0) ||
+        (log.totalSets ?? 0) > 0;
+      if (hasCompletedWork && log.date) {
+        completedDays.add(log.date);
+      }
+    });
+    return completedDays.size;
+  }, [workoutLogs]);
+
+  const completedDaysLabel =
+    completedDaysCount > 0 ? `Last ${completedDaysCount} days` : 'No completed days yet';
+
   const strengthTrendsRaw = buildStrengthTrends(strengthSnapshots, labelMaps);
 
   const preferredWeightsByKey = useMemo(() => {
@@ -545,7 +562,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       <View style={styles.card} ref={volumeCardRef}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Training Volume</Text>
-          <Text style={styles.cardSubtitle}>Last 4 weeks • Scaled to plan progress</Text>
+          <Text style={styles.cardSubtitle}>{completedDaysLabel}</Text>
         </View>
 
         <View style={styles.volumeGrid}>
@@ -588,7 +605,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Strength Trends</Text>
           <Text style={styles.cardSubtitle}>
-            {hasStrengthSnapshots ? 'Last 4 weeks' : 'Current starting weights'}
+            {hasStrengthSnapshots ? completedDaysLabel : 'Current starting weights'}
           </Text>
         </View>
 
@@ -645,7 +662,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>🎯 Movement Balance</Text>
-          <Text style={styles.cardSubtitle}>This month</Text>
+          <Text style={styles.cardSubtitle}>{completedDaysLabel}</Text>
         </View>
 
         <View style={styles.movementGrid}>
