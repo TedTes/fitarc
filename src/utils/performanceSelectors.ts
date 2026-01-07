@@ -4,7 +4,6 @@ export type StrengthTrendView = {
   key: LiftId;
   lift: string;
   weights: number[];
-  glyph: string;
   deltaLbs: number;
   deltaPercent: number;
 };
@@ -36,8 +35,6 @@ export type TrackingLabelMaps = {
   muscles?: Record<string, string>;
 };
 
-const GLYPH_STEPS = ['▂', '▃', '▅', '▆', '█'];
-
 const getLabel = (labels: Record<string, string> | undefined, key: string) =>
   labels?.[key] ?? key;
 
@@ -48,20 +45,6 @@ const getAllowedKeys = (
   const preferred = labels && Object.keys(labels).length ? Object.keys(labels) : null;
   const base = preferred ?? observed;
   return Array.from(new Set(base));
-};
-
-const buildGlyph = (values: number[]): string => {
-  if (values.length === 0) return '';
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  return values
-    .map((value) => {
-      const normalized = (value - min) / range;
-      const index = Math.min(GLYPH_STEPS.length - 1, Math.floor(normalized * GLYPH_STEPS.length));
-      return GLYPH_STEPS[index];
-    })
-    .join('');
 };
 
 const createZeroVolume = <T extends string>(keys: T[]): Record<T, number> =>
@@ -110,7 +93,6 @@ export const buildStrengthTrends = (
         key: lift,
         lift: getLabel(labelMaps?.lifts, lift),
         weights,
-        glyph: buildGlyph(weights),
         deltaLbs,
         deltaPercent,
       };

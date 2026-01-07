@@ -372,7 +372,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       return {
         ...trend,
         weights: [weight],
-        glyph: '▅',
         deltaLbs: 0,
         deltaPercent: 0,
       };
@@ -387,7 +386,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         key: normalizedKey as any,
         lift: label,
         weights: [weight],
-        glyph: '▅',
         deltaLbs: 0,
         deltaPercent: 0,
       });
@@ -420,7 +418,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           key: lift.key as any,
           lift: lift.lift,
           weights: [0],
-          glyph: '▁',
           deltaLbs: 0,
           deltaPercent: 0,
         }));
@@ -599,14 +596,17 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           {visibleStrength.map((trend) => {
             const weight = trend.weights[trend.weights.length - 1] || 0;
             const delta = Math.max(trend.deltaLbs || 0, 0);
-            const intensity = delta > 0 ? Math.min(delta / maxDelta, 1) : 0;
-            const barColor = delta > 0 ? COLORS.success : COLORS.bgTertiary;
-
+            const intensity =
+              delta > 0
+                ? Math.min(Math.max(delta / maxDelta, 0.12), 1)
+                : weight > 0
+                  ? 0.08
+                  : 0;
+            const barColor = delta > 0 ? COLORS.success : COLORS.accent;
             return (
               <View key={trend.key} style={styles.strengthRow}>
                 <View style={styles.strengthInfo}>
                   <Text style={styles.strengthLift}>{trend.lift}</Text>
-                  <Text style={styles.strengthGlyph}>{trend.glyph}</Text>
                 </View>
                 <View style={styles.strengthBarContainer}>
                   <View style={[styles.strengthBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
@@ -1064,30 +1064,35 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     gap: 12,
   },
-  strengthInfo: { flex: 1 },
+  strengthInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
   strengthLift: {
     fontSize: 14,
     fontWeight: '600',
     color: COLORS.textPrimary,
     marginBottom: 4,
-  },
-  strengthGlyph: {
-    fontSize: 11,
-    color: COLORS.success,
-    letterSpacing: 1,
+    flexWrap: 'wrap',
   },
   strengthBarContainer: {
     flex: 1,
-    height: 22,
+    height: 24,
     backgroundColor: COLORS.bgTertiary,
-    borderRadius: 11,
+    borderRadius: 12,
     overflow: 'hidden',
+    justifyContent: 'center',
+    alignSelf: 'center',
   },
   strengthBar: {
     height: '100%',
-    borderRadius: 11,
+    borderRadius: 12,
   },
-  strengthStats: { alignItems: 'flex-end' },
+  strengthStats: {
+    alignItems: 'flex-end',
+    alignSelf: 'center',
+    minWidth: 60,
+  },
   strengthWeight: {
     fontSize: 15,
     fontWeight: '700',
@@ -1099,7 +1104,7 @@ const styles = StyleSheet.create({
     color: COLORS.textTertiary,
     marginTop: 2,
   },
-  strengthDeltaPositive: { color: COLORS.success },
+   strengthDeltaPositive: { color: COLORS.success },
 
   // Movement
   movementGrid: {
