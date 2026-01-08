@@ -28,8 +28,9 @@ import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
 import { MealEntry } from '../services/mealService';
 import { useFabAction } from '../contexts/FabActionContext';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
+import { Calendar } from 'react-native-calendars';
 import { getBodyPartLabel } from '../utils';
-import { formatLocalDateYMD } from '../utils/date';
+import { addDays, formatLocalDateYMD, parseYMDToDate } from '../utils/date';
 import {
   computeEntriesMacroTotals,
   formatMacroSummaryLine,
@@ -41,31 +42,95 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const MEAL_TYPE_EMOJI: Record<string, string> = {
-  Breakfast: '🥚',
-  Lunch: '🥗',
-  Dinner: '🍽️',
-};
 
-const getMealTypeEmoji = (mealType: string): string => {
-  const key = mealType.trim();
-  if (MEAL_TYPE_EMOJI[key]) return MEAL_TYPE_EMOJI[key];
-  const normalized = key.toLowerCase();
-  if (normalized.includes('snack')) return '🥗';
-  if (normalized.includes('pre')) return '⚡';
-  return '🍽️';
-};
 
+// Constants
 const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)'] as const;
+const BACKGROUND_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 
-const ACTIVITY_TOTAL_DAYS = 84;
-const DAYS_PER_ACTIVITY_COLUMN = 7;
-const ACTIVITY_GAP = 6;
+const COLORS = {
+  bgPrimary: '#0A0E27',
+  textPrimary: '#FFFFFF',
+  textMuted: '#8B93B0',
+  textSecondary: '#C7CCE6',
+  accent: '#6C63FF',
+  accentDark: '#4C3BFF',
+  success: '#00F5A0',
+  successGlow: 'rgba(0, 245, 160, 0.4)',
+  border: 'rgba(108, 99, 255, 0.2)',
+  borderLight: 'rgba(108, 99, 255, 0.15)',
+  overlay: 'rgba(255, 255, 255, 0.08)',
+  overlayLight: 'rgba(255, 255, 255, 0.25)',
+} as const;
+
+const ACTIVITY_TOTAL_DAYS_FALLBACK = 182;
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(220, Math.round(SCREEN_HEIGHT * 0.32)));
+const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(240, Math.round(SCREEN_HEIGHT * 0.20)));
 
+const MEAL_TYPE_ORDER = ['breakfast', 'lunch', 'dinner'] as const;
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
 
+// Animation configurations
+const ANIMATION_CONFIG = {
+  headerFade: {
+    duration: 600,
+    easing: Easing.out(Easing.cubic),
+  },
+  spring: {
+    tension: 200,
+    friction: 10,
+  },
+  springLight: {
+    tension: 100,
+    friction: 5,
+  },
+  springMedium: {
+    tension: 100,
+    friction: 10,
+  },
+  pulse: {
+    delay: 2000,
+    scale: 1.05,
+  },
+  checkboxPulse: {
+    scale: 1.3,
+  },
+  exerciseCard: {
+    scale: 0.97,
+  },
+} as const;
+
+// Calendar theme configuration
+const getCalendarTheme = () => ({
+  calendarBackground: 'transparent',
+  monthTextColor: COLORS.textPrimary,
+  textSectionTitleColor: COLORS.textMuted,
+  dayTextColor: COLORS.textSecondary,
+  textDisabledColor: 'rgba(255,255,255,0.15)',
+  arrowColor: COLORS.accent,
+  todayTextColor: COLORS.textPrimary,
+  textDayFontSize: 9,
+  textMonthFontSize: 11,
+  textDayHeaderFontSize: 7,
+  'stylesheet.day.basic': {
+    base: {
+      width: 22,
+      height: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  },
+  'stylesheet.calendar.main': {
+    week: {
+      marginTop: 1,
+      marginBottom: 1,
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+    },
+  },
+} as any);
+
+// Helper functions
 const formatBodyPartList = (parts: MuscleGroup[]): string => {
   if (!parts.length) return 'Full Body';
   return parts
@@ -83,12 +148,42 @@ const getGreetingMessage = () => {
   return 'Good evening';
 };
 
-type ActivityCell = {
-  date: Date;
-  iso: string;
-  count: number;
-  level: number;
-  isToday: boolean;
+const getCalendarDateStyles = (isComplete: boolean, isToday: boolean) => {
+  let backgroundColor: string;
+  let borderColor: string = 'transparent';
+  let shadowOpacity: number = 0;
+  
+  if (isComplete) {
+    backgroundColor = COLORS.success;
+    shadowOpacity = 0.4;
+  } else if (isToday) {
+    backgroundColor = 'rgba(108, 99, 255, 0.3)';
+    borderColor = COLORS.accent;
+  } else {
+    backgroundColor = COLORS.overlay;
+  }
+  
+  return {
+    container: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      backgroundColor,
+      borderWidth: isToday && !isComplete ? 2 : 0,
+      borderColor,
+      shadowColor: isComplete ? COLORS.success : 'transparent',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity,
+      shadowRadius: 6,
+    },
+    text: {
+      color: isComplete ? COLORS.bgPrimary : COLORS.textPrimary,
+      fontWeight: isComplete ? '700' : isToday ? '600' : '500',
+      fontSize: 10,
+    },
+  };
 };
 
 type DashboardScreenProps = {
@@ -135,7 +230,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const tabSwitchAnim = useRef(new Animated.Value(0)).current;
   const exerciseCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
-  const activityCellAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
@@ -242,104 +336,87 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     .slice(0, 2)
     .toUpperCase();
   const avatarUrl = user.avatarUrl;
-  const dateLabel = today.toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-  });
 
-  const sessionsByDate = useMemo(() => {
-    const map = new Map<string, WorkoutSessionEntry[]>();
+  const completedSessionsByDate = useMemo(() => {
+    const map = new Map<string, number>();
+    const isSessionCompleted = (session: WorkoutSessionEntry) => {
+      const sessionComplete = (session as WorkoutSessionEntry & { complete?: boolean }).complete;
+      if (sessionComplete !== undefined) return sessionComplete;
+      if (session.completed !== undefined) return session.completed;
+      if (!session.exercises?.length) return false;
+      return session.exercises.every(
+        (exercise) =>
+          (exercise as typeof exercise & { complete?: boolean }).complete ?? exercise.completed
+      );
+    };
     resolvedSessions.forEach((session) => {
       if (!session.date) return;
+      if (!isSessionCompleted(session)) return;
       const key = session.date;
-      map.set(key, [...(map.get(key) || []), session]);
+      map.set(key, (map.get(key) || 0) + 1);
     });
     return map;
   }, [resolvedSessions]);
 
-  const activityCells = useMemo<ActivityCell[]>(() => {
-    const now = new Date();
-    const cells: ActivityCell[] = [];
-    for (let i = ACTIVITY_TOTAL_DAYS - 1; i >= 0; i -= 1) {
-      const cellDate = new Date(now);
-      cellDate.setDate(now.getDate() - i);
-      const iso = cellDate.toISOString().split('T')[0];
-      const count = sessionsByDate.get(iso)?.length || 0;
-      cells.push({
-        date: cellDate,
-        iso,
-        count,
-        level: Math.min(3, count),
-        isToday: i === 0,
-      });
+  const activityRange = useMemo(() => {
+    const startValue = resolvedPhase?.startDate;
+    const endValue = resolvedPhase?.expectedEndDate;
+    const startDate = startValue ? parseYMDToDate(startValue) : null;
+    const endDate = endValue ? parseYMDToDate(endValue) : null;
+    const isValidRange =
+      !!startDate &&
+      !!endDate &&
+      !Number.isNaN(startDate.getTime()) &&
+      !Number.isNaN(endDate.getTime()) &&
+      endDate.getTime() >= startDate.getTime();
+    if (!isValidRange) {
+      const paddedDays = Math.max(7, Math.ceil(ACTIVITY_TOTAL_DAYS_FALLBACK / 7) * 7);
+      return {
+        startDate: null,
+        totalDays: ACTIVITY_TOTAL_DAYS_FALLBACK,
+        paddedDays,
+        usePhaseRange: false,
+      };
     }
-    return cells;
-  }, [resolvedSessions]);
+    const diffMs = endDate.getTime() - startDate.getTime();
+    const totalDays = Math.max(1, Math.floor(diffMs / 86400000) + 1);
+    const paddedDays = Math.max(7, Math.ceil(totalDays / 7) * 7);
+    return { startDate, totalDays, paddedDays, usePhaseRange: true };
+  }, [resolvedPhase?.expectedEndDate, resolvedPhase?.startDate]);
 
-  const [gridLayout, setGridLayout] = useState({ width: 0, height: 0 });
-  const [selectedActivityMeta, setSelectedActivityMeta] = useState<{
-    iso: string;
-    row: number;
-    col: number;
-  } | null>(null);
-  
-  useEffect(() => {
-    if (!selectedActivityMeta) return;
-    const timeout = setTimeout(() => {
-      setSelectedActivityMeta(null);
-    }, 2500);
-    return () => clearTimeout(timeout);
-  }, [selectedActivityMeta]);
+  const calendarRange = useMemo(() => {
+    if (!activityRange.usePhaseRange || !activityRange.startDate) return null;
+    const startDate = activityRange.startDate;
+    const endDate = addDays(startDate, activityRange.totalDays - 1);
+    const startKey = formatLocalDateYMD(startDate);
+    const endKey = formatLocalDateYMD(endDate);
+    let currentKey = todayStr;
+    if (currentKey < startKey) currentKey = startKey;
+    if (currentKey > endKey) currentKey = endKey;
+    return { startDate, endDate, startKey, endKey, currentKey };
+  }, [activityRange, todayStr]);
 
-  useEffect(() => {
-    if (
-      selectedActivityMeta &&
-      !activityCells.some((cell) => cell.iso === selectedActivityMeta.iso)
-    ) {
-      setSelectedActivityMeta(null);
+  const phaseDates = useMemo(() => {
+    if (!calendarRange) return [];
+    const dates: string[] = [];
+    for (let i = 0; i < activityRange.totalDays; i += 1) {
+      dates.push(formatLocalDateYMD(addDays(calendarRange.startDate, i)));
     }
-  }, [activityCells, selectedActivityMeta]);
+    return dates;
+  }, [activityRange.totalDays, calendarRange]);
 
-  const selectedActivity =
-    (selectedActivityMeta &&
-      activityCells.find((cell) => cell.iso === selectedActivityMeta.iso)) ||
-    null;
-
-  const activityColumns = useMemo(() => {
-    const columns: ActivityCell[][] = [];
-    for (let i = 0; i < activityCells.length; i += DAYS_PER_ACTIVITY_COLUMN) {
-      columns.push(activityCells.slice(i, i + DAYS_PER_ACTIVITY_COLUMN));
-    }
-    return columns.reverse();
-  }, [activityCells]);
-
-  const phaseStats = useMemo(() => {
-    if (!activityCells.length) {
-      return { completed: 0, total: 0, streak: 0, percentage: 0 };
-    }
-    const completed = activityCells.filter((cell) => cell.level > 0).length;
-    const total = activityCells.length;
-    const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-    let streak = 0;
-    for (let i = activityCells.length - 1; i >= 0; i -= 1) {
-      if (activityCells[i].level > 0) {
-        streak += 1;
-      } else {
-        break;
-      }
-    }
-
-    return { completed, total, streak, percentage };
-  }, [activityCells]);
-
-  const getActivityLevelStyle = (level: number) => {
-    if (level >= 3) return styles.activityLevel3;
-    if (level === 2) return styles.activityLevel2;
-    if (level === 1) return styles.activityLevel1;
-    return styles.activityLevel0;
-  };
+  const calendarMarkedDates = useMemo(() => {
+    if (!calendarRange) return {};
+    const marks: Record<string, { customStyles: { container: object; text: object } }> = {};
+    phaseDates.forEach((dateKey) => {
+      const isComplete = (completedSessionsByDate.get(dateKey) || 0) > 0;
+      const isToday = dateKey === todayStr;
+      marks[dateKey] = {
+        customStyles: getCalendarDateStyles(isComplete, isToday),
+      };
+    });
+    return marks;
+  }, [calendarRange, completedSessionsByDate, phaseDates, todayStr]);
 
   const {
     mealsByType,
@@ -355,23 +432,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     activePhaseId
   );
 
-  const baseMealTypes = useMemo(() => Object.keys(mealsByType), [mealsByType]);
   const orderedMealTypes = useMemo(() => {
-    const preferredOrder = ['breakfast', 'lunch', 'dinner'];
+    const baseMealTypes = Object.keys(mealsByType);
     const baseIndex = new Map(
       baseMealTypes.map((mealType, index) => [mealType, index])
     );
     return [...baseMealTypes].sort((a, b) => {
       const aKey = a.toLowerCase();
       const bKey = b.toLowerCase();
-      const aRank = preferredOrder.indexOf(aKey);
-      const bRank = preferredOrder.indexOf(bKey);
+      const aRank = MEAL_TYPE_ORDER.indexOf(aKey as any);
+      const bRank = MEAL_TYPE_ORDER.indexOf(bKey as any);
       const aOrder = aRank === -1 ? Number.POSITIVE_INFINITY : aRank;
       const bOrder = bRank === -1 ? Number.POSITIVE_INFINITY : bRank;
       if (aOrder !== bOrder) return aOrder - bOrder;
       return (baseIndex.get(a) ?? 0) - (baseIndex.get(b) ?? 0);
     });
-  }, [baseMealTypes]);
+  }, [mealsByType]);
   const mealGroups = useMemo(() => {
     return orderedMealTypes
       .map((mealType) => ({
@@ -394,118 +470,86 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const shouldPromptPlan = hasActivePlan && !hasSyncedWorkout;
   const shouldPromptNext = hasActivePlan && hasSyncedWorkout && pendingWorkoutCount === 0;
   const shouldCreatePlan = !hasActivePlan && !!onStartPhase;
+  
   const handleOpenPlans = useCallback(() => {
     navigation.navigate('Workouts', { openExerciseModal: true });
   }, [navigation]);
 
-  useEffect(() => {
+  // FAB Action configuration
+  const getFabActionConfig = useCallback(() => {
+    const baseConfig = {
+      colors: [COLORS.accent, COLORS.accentDark] as const,
+      iconColor: COLORS.bgPrimary,
+      labelColor: COLORS.accent,
+    };
+
     if (shouldCreatePlan) {
-      setFabAction('Home', {
+      return {
+        ...baseConfig,
         label: 'Create Plan',
         icon: '+',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
         onPress: onStartPhase!,
-      });
-    } else if (shouldPromptPlan) {
-      setFabAction('Home', {
+      };
+    }
+    if (shouldPromptPlan) {
+      return {
+        ...baseConfig,
         label: 'Session',
         icon: '+',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
         onPress: handleOpenPlans,
-      });
-    } else if (activeTab === 'meals' && pendingMealCount > 0) {
-      setFabAction('Home', {
-        label: 'Complete',
-        icon: '✓',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
-        onPress: () => {
-          void toggleDayCompleted?.(true);
-        },
-      });
-    } else if (activeTab === 'meals' && pendingMealCount === 0) {
-      setFabAction('Home', {
-        label: 'Completed',
-        icon: '✓',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
-        onPress: () =>
-          Alert.alert("Great job!", "You have already completed today's meals."),
-      });
-    } else if (onCompleteAllToday && pendingWorkoutCount > 0) {
-      setFabAction('Home', {
-        label: 'Complete',
-        icon: '✓',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
-        onPress: onCompleteAllToday,
-      });
-    } else if (shouldPromptNext) {
-      setFabAction('Home', {
-        label: 'Completed',
-        icon: '✓',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
-        onPress: () =>
-          Alert.alert("Great job!", "Congrats, you have already completed today's workout."),
-      });
-    } else {
-      setFabAction('Home', null);
+      };
     }
-
-    return () => setFabAction('Home', null);
+    if (activeTab === 'meals' && pendingMealCount > 0) {
+      return {
+        ...baseConfig,
+        label: 'Complete',
+        icon: '✓',
+        onPress: () => void toggleDayCompleted?.(true),
+      };
+    }
+    if (activeTab === 'meals' && pendingMealCount === 0) {
+      return {
+        ...baseConfig,
+        label: 'Completed',
+        icon: '✓',
+        onPress: () => Alert.alert("Great job!", "You have already completed today's meals."),
+      };
+    }
+    if (onCompleteAllToday && pendingWorkoutCount > 0) {
+      return {
+        ...baseConfig,
+        label: 'Complete',
+        icon: '✓',
+        onPress: onCompleteAllToday,
+      };
+    }
+    if (shouldPromptNext) {
+      return {
+        ...baseConfig,
+        label: 'Completed',
+        icon: '✓',
+        onPress: () => Alert.alert("Great job!", "Congrats, you have already completed today's workout."),
+      };
+    }
+    return null;
   }, [
-    handleOpenPlans,
-    hasActivePlan,
-    onCompleteAllToday,
-    pendingWorkoutCount,
-    pendingMealCount,
-    setFabAction,
     shouldCreatePlan,
-    shouldPromptNext,
     shouldPromptPlan,
-    onStartPhase,
+    shouldPromptNext,
     activeTab,
+    pendingMealCount,
+    pendingWorkoutCount,
+    onStartPhase,
+    handleOpenPlans,
     toggleDayCompleted,
+    onCompleteAllToday,
   ]);
 
-  // 🎨 Animation functions
-  const getActivityCellAnimation = (iso: string) => {
-    if (!activityCellAnims.has(iso)) {
-      const anim = new Animated.Value(1);
-      activityCellAnims.set(iso, anim);
-    }
-    return activityCellAnims.get(iso)!;
-  };
-
-  const triggerActivityCellPulse = (iso: string, level: number) => {
-    if (level === 0) return;
-    
-    const anim = getActivityCellAnimation(iso);
-    
-    Animated.sequence([
-      Animated.spring(anim, {
-        toValue: 1.2,
-        tension: 200,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-      Animated.spring(anim, {
-        toValue: 1,
-        tension: 200,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
+  useEffect(() => {
+    const config = getFabActionConfig();
+    setFabAction('Home', config);
+    return () => setFabAction('Home', null);
+  }, [getFabActionConfig, setFabAction]);
 
   const getExerciseCardAnimation = (key: string) => {
     if (!exerciseCardAnims.has(key)) {
@@ -517,30 +561,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const animateExerciseCompletion = (key: string) => {
     const scaleAnim = getExerciseCardAnimation(key);
-    
     Animated.sequence([
       Animated.spring(scaleAnim, {
-        toValue: 0.97,
-        tension: 200,
-        friction: 10,
+        toValue: ANIMATION_CONFIG.exerciseCard.scale,
+        ...ANIMATION_CONFIG.spring,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
-        tension: 200,
-        friction: 10,
+        ...ANIMATION_CONFIG.spring,
         useNativeDriver: true,
       }),
     ]).start();
   };
 
-  // 🎨 Header entrance animation
+  // Header entrance animation
   useEffect(() => {
     Animated.parallel([
       Animated.timing(headerFadeAnim, {
         toValue: 1,
-        duration: 600,
-        easing: Easing.out(Easing.cubic),
+        ...ANIMATION_CONFIG.headerFade,
         useNativeDriver: true,
       }),
       Animated.spring(activityCardSlideAnim, {
@@ -552,17 +592,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     ]).start();
   }, []);
 
-  // 🎨 Trigger pulse animation for activity cells on mount
-  useEffect(() => {
-    const delay = 300;
-    activityCells.forEach((cell, index) => {
-      setTimeout(() => {
-        triggerActivityCellPulse(cell.iso, cell.level);
-      }, delay + index * 15);
-    });
-  }, [activityCells.length]);
-
-  // 🎨 Tab switch animation
+  // Tab switch animation
   useEffect(() => {
     LayoutAnimation.configureNext({
       duration: 300,
@@ -578,27 +608,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
     Animated.spring(tabSwitchAnim, {
       toValue: activeTab === 'workouts' ? 0 : 1,
-      tension: 100,
-      friction: 10,
+      ...ANIMATION_CONFIG.springMedium,
       useNativeDriver: true,
     }).start();
   }, [activeTab]);
 
-  // 🎨 Create button pulse animation
+  // Create button pulse animation
   useEffect(() => {
     const pulseLoop = Animated.loop(
       Animated.sequence([
-        Animated.delay(2000),
+        Animated.delay(ANIMATION_CONFIG.pulse.delay),
         Animated.spring(createButtonPulse, {
-          toValue: 1.05,
-          tension: 100,
-          friction: 5,
+          toValue: ANIMATION_CONFIG.pulse.scale,
+          ...ANIMATION_CONFIG.springLight,
           useNativeDriver: true,
         }),
         Animated.spring(createButtonPulse, {
           toValue: 1,
-          tension: 100,
-          friction: 5,
+          ...ANIMATION_CONFIG.springLight,
           useNativeDriver: true,
         }),
       ])
@@ -672,15 +699,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
     Animated.sequence([
       Animated.spring(checkboxPulseAnim, {
-        toValue: 1.3,
-        tension: 200,
-        friction: 8,
+        toValue: ANIMATION_CONFIG.checkboxPulse.scale,
+        ...ANIMATION_CONFIG.spring,
         useNativeDriver: true,
       }),
       Animated.spring(checkboxPulseAnim, {
         toValue: 1,
-        tension: 200,
-        friction: 8,
+        ...ANIMATION_CONFIG.spring,
         useNativeDriver: true,
       }),
     ]).start();
@@ -764,93 +789,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           ))}
         </LinearGradient>
       </TouchableOpacity>
-    );
-  };
-
-  const renderActivityDetails = () => {
-    if (!selectedActivity || !selectedActivityMeta) return null;
-    
-    const sessionsForDay = sessionsByDate.get(selectedActivity.iso) || [];
-    const workoutCount = sessionsForDay.length;
-    
-    const totalExercises = sessionsForDay.reduce(
-      (sum, session) => sum + session.exercises.length,
-      0
-    );
-    
-    const totalSets = sessionsForDay.reduce((sum, session) => {
-      return (
-        sum +
-        session.exercises.reduce((exerciseSum, exercise) => {
-          const setsLogged = exercise.setDetails?.length ?? exercise.sets ?? 0;
-          return exerciseSum + setsLogged;
-        }, 0)
-      );
-    }, 0);
-  
-    const columnsCount = activityColumns.length || 1;
-    const columnWidth =
-      columnsCount > 0
-        ? (gridLayout.width - ACTIVITY_GAP * (columnsCount - 1)) / columnsCount
-        : 0;
-    const rowHeight =
-      (gridLayout.height - ACTIVITY_GAP * (DAYS_PER_ACTIVITY_COLUMN - 1)) /
-      DAYS_PER_ACTIVITY_COLUMN;
-  
-    if (!columnWidth || !rowHeight) return null;
-  
-    const baseLeft =
-      selectedActivityMeta.col * (columnWidth + ACTIVITY_GAP) + columnWidth / 2;
-    const baseTop =
-      selectedActivityMeta.row * (rowHeight + ACTIVITY_GAP) - rowHeight;
-  
-    const tooltipHalfWidth = 60;
-    const clampedLeft = Math.min(
-      Math.max(baseLeft, tooltipHalfWidth),
-      gridLayout.width - tooltipHalfWidth
-    );
-  
-    return (
-      <LinearGradient
-        colors={['rgba(16, 20, 39, 0.98)', 'rgba(25, 30, 55, 0.98)']}
-        style={[
-          styles.activityDetailCard,
-          {
-            left: clampedLeft - tooltipHalfWidth,
-            top: Math.max(baseTop, -10),
-          },
-        ]}
-        pointerEvents="none"
-      >
-        {workoutCount === 0 ? (
-          <View style={styles.activityTooltipCompact}>
-            <Text style={styles.activityCompactIcon}>💤</Text>
-          </View>
-        ) : (
-          <View style={styles.activityTooltipCompact}>
-            <View style={styles.activityCompactStat}>
-              <Text style={styles.activityCompactIcon}>🏋️</Text>
-              <Text style={styles.activityCompactValue}>{workoutCount}</Text>
-            </View>
-            
-            <View style={styles.activityCompactDivider} />
-            
-            <View style={styles.activityCompactStat}>
-              <Text style={styles.activityCompactIcon}>💪</Text>
-              <Text style={styles.activityCompactValue}>{totalExercises}</Text>
-            </View>
-            
-            <View style={styles.activityCompactDivider} />
-            
-            <View style={styles.activityCompactStat}>
-              <Text style={styles.activityCompactIcon}>🔥</Text>
-              <Text style={styles.activityCompactValue}>{totalSets}</Text>
-            </View>
-          </View>
-        )}
-  
-        <View style={styles.activityTooltipArrow} />
-      </LinearGradient>
     );
   };
 
@@ -975,7 +913,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
+      <LinearGradient colors={BACKGROUND_GRADIENT} style={styles.gradient}>
         <Animated.View
           style={[
             styles.header,
@@ -996,7 +934,20 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
             <Text style={styles.userName}>{displayName}</Text>
-            <Text style={styles.dateInfo}>{dateLabel}</Text>
+            <View style={styles.calendarLegend}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, styles.legendDoneDot]} />
+                <Text style={styles.legendLabel}>Done</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, styles.legendTodayDot]} />
+                <Text style={styles.legendLabel}>Today</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, styles.legendUpcomingDot]} />
+                <Text style={styles.legendLabel}>Upcoming</Text>
+              </View>
+            </View>
           </View>
           {onProfilePress && (
             <TouchableOpacity style={styles.avatarButton} onPress={onProfilePress}>
@@ -1023,101 +974,28 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           }}
         >
           <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
-            <View style={styles.activityHeader}>
-              <View style={styles.activityHeaderLeft}>
-                <Text style={styles.activityTitle}>ACTIVITY STREAK</Text>
-                <Text style={styles.activitySubtitle}>
-                  {resolvedPhase?.name || 'Current Phase'}
-                </Text>
-              </View>
-              <View style={styles.activityStats}>
-                <View style={styles.statBadge}>
-                  <Text style={styles.statValue}>{phaseStats.streak}</Text>
-                  <Text style={styles.statLabel}>day streak</Text>
-                </View>
-                <View style={styles.statBadge}>
-                  <Text style={styles.statValue}>{phaseStats.percentage}%</Text>
-                  <Text style={styles.statLabel}>complete</Text>
-                </View>
-              </View>
-            </View>
-            <View style={styles.progressBarContainer}>
-              <View style={styles.progressBarBg}>
-                <View
-                  style={[
-                    styles.progressBarFill,
-                    { width: `${phaseStats.percentage}%` },
-                  ]}
+            <View style={styles.activityCalendarWrapper}>
+              {calendarRange ? (
+                <Calendar
+                  current={calendarRange.currentKey}
+                  minDate={calendarRange.startKey}
+                  maxDate={calendarRange.endKey}
+                  enableSwipeMonths
+                  markingType="custom"
+                  markedDates={calendarMarkedDates}
+                  hideExtraDays={false}
+                  showSixWeeks
+                  theme={getCalendarTheme()}
+                  style={styles.activityCalendar}
                 />
-              </View>
-              <Text style={styles.progressText}>
-                {phaseStats.completed} of {phaseStats.total} days completed
-              </Text>
+              ) : (
+                <Text style={styles.activityCalendarEmptyText}>
+                  No phase dates available.
+                </Text>
+              )}
             </View>
-            <View style={styles.activityLegendRow}>
-              <Text style={styles.legendLabel}>Sessions per day:</Text>
-              <View style={styles.activityLegend}>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.activityLevel0]} />
-                  <Text style={styles.legendText}>None</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.activityLevel1]} />
-                  <Text style={styles.legendText}>1</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.activityLevel2]} />
-                  <Text style={styles.legendText}>2</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.activityLevel3]} />
-                  <Text style={styles.legendText}>3+</Text>
-                </View>
-              </View>
-            </View>
-            <View style={styles.activityGridWrapper}>
-              <View
-                style={styles.activityGrid}
-                onLayout={(event) =>
-                    setGridLayout({
-                      width: event.nativeEvent.layout.width,
-                      height: event.nativeEvent.layout.height,
-                    })
-                  }
-                >
-                  {activityColumns.map((column, colIdx) => (
-                    <View key={`col-${colIdx}`} style={styles.activityColumn}>
-                      {column.map((cell, rowIdx) => {
-                        const cellAnim = getActivityCellAnimation(cell.iso);
-                        return (
-                          <Animated.View
-                            key={cell.iso}
-                            style={{
-                              transform: [{ scale: cellAnim }],
-                            }}
-                          >
-                            <TouchableOpacity
-                              style={[
-                                styles.activityCell,
-                                getActivityLevelStyle(cell.level),
-                                cell.isToday && styles.activityCellToday,
-                              ]}
-                              onPress={() => {
-                                triggerActivityCellPulse(cell.iso, cell.level);
-                                setSelectedActivityMeta({ iso: cell.iso, row: rowIdx, col: colIdx });
-                              }}
-                              activeOpacity={0.85}
-                            />
-                          </Animated.View>
-                        );
-                      })}
-                    </View>
-                  ))}
-                </View>
-                {selectedActivity && renderActivityDetails()}
-              </View>
-            </LinearGradient>
-          </Animated.View>
+          </LinearGradient>
+        </Animated.View>
         </Animated.ScrollView>
 
         <ScrollView
@@ -1229,9 +1107,34 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginBottom: 8,
   },
-  dateInfo: {
-    fontSize: 15,
-    color: '#6C63FF',
+  calendarLegend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 6,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendDoneDot: {
+    backgroundColor: '#00F5A0',
+  },
+  legendTodayDot: {
+    backgroundColor: '#6C63FF',
+  },
+  legendUpcomingDot: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  legendLabel: {
+    fontSize: 12,
+    color: '#8B93B0',
     fontWeight: '500',
   },
   avatarButton: {
@@ -1261,7 +1164,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingBottom: 8,
   },
   contentScrollView: {
     flex: 1,
@@ -1273,193 +1176,24 @@ const styles = StyleSheet.create({
   },
   activityCard: {
     borderRadius: 20,
-    padding: 18,
+    padding: 0, 
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.15)',
-    marginBottom: 8,
+    marginBottom: 0,
   },
-  activityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
+  activityCalendarWrapper: {
+    marginTop: 0,
   },
-  activityHeaderLeft: {
-    flex: 1,
+  activityCalendar: {
+    alignSelf: 'stretch',
+    height: 220, // Allow room for 6 weeks
+    paddingBottom: 0,
   },
-  activityTitle: {
-    fontSize: 11,
+  activityCalendarEmptyText: {
     color: '#8B93B0',
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  activitySubtitle: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  activityStats: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  statBadge: {
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#00F5A0',
-  },
-  statLabel: {
-    fontSize: 10,
-    color: '#8B93B0',
-    marginTop: 2,
-  },
-  progressBarContainer: {
-    marginBottom: 16,
-  },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#00F5A0',
-    borderRadius: 3,
-  },
-  progressText: {
-    fontSize: 12,
-    color: '#8B93B0',
-    marginTop: 8,
     textAlign: 'center',
-  },
-  activityLegendRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  legendLabel: {
-    fontSize: 11,
-    color: '#8B93B0',
-    fontWeight: '600',
-  },
-  activityLegend: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 2,
-  },
-  legendText: {
-    fontSize: 11,
-    color: '#8B93B0',
-  },
-  activityGrid: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  activityGridWrapper: {
-    position: 'relative',
-    marginTop: 8,
-  },
-  activityColumn: {
-    flex: 1,
-    gap: 6,
-  },
-  activityCell: {
-    height: 10,
-    borderRadius: 4,
-    backgroundColor: 'rgba(108, 99, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.15)',
-  },
-  activityLevel0: {
-    backgroundColor: 'rgba(108, 99, 255, 0.08)',
-  },
-  activityLevel1: {
-    backgroundColor: 'rgba(0, 245, 160, 0.35)',
-    borderColor: 'rgba(0, 245, 160, 0.45)',
-  },
-  activityLevel2: {
-    backgroundColor: 'rgba(0, 245, 160, 0.6)',
-    borderColor: 'rgba(0, 245, 160, 0.7)',
-  },
-  activityLevel3: {
-    backgroundColor: '#00F5A0',
-    borderColor: 'rgba(0, 245, 160, 0.95)',
-  },
-  activityCellToday: {
-    borderWidth: 2,
-    borderColor: '#00F5A0',
-    shadowColor: '#00F5A0',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  activityDetailCard: {
-    position: 'absolute',
-    width: 100,
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderWidth: 1.5,
-    borderColor: 'rgba(108, 99, 255, 0.4)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 8,
-    overflow: 'visible',
-  },
-  activityTooltipArrow: {
-    position: 'absolute',
-    bottom: -5,
-    left: '50%',
-    marginLeft: -5,
-    width: 10,
-    height: 10,
-    backgroundColor: 'rgba(16, 20, 39, 0.98)',
-    borderRightWidth: 1.5,
-    borderBottomWidth: 1.5,
-    borderColor: 'rgba(108, 99, 255, 0.4)',
-    transform: [{ rotate: '45deg' }],
-  },
-  activityTooltipCompact: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  activityCompactStat: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  activityCompactIcon: {
     fontSize: 12,
-  },
-  activityCompactValue: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: -0.5,
-  },
-  activityCompactDivider: {
-    width: 1,
-    height: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingVertical: 12,
   },
   
   verticalTabBar: {
@@ -1549,9 +1283,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 6,
-  },
-  createSessionButton: {
-    marginTop: 16,
   },
   createPlanButtonText: {
     fontSize: 16,
@@ -1647,9 +1378,6 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 16,
   },
-  mealEmoji: {
-    fontSize: 24,
-  },
   mealInfo: {
     flex: 1,
   },
@@ -1702,20 +1430,5 @@ const styles = StyleSheet.create({
   },
   mealGroupToggleTextActive: {
     color: '#00F5A0',
-  },
-  mealEntryDoneBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,245,160,0.15)',
-    borderWidth: 1,
-    borderColor: '#00F5A0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mealEntryDoneText: {
-    fontSize: 14,
-    color: '#00F5A0',
-    fontWeight: '700',
   },
 });

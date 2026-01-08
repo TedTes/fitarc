@@ -199,7 +199,7 @@ export default function Home() {
                 <div className="hero-meals">
                   <div className="hero-meals-frame">
                     <Image
-                      src="/images/dashboard_diet.png"
+                      src="/images/dashboard_diet.jpg"
                       alt="Fitarc meals dashboard preview"
                       fill
                       sizes="(max-width: 720px) 260px, 300px"
@@ -210,7 +210,7 @@ export default function Home() {
                 <div className="hero-visual">
                   <div className="hero-frame">
                     <Image
-                      src="/images/dashboard_workout.png"
+                      src="/images/dashboard_workout.jpg"
                       alt="Fitarc dashboard preview"
                       fill
                       sizes="(max-width: 720px) 260px, 300px"
