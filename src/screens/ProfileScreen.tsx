@@ -459,12 +459,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
-          <Animated.View style={[styles.header, headerStyle]}>
-            <Text style={styles.title}>Settings</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </Animated.View>
+          <Animated.View style={[styles.header, headerStyle]} />
 
           <View style={styles.avatarRow}>
             <TouchableOpacity

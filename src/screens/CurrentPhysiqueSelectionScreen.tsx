@@ -47,9 +47,6 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
             <Text style={styles.title}>Please select current Level</Text>
-            <Text style={styles.subtitle}>
-              Select the physique level that best matches your current state
-            </Text>
             {currentLevelId ? (
               <Text style={styles.currentLevelText}>
                 Current level: {currentLevelId}
@@ -85,7 +82,7 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
           <View style={styles.actionRow}>
             {onCancel ? (
               <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={styles.cancelButtonText}>Back</Text>
               </TouchableOpacity>
             ) : null}
 
@@ -125,17 +122,27 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 32,
   },
+  backButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    backgroundColor: '#151932',
+    marginBottom: 12,
+  },
+  backButtonText: {
+    color: '#A0A3BD',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   title: {
     fontSize: 27,
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginBottom: 8,
     marginTop: 30
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#A0A3BD',
-    lineHeight: 24,
   },
   currentLevelText: {
     marginTop: 8,

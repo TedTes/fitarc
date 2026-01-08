@@ -935,7 +935,11 @@ function AppContent() {
             sex={tempProfileData.sex}
             currentLevelId={state.user?.currentPhysiqueLevel ?? 1}
             onSelectLevel={handleCurrentPhysiqueSelect}
-            onCancel={canCancel ? () => setOnboardingStep('complete') : undefined}
+            onCancel={
+              canCancel
+                ? () => setOnboardingStep('complete')
+                : () => setOnboardingStep('profile')
+            }
           />
           <StatusBar style="light" />
         </View>

@@ -152,7 +152,7 @@ const getCalendarDateStyles = (isComplete: boolean, isToday: boolean) => {
   let backgroundColor: string;
   let borderColor: string = 'transparent';
   let shadowOpacity: number = 0;
-  
+
   if (isComplete) {
     backgroundColor = COLORS.success;
     shadowOpacity = 0.4;
@@ -165,9 +165,9 @@ const getCalendarDateStyles = (isComplete: boolean, isToday: boolean) => {
   
   return {
     container: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
       alignItems: 'center' as const,
       justifyContent: 'center' as const,
       backgroundColor,
@@ -220,9 +220,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [localCompletionOverrides, setLocalCompletionOverrides] = useState<Record<string, boolean>>(
     {}
   );
+  const [orderUpdateTrigger, setOrderUpdateTrigger] = useState(0);
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastActiveTabRef = useRef<'workouts' | 'meals'>('workouts');
+  const orderUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // 🎨 Animation values
   const headerFadeAnim = useRef(new Animated.Value(0)).current;
@@ -275,6 +277,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       clearTimeout(toggleFlushTimeoutRef.current);
       toggleFlushTimeoutRef.current = null;
     }
+    if (orderUpdateTimeoutRef.current) {
+      clearTimeout(orderUpdateTimeoutRef.current);
+      orderUpdateTimeoutRef.current = null;
+    }
   }, [todaySession?.id]);
 
   const isExerciseMarked = useCallback(
@@ -323,7 +329,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       completed.push(exercise);
     });
     return [...pending, ...completed];
-  }, [displayExercises, isExerciseMarked]);
+  }, [displayExercises, isExerciseMarked, orderUpdateTrigger]);
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
@@ -657,21 +663,34 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const handleToggleExercise = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (!canLogWorkouts) return;
+    const key = getExerciseKey(exercise);
+    
     setLocalCompletionOverrides((prev) => {
-      const key = getExerciseKey(exercise);
       const current = prev[key] ?? exercise.completed;
       const nextValue = !current;
       if (nextValue) {
-        pendingOrderRef.current = pendingOrderRef.current.filter((entry) => entry !== key);
-        if (!completedOrderRef.current.includes(key)) {
-          completedOrderRef.current.push(key);
+        if (orderUpdateTimeoutRef.current) {
+          clearTimeout(orderUpdateTimeoutRef.current);
         }
+        orderUpdateTimeoutRef.current = setTimeout(() => {
+          pendingOrderRef.current = pendingOrderRef.current.filter((entry) => entry !== key);
+          if (!completedOrderRef.current.includes(key)) {
+            completedOrderRef.current.push(key);
+          }
+          setOrderUpdateTrigger((prev) => prev + 1);
+        }, 600);
       } else {
+        if (orderUpdateTimeoutRef.current) {
+          clearTimeout(orderUpdateTimeoutRef.current);
+          orderUpdateTimeoutRef.current = null;
+        }
         completedOrderRef.current = completedOrderRef.current.filter((entry) => entry !== key);
         if (!pendingOrderRef.current.includes(key)) {
           pendingOrderRef.current.push(key);
         }
+        setOrderUpdateTrigger((prev) => prev + 1);
       }
+      
       if (nextValue === exercise.completed) {
         const { [key]: _removed, ...rest } = prev;
         return rest;
@@ -680,8 +699,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     });
 
     const pending = pendingToggleRef.current;
-    const entry = pending.get(getExerciseKey(exercise));
-    pending.set(getExerciseKey(exercise), {
+    const entry = pending.get(key);
+    pending.set(key, {
       name: exercise.name,
       count: (entry?.count ?? 0) + 1,
     });
@@ -723,6 +742,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   useEffect(() => {
     return () => {
       void flushPendingToggles();
+      if (orderUpdateTimeoutRef.current) {
+        clearTimeout(orderUpdateTimeoutRef.current);
+        orderUpdateTimeoutRef.current = null;
+      }
     };
   }, [flushPendingToggles]);
 

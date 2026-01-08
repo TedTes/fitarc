@@ -397,8 +397,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     const fallback = selected.reduce<StrengthTrendView[]>((acc, [key, label]) => {
       const normalizedKey = key || toTrackingKey(label);
       if (existingKeys.has(normalizedKey)) return acc;
-      const weight = preferredWeightsByKey.get(normalizedKey);
-      if (!weight) return acc;
+      const weight = preferredWeightsByKey.get(normalizedKey) ?? 0;
       acc.push({
         key: normalizedKey as any,
         lift: label,

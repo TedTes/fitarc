@@ -59,9 +59,6 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
             <Text style={styles.title}>Please select your next goal</Text>
-            <Text style={styles.subtitle}>
-              Choose your target physique for this phase
-            </Text>
           </View>
 
           <View style={styles.currentBadge}>
@@ -76,45 +73,41 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
               const estimatedWeeks = levelGap * 8;
 
               return (
-                <TouchableOpacity
-                  key={level.id}
-                  style={[
-                    styles.levelCard,
-                    selectedTarget === level.id && styles.levelCardSelected,
-                  ]}
-                  onPress={() => setSelectedTarget(level.id)}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.levelHeader}>
-                    <View style={styles.levelBadgePill}>
-                      <Text style={styles.levelBadgeText}>Level {level.id}</Text>
+                <View key={level.id} style={styles.levelCardWrapper}>
+                  <TouchableOpacity
+                    style={[
+                      styles.levelCard,
+                      selectedTarget === level.id && styles.levelCardSelected,
+                    ]}
+                    onPress={() => setSelectedTarget(level.id)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.levelHeader}>
+                      <View style={styles.levelBadgePill}>
+                        <Text style={styles.levelBadgeText}>Level {level.id}</Text>
+                      </View>
+                      <Text style={styles.durationText}>~{estimatedWeeks} weeks</Text>
                     </View>
-                    <LinearGradient
-                      colors={['#6C63FF', '#5449CC']}
-                      style={styles.durationBadgeGradient}
-                    >
-                      <Text style={styles.durationBadgeText}>~{estimatedWeeks} weeks</Text>
-                    </LinearGradient>
-                  </View>
-                  <View style={styles.levelInfo}>
-                    <Text style={styles.levelName}>{level.name}</Text>
-                    <Text style={styles.levelDescription}>{level.description}</Text>
-                    <Text style={styles.bodyFat}>~{level.bodyFatRange} body fat</Text>
-                    <View style={styles.characteristics}>
-                      {level.characteristics.map((char, idx) => (
-                        <View key={idx} style={styles.characteristicRow}>
-                          <View style={styles.characteristicDot} />
-                          <Text style={styles.characteristicText}>{char}</Text>
-                        </View>
-                      ))}
+                    <View style={styles.levelInfo}>
+                      <Text style={styles.levelName}>{level.name}</Text>
+                      <Text style={styles.levelDescription}>{level.description}</Text>
+                      <Text style={styles.bodyFat}>~{level.bodyFatRange} body fat</Text>
+                      <View style={styles.characteristics}>
+                        {level.characteristics.map((char, idx) => (
+                          <View key={idx} style={styles.characteristicRow}>
+                            <View style={styles.characteristicDot} />
+                            <Text style={styles.characteristicText}>{char}</Text>
+                          </View>
+                        ))}
+                      </View>
                     </View>
-                  </View>
-                  {selectedTarget === level.id && (
-                    <View style={styles.selectedBadge}>
-                      <Text style={styles.selectedBadgeText}>✓</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
+                    {selectedTarget === level.id && (
+                      <View style={styles.selectedBadge}>
+                        <Text style={styles.selectedBadgeText}>✓</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </View>
               );
             })}
           </View>
@@ -195,11 +188,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: 30
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#A0A3BD',
-    lineHeight: 24,
-  },
   currentBadge: {
     backgroundColor: '#151932',
     borderRadius: 12,
@@ -215,8 +203,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   levelGrid: {
-    gap: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -8,
     marginBottom: 24,
+  },
+  levelCardWrapper: {
+    width: '50%',
+    paddingHorizontal: 8,
+    paddingBottom: 16,
   },
   levelCard: {
     backgroundColor: '#151932',
@@ -224,6 +219,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#2A2F4F',
     position: 'relative',
+    width: '100%',
   },
   levelCardSelected: {
     borderColor: '#00F5A0',
@@ -235,8 +231,8 @@ const styles = StyleSheet.create({
   },
   levelHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingTop: 16,
   },
@@ -253,15 +249,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
-  durationBadgeGradient: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  durationBadgeText: {
-    color: '#FFFFFF',
+  durationText: {
+    color: '#6C63FF',
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
   levelInfo: {
     padding: 16,
@@ -303,7 +294,7 @@ const styles = StyleSheet.create({
   },
   selectedBadge: {
     position: 'absolute',
-    top: 16,
+    bottom: 16,
     right: 16,
     width: 32,
     height: 32,
