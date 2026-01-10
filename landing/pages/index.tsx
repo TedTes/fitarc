@@ -124,7 +124,7 @@ export default function Home() {
   }, [])
 
   const handleAppStore = () => {
-    window.open('https://apps.apple.com', '_blank')
+    window.open('https://apps.apple.com/ca/app/fitarc/id6757266123', '_blank')
   }
 
   const handlePlayStore = () => {
