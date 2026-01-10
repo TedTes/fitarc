@@ -15,7 +15,6 @@ import {
   sessionToWorkoutLog,
 } from '../utils/workoutPlanner';
 import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
-import { createMealPlanForDate } from '../utils/dietPlanner';
 import {
   fetchWorkoutSessionEntries,
   createWorkoutSession,
@@ -70,18 +69,6 @@ const upsertMealPlan = (plans: DailyMealPlan[], plan: DailyMealPlan): DailyMealP
   return [...plans, plan];
 };
 
-const getOrCreateMealPlan = (
-  plans: DailyMealPlan[],
-  user: User,
-  phasePlanId: string,
-  date: string
-): DailyMealPlan => {
-  const existing = plans.find((plan) => plan.date === date && plan.phasePlanId === phasePlanId);
-  if (existing) {
-    return existing;
-  }
-  return createMealPlanForDate(user, phasePlanId, date);
-};
 
 export const useAppState = () => {
   const [state, setState] = useState<AppState | null>(null);
@@ -309,12 +296,10 @@ export const useAppState = () => {
     async (date: string, mealTitle: string) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
-      const plan = getOrCreateMealPlan(
-        current.mealPlans,
-        current.user,
-        current.currentPhase.id,
-        date
+      const plan = current.mealPlans.find(
+        (item) => item.date === date && item.phasePlanId === current.currentPhase!.id
       );
+      if (!plan) return;
       const updatedMeals = plan.meals.map((meal) =>
         meal.title === mealTitle ? { ...meal, completed: !meal.completed } : meal
       );
