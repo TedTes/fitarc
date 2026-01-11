@@ -1377,8 +1377,12 @@ const styles = StyleSheet.create({
     left: -4,
   },
   fabIcon: {
-    fontSize: 44,
+    fontSize: 36,
     fontWeight: '300',
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    lineHeight: 36,
+    includeFontPadding: false,
   },
   fabLabel: {
     fontSize: 11,

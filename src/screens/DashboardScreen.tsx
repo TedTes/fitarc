@@ -850,96 +850,113 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     );
   };
 
-  const renderWorkoutsSection = () => (
-    <View style={styles.section}>
-      {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>🎯</Text>
-          <Text style={styles.emptyTitle}>No active plan</Text>
-          <Text style={styles.emptyText}>
-            Create your personalized training plan to get started.
-          </Text>
-          
-          {onStartPhase && (
-            <Animated.View style={{ transform: [{ scale: createButtonPulse }] }}>
-              <TouchableOpacity 
-                style={styles.createPlanButton} 
-                onPress={onStartPhase}
-              >
-                <Text style={styles.createPlanButtonText}>Create Plan</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          )}
-        </View>
-      ) : !hasSyncedWorkout ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>📭</Text>
-          <Text style={styles.emptyTitle}>No workout scheduled</Text>
-          <Text style={styles.emptyText}>
-            Your workout for today will appear here once scheduled.
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.verticalList}>
-          {sortedWorkoutCards.map((exercise) => {
-            const isMarked = isExerciseMarked(exercise);
-            const cardKey = `${todayStr}-${getExerciseKey(exercise)}`;
-            const scaleAnim = getExerciseCardAnimation(cardKey);
+  const renderWorkoutsSection = () => {
+    const hasIncompleteExercises = displayExercises.some((exercise) => !isExerciseMarked(exercise));
+
+    return (
+      <View style={styles.section}>
+        {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyEmoji}>🎯</Text>
+            <Text style={styles.emptyTitle}>No active plan</Text>
+            <Text style={styles.emptyText}>
+              Create your personalized training plan to get started.
+            </Text>
             
-            return (
-              <Animated.View
-                key={cardKey}
-                style={{
-                  transform: [{ scale: scaleAnim }],
-                }}
-              >
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  disabled={!canLogWorkouts}
-                  onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise)}
+            {onStartPhase && (
+              <Animated.View style={{ transform: [{ scale: createButtonPulse }] }}>
+                <TouchableOpacity 
+                  style={styles.createPlanButton} 
+                  onPress={onStartPhase}
                 >
-                  <LinearGradient
-                    colors={CARD_GRADIENT_DEFAULT}
-                    style={[
-                      styles.exerciseCard,
-                      !canLogWorkouts && styles.exerciseCardDisabled,
-                    ]}
+                  <Text style={styles.createPlanButtonText}>Create Plan</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            )}
+          </View>
+        ) : !hasSyncedWorkout ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyEmoji}>📭</Text>
+            <Text style={styles.emptyTitle}>No workout scheduled</Text>
+            <Text style={styles.emptyText}>
+              Your workout for today will appear here once scheduled.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.verticalList}>
+            {sortedWorkoutCards.map((exercise) => {
+              const isMarked = isExerciseMarked(exercise);
+              const cardKey = `${todayStr}-${getExerciseKey(exercise)}`;
+              const scaleAnim = getExerciseCardAnimation(cardKey);
+              
+              return (
+                <Animated.View
+                  key={cardKey}
+                  style={{
+                    transform: [{ scale: scaleAnim }],
+                  }}
+                >
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    disabled={!canLogWorkouts}
+                    onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise)}
                   >
-                    <View style={styles.exerciseCardRow}>
-                      <View style={styles.exerciseCardMain}>
-                        <View style={styles.cardHeader}>
-                          <Animated.View
-                            style={{
-                              transform: [{ scale: checkboxPulseAnim }],
-                            }}
-                          >
-                            <View
-                              style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                    <LinearGradient
+                      colors={CARD_GRADIENT_DEFAULT}
+                      style={[
+                        styles.exerciseCard,
+                        !canLogWorkouts && styles.exerciseCardDisabled,
+                      ]}
+                    >
+                      <View style={styles.exerciseCardRow}>
+                        <View style={styles.exerciseCardMain}>
+                          <View style={styles.cardHeader}>
+                            <Animated.View
+                              style={{
+                                transform: [{ scale: checkboxPulseAnim }],
+                              }}
                             >
-                              {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
+                              <View
+                                style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                              >
+                                {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
+                              </View>
+                            </Animated.View>
+                            <View style={styles.exerciseHeaderText}>
+                              <Text style={styles.exerciseName}>{exercise.name}</Text>
+                              <Text style={styles.exerciseBodyParts}>
+                                {formatBodyPartList(exercise.bodyParts)}
+                              </Text>
+                              <Text style={styles.exerciseMetaLine}>
+                                {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
+                              </Text>
                             </View>
-                          </Animated.View>
-                          <View style={styles.exerciseHeaderText}>
-                            <Text style={styles.exerciseName}>{exercise.name}</Text>
-                            <Text style={styles.exerciseBodyParts}>
-                              {formatBodyPartList(exercise.bodyParts)}
-                            </Text>
-                            <Text style={styles.exerciseMetaLine}>
-                              {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
-                            </Text>
                           </View>
                         </View>
                       </View>
-                    </View>
-                  </LinearGradient>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </Animated.View>
+              );
+            })}
+
+            {hasIncompleteExercises && canLogWorkouts && onCompleteAllToday && (
+              <View style={styles.markAllContainer}>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  style={styles.markAllButton}
+                  onPress={onCompleteAllToday}
+                >
+                  <Text style={styles.markAllIcon}>✓</Text>
+                  <Text style={styles.markAllText}>Mark All Complete</Text>
                 </TouchableOpacity>
-              </Animated.View>
-            );
-          })}
-        </View>
-      )}
-    </View>
-  );
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   const renderMealsSection = () => (
     <View style={styles.section}>
@@ -964,6 +981,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       ) : (
         <View style={styles.verticalList}>
           {mealGroups.map((group) => renderMealGroup(group))}
+          {pendingMealCount > 0 && toggleDayCompleted && (
+            <View style={styles.markAllContainer}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={styles.markAllButton}
+                onPress={() => void toggleDayCompleted(true)}
+              >
+                <Text style={styles.markAllIcon}>✓</Text>
+                <Text style={styles.markAllText}>Mark All Complete</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       )}
     </View>
@@ -1547,6 +1576,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#A0A3BD',
     marginBottom: 4,
+  },
+  markAllContainer: {
+    marginTop: 16,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  markAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 245, 160, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 160, 0.2)',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    gap: 10,
+  },
+  markAllIcon: {
+    fontSize: 18,
+    color: '#00F5A0',
+    fontWeight: '700',
+  },
+  markAllText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#00F5A0',
+    letterSpacing: 0.3,
   },
   mealCard: {
     borderRadius: 20,
