@@ -235,6 +235,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
+  const [showMacrosSummary, setShowMacrosSummary] = useState(false);
+  const macrosSummaryAnim = useRef(new Animated.Value(0)).current;
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const hasActivePlan = resolvedPhase?.status === 'active';
@@ -466,6 +468,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     () => mealGroups.reduce((sum, group) => sum + group.entries.filter((e) => !e.isDone).length, 0),
     [mealGroups]
   );
+  const totalDayMacros = useMemo(() => {
+    const allEntries = mealGroups.flatMap((group) => group.entries);
+    return computeEntriesMacroTotals(allEntries);
+  }, [mealGroups]);
 
   const canLogWorkouts = hasActivePlan && !!onToggleWorkoutExercise;
 
@@ -489,6 +495,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       labelColor: COLORS.accent,
     };
 
+    if (activeTab === 'workouts') {
+      return {
+        ...baseConfig,
+        label: 'Meals',
+        icon: '🥗',
+        onPress: () => setActiveTab('meals'),
+      };
+    }
+    if (activeTab === 'meals') {
+      return {
+        ...baseConfig,
+        label: 'Workouts',
+        icon: '💪',
+        onPress: () => setActiveTab('workouts'),
+      };
+    }
     if (shouldCreatePlan) {
       return {
         ...baseConfig,
@@ -549,6 +571,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     handleOpenPlans,
     toggleDayCompleted,
     onCompleteAllToday,
+    setActiveTab,
   ]);
 
   useEffect(() => {
@@ -740,6 +763,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   }, [activeTab, flushPendingToggles]);
 
   useEffect(() => {
+    setShowMacrosSummary(activeTab === 'meals' && mealGroups.length > 0);
+  }, [activeTab, mealGroups.length]);
+
+  useEffect(() => {
+    Animated.spring(macrosSummaryAnim, {
+      toValue: showMacrosSummary ? 1 : 0,
+      ...ANIMATION_CONFIG.springMedium,
+      useNativeDriver: true,
+    }).start();
+  }, [macrosSummaryAnim, showMacrosSummary]);
+
+  useEffect(() => {
     return () => {
       void flushPendingToggles();
       if (orderUpdateTimeoutRef.current) {
@@ -886,14 +921,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                           </Animated.View>
                           <View style={styles.exerciseHeaderText}>
                             <Text style={styles.exerciseName}>{exercise.name}</Text>
+                            <Text style={styles.exerciseBodyParts}>
+                              {formatBodyPartList(exercise.bodyParts)}
+                            </Text>
                             <Text style={styles.exerciseMetaLine}>
                               {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
                             </Text>
                           </View>
                         </View>
-                        <Text style={styles.exerciseBodyParts}>
-                          {formatBodyPartList(exercise.bodyParts)}
-                        </Text>
                       </View>
                     </View>
                   </LinearGradient>
@@ -934,6 +969,66 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     </View>
   );
 
+  const renderMacrosSummary = () => {
+    const { calories, protein, carbs, fats } = totalDayMacros;
+    const macroItems = [
+      { label: 'Protein', value: protein ?? 0, color: '#00F5A0' },
+      { label: 'Carbs', value: carbs ?? 0, color: '#FF6B9D' },
+      { label: 'Fat', value: fats ?? 0, color: '#FFB74D' },
+    ];
+    const macroTotal = macroItems.reduce((sum, item) => sum + item.value, 0);
+
+    return (
+      <Animated.View
+        style={[
+          styles.macrosSummaryContainer,
+          {
+            opacity: macrosSummaryAnim,
+            transform: [
+              {
+                translateY: macrosSummaryAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [16, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <View style={styles.macrosRow}>
+          <View style={styles.macrosPie}>
+            <View style={[styles.pieQuadrant, styles.pieTopLeft, { backgroundColor: macroItems[0].color }]} />
+            <View style={[styles.pieQuadrant, styles.pieTopRight, { backgroundColor: macroItems[1].color }]} />
+            <View style={[styles.pieQuadrant, styles.pieBottomLeft, { backgroundColor: macroItems[2].color }]} />
+            <View style={styles.pieCenter}>
+              <Text style={styles.pieCenterLabel}>Total</Text>
+              <Text style={styles.pieCenterValue}>{Math.round(calories ?? 0)}</Text>
+              <Text style={styles.pieCenterUnit}>kcal</Text>
+            </View>
+          </View>
+
+          <View style={styles.macrosLegend}>
+            {macroItems.map((item) => {
+              const percent = macroTotal ? Math.round((item.value / macroTotal) * 100) : 0;
+              return (
+                <View key={item.label} style={styles.macrosLegendItem}>
+                  <View style={[styles.macrosLegendSwatch, { backgroundColor: item.color }]} />
+                  <View>
+                    <Text style={styles.macrosLegendLabel}>{item.label}</Text>
+                    <Text style={styles.macrosLegendValue}>
+                      {Math.round(item.value)}g · {percent}%
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+      </Animated.View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <LinearGradient colors={BACKGROUND_GRADIENT} style={styles.gradient}>
@@ -957,20 +1052,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
             <Text style={styles.userName}>{displayName}</Text>
-            <View style={styles.calendarLegend}>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, styles.legendDoneDot]} />
-                <Text style={styles.legendLabel}>Done</Text>
+            {!showMacrosSummary && (
+              <View style={styles.calendarLegend}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, styles.legendDoneDot]} />
+                  <Text style={styles.legendLabel}>Done</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, styles.legendTodayDot]} />
+                  <Text style={styles.legendLabel}>Today</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, styles.legendUpcomingDot]} />
+                  <Text style={styles.legendLabel}>Upcoming</Text>
+                </View>
               </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, styles.legendTodayDot]} />
-                <Text style={styles.legendLabel}>Today</Text>
-              </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, styles.legendUpcomingDot]} />
-                <Text style={styles.legendLabel}>Upcoming</Text>
-              </View>
-            </View>
+            )}
           </View>
           {onProfilePress && (
             <TouchableOpacity style={styles.avatarButton} onPress={onProfilePress}>
@@ -998,24 +1095,64 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         >
           <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
             <View style={styles.activityCalendarWrapper}>
-              {calendarRange ? (
-                <Calendar
-                  current={calendarRange.currentKey}
-                  minDate={calendarRange.startKey}
-                  maxDate={calendarRange.endKey}
-                  enableSwipeMonths
-                  markingType="custom"
-                  markedDates={calendarMarkedDates}
-                  hideExtraDays={false}
-                  showSixWeeks
-                  theme={getCalendarTheme()}
-                  style={styles.activityCalendar}
-                />
-              ) : (
-                <Text style={styles.activityCalendarEmptyText}>
-                  No phase dates available.
-                </Text>
-              )}
+              <Animated.View
+                style={[
+                  styles.activityCalendarLayer,
+                  {
+                    opacity: macrosSummaryAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 0],
+                    }),
+                    transform: [
+                      {
+                        translateY: macrosSummaryAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, -12],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+                pointerEvents={showMacrosSummary ? 'none' : 'auto'}
+              >
+                {calendarRange ? (
+                  <Calendar
+                    current={calendarRange.currentKey}
+                    minDate={calendarRange.startKey}
+                    maxDate={calendarRange.endKey}
+                    enableSwipeMonths
+                    markingType="custom"
+                    markedDates={calendarMarkedDates}
+                    hideExtraDays={false}
+                    showSixWeeks
+                    theme={getCalendarTheme()}
+                    style={styles.activityCalendar}
+                  />
+                ) : (
+                  <Text style={styles.activityCalendarEmptyText}>
+                    No phase dates available.
+                  </Text>
+                )}
+              </Animated.View>
+              <Animated.View
+                style={[
+                  styles.activityCalendarLayer,
+                  {
+                    opacity: macrosSummaryAnim,
+                    transform: [
+                      {
+                        translateY: macrosSummaryAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [16, 0],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+                pointerEvents={showMacrosSummary ? 'auto' : 'none'}
+              >
+                {renderMacrosSummary()}
+              </Animated.View>
             </View>
           </LinearGradient>
         </Animated.View>
@@ -1029,71 +1166,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         >
           {activeTab === 'workouts' ? renderWorkoutsSection() : renderMealsSection()}
         </ScrollView>
-
-        {/* Vertical Tab Sidebar - Right side, near FAB position */}
-        <View style={styles.verticalTabBar}>
-          <TouchableOpacity
-            style={[
-              styles.verticalTab,
-              activeTab === 'meals' && styles.verticalTabActive,
-            ]}
-            onPress={() => setActiveTab('meals')}
-            onLongPress={() => Alert.alert('Meals', 'View your nutrition plan')}
-            activeOpacity={0.7}
-          >
-            <Animated.View
-              style={{
-                transform: [
-                  {
-                    scale: tabSwitchAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1, 1.15],
-                    }),
-                  },
-                ],
-              }}
-            >
-              <Text style={[
-                styles.verticalTabIcon,
-                activeTab === 'meals' && styles.verticalTabIconActive,
-              ]}>
-                🥗
-              </Text>
-            </Animated.View>
-          </TouchableOpacity>
-
-          <View style={styles.verticalTabDivider} />
-
-          <TouchableOpacity
-            style={[
-              styles.verticalTab,
-              activeTab === 'workouts' && styles.verticalTabActive,
-            ]}
-            onPress={() => setActiveTab('workouts')}
-            onLongPress={() => Alert.alert('Workouts', 'View your workout exercises')}
-            activeOpacity={0.7}
-          >
-            <Animated.View
-              style={{
-                transform: [
-                  {
-                    scale: tabSwitchAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1.15, 1],
-                    }),
-                  },
-                ],
-              }}
-            >
-              <Text style={[
-                styles.verticalTabIcon,
-                activeTab === 'workouts' && styles.verticalTabIconActive,
-              ]}>
-                💪
-              </Text>
-            </Animated.View>
-          </TouchableOpacity>
-        </View>
 
       </LinearGradient>
     </View>
@@ -1195,7 +1267,7 @@ const styles = StyleSheet.create({
   contentScrollContent: {
     paddingHorizontal: 20,
     paddingTop: 0,
-    paddingBottom: 120,
+    paddingBottom: 160,
   },
   activityCard: {
     borderRadius: 20,
@@ -1206,6 +1278,14 @@ const styles = StyleSheet.create({
   },
   activityCalendarWrapper: {
     marginTop: 0,
+    position: 'relative',
+    minHeight: 220,
+  },
+  activityCalendarLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
   },
   activityCalendar: {
     alignSelf: 'stretch',
@@ -1217,6 +1297,86 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 12,
     paddingVertical: 12,
+  },
+  macrosSummaryContainer: {
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    minHeight: 220,
+    justifyContent: 'center',
+  },
+  macrosRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 45,
+  },
+  macrosPie: {
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    position: 'relative',
+  },
+  pieQuadrant: {
+    position: 'absolute',
+    width: '50%',
+    height: '50%',
+  },
+  pieTopLeft: { top: 0, left: 0 },
+  pieTopRight: { top: 0, right: 0 },
+  pieBottomLeft: { bottom: 0, left: 0 },
+  pieCenter: {
+    position: 'absolute',
+    top: '22%',
+    left: '22%',
+    width: '56%',
+    height: '56%',
+    borderRadius: 80,
+    backgroundColor: 'rgba(10, 14, 39, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+  },
+  pieCenterLabel: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  pieCenterValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    letterSpacing: -0.4,
+  },
+  pieCenterUnit: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+  },
+  macrosLegend: {
+    flexShrink: 1,
+    gap: 8,
+    alignItems: 'flex-start',
+  },
+  macrosLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  macrosLegendSwatch: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  macrosLegendValue: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+  },
+  macrosLegendLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
   },
   
   verticalTabBar: {
@@ -1318,12 +1478,11 @@ const styles = StyleSheet.create({
   },
   exerciseCard: {
     borderRadius: 4,
-    padding: 20,
+    padding: 16,
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.2)',
     position: 'relative',
-    overflow: 'visible',
-    aspectRatio: 5,
+    overflow: 'hidden',
     width: '100%',
   },
   exerciseCardDisabled: {
@@ -1342,7 +1501,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   exerciseHeaderText: {
     flex: 1,
@@ -1385,9 +1544,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   exerciseBodyParts: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#A0A3BD',
-    marginBottom: 12,
+    marginBottom: 4,
   },
   mealCard: {
     borderRadius: 20,

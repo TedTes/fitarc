@@ -31,6 +31,7 @@ import {
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { ExerciseCatalogEntry } from '../services/workoutService';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
+import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
 import { fetchWorkoutCompletionMap } from '../services/workoutService';
 
@@ -67,6 +68,17 @@ const COLORS = {
 const MAX_LIBRARY_ITEMS = 30;
 
 const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = ['All', 'chest', 'back', 'shoulders', 'arms', 'legs', 'core'];
+const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
+
+const formatBodyPartList = (parts: MuscleGroup[]): string => {
+  if (!parts.length) return 'Full Body';
+  return parts
+    .map((part) => {
+      const key = part.toLowerCase();
+      return KNOWN_BODY_PARTS.has(key) ? getBodyPartLabel(key as any) : part;
+    })
+    .join(' • ');
+};
 
 const parseLocalDateFromYMD = (dateStr: string) => {
   const [yearStr, monthStr, dayStr] = dateStr.split('-');
@@ -726,6 +738,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                   <View style={styles.exerciseHeaderRow}>
                     <View style={styles.exerciseHeaderInfo}>
                       <Text style={styles.exerciseName}>{exercise.name}</Text>
+                      <Text style={styles.exerciseBodyParts}>
+                        {formatBodyPartList(exercise.bodyParts)}
+                      </Text>
                     </View>
                     <View style={styles.exerciseHeaderActions}>
                       {exercise.completed && (
@@ -1088,6 +1103,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.textPrimary,
+  },
+  exerciseBodyParts: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 4,
   },
   exerciseHeaderActions: {
     flexDirection: 'row',
