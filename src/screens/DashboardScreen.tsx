@@ -837,8 +837,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </Text>
             </View>
           </View>
-          {entries.map((entry) => (
-            <View key={entry.id} style={styles.mealEntry}>
+          {entries.map((entry, index) => (
+            <View
+              key={entry.id}
+              style={[
+                styles.mealEntry,
+                index === entries.length - 1 && styles.mealEntryLast,
+              ]}
+            >
               <View>
                 <Text style={styles.mealEntryName}>{entry.foodName}</Text>
                 <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
@@ -1608,7 +1614,7 @@ const styles = StyleSheet.create({
   },
   mealCard: {
     borderRadius: 20,
-    padding: 20,
+    padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.2)',
   },
@@ -1616,39 +1622,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   mealInfo: {
     flex: 1,
   },
   mealName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   mealMeta: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#8B93B0',
+    lineHeight: 16,
   },
   mealEntry: {
-    paddingTop: 12,
+    paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.04)',
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  mealEntryLast: {
+    paddingBottom: 4,
   },
   mealEntryName: {
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
     marginBottom: 4,
+    lineHeight: 20,
   },
   mealEntryMacros: {
     fontSize: 12,
     color: '#8B93B0',
+    lineHeight: 16,
   },
   mealGroupToggle: {
     width: 24,
