@@ -92,8 +92,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     endKey,
     phase?.id ?? null
   );
-  const [selectedDate, setSelectedDate] = useState(todayKey);
-  const selectedDateObj = useMemo(() => parseLocalDateFromYMD(selectedDate), [selectedDate]);
+  const selectedDateObj = useMemo(() => parseLocalDateFromYMD(todayKey), [todayKey]);
 
   const {
     dailyMeal,
@@ -144,35 +143,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       console.error('Failed to load stored foods', err);
     } 
   }, [user.id]);
-
-  const weeklyMenus = useMemo(() => {
-    const menus: Array<{
-      dateStr: string;
-      weekday: string;
-      isToday: boolean;
-      hasMeals: boolean;
-    }> = [];
-    const start = parseLocalDateFromYMD(todayKey);
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(start);
-      date.setDate(start.getDate() + i);
-      const dateStr = formatLocalDateYMD(date);
-      const plan = mealPlansByDate[dateStr];
-      menus.push({
-        dateStr,
-        weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
-        isToday: dateStr === todayKey,
-        hasMeals: Boolean(plan && plan.meals && plan.meals.length > 0),
-      });
-    }
-    return menus;
-  }, [mealPlansByDate, todayKey]);
-
-  useEffect(() => {
-    if (!weeklyMenus.some((menu) => menu.dateStr === selectedDate)) {
-      setSelectedDate(todayKey);
-    }
-  }, [weeklyMenus, selectedDate, todayKey]);
 
   const baseMealTypes = useMemo(() => Object.keys(mealsByType), [mealsByType]);
 
@@ -567,27 +537,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
             <View style={styles.headerTop}>
               <Text style={styles.headerTitle}>Nutrition</Text>
             </View>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
-              contentContainerStyle={styles.weekStrip}
-            >
-              {weeklyMenus.map((menu) => {
-                const isActive = menu.dateStr === selectedDate;
-                return (
-                  <TouchableOpacity
-                    key={menu.dateStr}
-                    style={[styles.dayChip, isActive && styles.dayChipActive]}
-                    onPress={() => setSelectedDate(menu.dateStr)}
-                  >
-                    <Text style={[styles.dayChipLabel, isActive && styles.dayChipLabelActive]}>
-                      {menu.weekday}
-                    </Text>
-                    {menu.hasMeals && <View style={styles.dayIndicatorDot} />}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
           </View>
 
           {/* Content */}
@@ -826,40 +775,6 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '700',
     color: COLORS.textPrimary,
-  },
-  weekStrip: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingVertical: 4,
-  },
-  dayChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    minWidth: 70,
-    alignItems: 'center',
-  },
-  dayChipActive: {
-    backgroundColor: COLORS.accent,
-    borderColor: COLORS.accent,
-  },
-  dayChipLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  dayChipLabelActive: {
-    color: COLORS.textPrimary,
-  },
-  dayIndicatorDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: COLORS.success,
-    marginTop: 4,
   },
   content: {
     padding: 20,
