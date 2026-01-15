@@ -22,7 +22,6 @@ import {
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
-  PlansScreen,
   ProgressScreen, 
   MenuScreen,
   PhotoCaptureScreen,
@@ -43,10 +42,7 @@ import { fetchHomeData } from './src/services/dashboardService';
 import { addDays, formatLocalDateYMD, parseYMDToDate } from './src/utils/date';
 import {
   createMealPlanWithSeed,
-  ensureDailyMealForDate,
   hasDailyMealsInRange,
-  setDailyMealsCompleted,
-  setDailyMealEntriesDone,
 } from './src/services/mealService';
 import { 
   createPhaseWithWorkouts,
@@ -58,7 +54,6 @@ import { deleteAccount as deleteAccountService } from './src/services/accountSer
 
 type RootTabParamList = {
   Home: undefined;
-  Workouts: undefined;
   Menu: undefined;
   Progress: undefined;
 };
@@ -68,8 +63,7 @@ const Tab = createBottomTabNavigator<RootTabParamList>();
 type IoniconName = keyof typeof Ionicons.glyphMap;
 
 const TAB_ICONS: Record<keyof RootTabParamList, { default: IoniconName; active: IoniconName }> = {
-  Home: { default: 'home-outline', active: 'home' },
-  Workouts: { default: 'barbell-outline', active: 'barbell' },
+  Home: { default: 'barbell-outline', active: 'barbell' },
   Menu: { default: 'fast-food-outline', active: 'fast-food' },
   Progress: { default: 'stats-chart-outline', active: 'stats-chart' },
 };
@@ -79,7 +73,6 @@ const linking = {
   config: {
     screens: {
       Home: 'home',
-      Workouts: 'workouts',
       Menu: 'menu',
       Progress: 'progress',
     },
@@ -189,7 +182,7 @@ const AnimatedTabButton: React.FC<{
         <View>
           <Ionicons
             name={focused ? activeIcon : icon}
-            size={34}
+            size={40}
             color="rgba(255,255,255,0.6)"
           />
         </View>
@@ -340,12 +333,7 @@ function AppContent() {
     addPhotoCheckin,
     startPhase,
     toggleWorkoutExercise,
-    saveCustomWorkoutSession,
     createWorkoutSession,
-    addWorkoutExercise,
-    deleteWorkoutExercise,
-    deleteWorkoutSession,
-    markAllWorkoutsComplete,
     clearAllData,
     resetWorkoutData,
     loadWorkoutSessionsFromSupabase,
@@ -363,24 +351,6 @@ function AppContent() {
   const tabFabPop = useRef(new Animated.Value(0)).current;
   const showPlanTabs = Boolean(state?.user);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
-
-  const handleCompleteAllToday = useCallback(async () => {
-    if (!state?.user || !state.currentPhase) return;
-    const todayStr = formatLocalDateYMD(new Date());
-    await markAllWorkoutsComplete(todayStr);
-
-    try {
-      const dailyMeal = await ensureDailyMealForDate(
-        state.user.id,
-        todayStr,
-        state.currentPhase.id
-      );
-      await setDailyMealsCompleted(dailyMeal.id, true);
-      await setDailyMealEntriesDone(dailyMeal.id, true);
-    } catch (error) {
-      console.error('Failed to complete meals for today', error);
-    }
-  }, [markAllWorkoutsComplete, state?.currentPhase, state?.user]);
 
   const handleAddProgress = useCallback(() => {
     if (!state?.currentPhase) return;
@@ -465,7 +435,7 @@ function AppContent() {
   useEffect(() => {
     if (!navigationRef.isReady()) return;
     if (showPlanTabs) return;
-    if (currentRouteName === 'Workouts' || currentRouteName === 'Menu') {
+    if (currentRouteName === 'Menu') {
       navigationRef.navigate('Home');
     }
   }, [currentRouteName, navigationRef, showPlanTabs]);
@@ -796,7 +766,6 @@ function AppContent() {
 
     if (phaseId) {
       if (!hadPhase) {
-        setFabAction('Workouts', null);
         setFabAction('Menu', null);
         setFabAction('Progress', null);
       }
@@ -809,7 +778,6 @@ function AppContent() {
         labelColor: '#6C63FF',
         onPress: handleStartPhaseFromDashboard,
       };
-      setFabAction('Workouts', createPlanAction);
       setFabAction('Menu', createPlanAction);
       setFabAction('Progress', createPlanAction);
     }
@@ -1006,32 +974,11 @@ function AppContent() {
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
                   onCreateSession={createWorkoutSession}
-                  onCompleteAllToday={handleCompleteAllToday}
                 />
               ) : (
                 <TabPlaceholder
                   title="Welcome to FitArc"
                   subtitle="Complete onboarding to unlock your dashboard."
-                />
-              )
-            }
-          </Tab.Screen>
-          <Tab.Screen name="Workouts">
-            {() =>
-              state?.user && state.currentPhase ? (
-                <PlansScreen
-                  user={state.user}
-                  phase={state.currentPhase}
-                  workoutSessions={state.workoutSessions}
-                  onSaveCustomSession={saveCustomWorkoutSession}
-                  onAddExercise={addWorkoutExercise}
-                  onDeleteExercise={deleteWorkoutExercise}
-                  onDeleteSession={deleteWorkoutSession}
-                />
-              ) : (
-                <TabPlaceholder
-                  title="No active plan"
-                  subtitle="Create a plan to start building workout sessions."
                 />
               )
             }
@@ -1095,18 +1042,6 @@ function AppContent() {
                 navigationRef.navigate('Home');
               }}
             />
-            {showPlanTabs && (
-              <AnimatedTabButton
-                focused={currentRouteName === 'Workouts'}
-                icon={TAB_ICONS.Workouts.default}
-                activeIcon={TAB_ICONS.Workouts.active}
-                onPress={() => {
-                  setProfileVisible(false);
-                  triggerTabFabPop();
-                  navigationRef.navigate('Workouts');
-                }}
-              />
-            )}
             {showPlanTabs && (
               <AnimatedTabButton
                 focused={currentRouteName === 'Menu'}
@@ -1284,7 +1219,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 88,
+    height: 104,
     zIndex: 10,
   },
   tabBarBackground: {
@@ -1309,21 +1244,20 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingBottom: 20,
-    paddingTop: 8,
-    paddingLeft: 4,
-    paddingRight: 4,
+    justifyContent: 'space-between',
+    paddingBottom: 26,
+    paddingTop: 12,
+    paddingLeft: 12,
+    paddingRight: 12,
   },
   tabButton: {
-    flex: 0,
-    width: 70,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    marginRight: 7,
+    paddingVertical: 12,
   },
   tabButtonInner: {
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -1339,7 +1273,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   fabSpacer: {
-    width: 80,
+    width: 92,
   },
   fabContainer: {
     position: 'absolute',

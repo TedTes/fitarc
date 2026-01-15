@@ -12,17 +12,18 @@ import {
   TouchableOpacity,
   View,
   ActivityIndicator,
+  FlatList,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
-import {  PhasePlan, User } from '../types/domain';
-import { useMealPlans } from '../hooks/useMealPlans';
+import { PhasePlan, User } from '../types/domain';
 import { formatLocalDateYMD } from '../utils/date';
+import { useMealPlans } from '../hooks/useMealPlans';
 import { useTodayMeals, DUPLICATE_MEAL_ENTRY_ERROR } from '../hooks/useTodayMeals';
-import { FoodItem, createUserFood, fetchStoredFoods, searchFoods } from '../services/mealService';
-import { MealEntry } from '../services/mealService';
-import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
+import { FoodItem, MealEntry, createUserFood, fetchStoredFoods, searchFoods } from '../services/mealService';
 import { useFabAction } from '../contexts/FabActionContext';
+import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
 
 type MenuScreenProps = {
   user: User;
@@ -30,6 +31,7 @@ type MenuScreenProps = {
 };
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
+const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'] as const;
 const COLORS = {
   bgPrimary: '#0A0E27',
   card: '#101427',
@@ -86,7 +88,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   endDate.setDate(today.getDate() + 6);
   const endKey = formatLocalDateYMD(endDate);
 
-  const { mealPlansByDate, refresh: refreshMealPlans } = useMealPlans(
+  const { refresh: refreshMealPlans } = useMealPlans(
     user.id,
     todayKey,
     endKey,
@@ -99,7 +101,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     mealsByType,
     isLoading: isMealsLoading,
     isMutating: isMealsMutating,
-    error: todayMealsError,
     addEntryFromFood: addFoodEntry,
     removeEntry,
 
@@ -154,6 +155,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       }))
       .filter((group) => group.entries.length > 0);
   }, [baseMealTypes, mealsByType]);
+  const totalDayMacros = useMemo(() => {
+    const allEntries = mealGroups.flatMap((group) => group.entries);
+    return computeEntriesMacroTotals(allEntries);
+  }, [mealGroups]);
 
   // Meal types shown in the UI (plan + logged + custom)
   const allMealTypes = useMemo((): string[] => {
@@ -167,10 +172,17 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       ordered.push(normalized);
       seen.add(key);
     };
+    DEFAULT_MEAL_TYPES.forEach((type) => pushType(type));
     mealGroups.forEach((group) => pushType(group.mealType));
     customMealTypes.forEach((type) => pushType(type));
     return ordered;
   }, [mealGroups, customMealTypes]);
+
+  useEffect(() => {
+    if (!selectedMealTypeForAdding && allMealTypes.length > 0) {
+      setSelectedMealTypeForAdding(allMealTypes[0]);
+    }
+  }, [allMealTypes, selectedMealTypeForAdding]);
 
   const handleAddCustomMealType = useCallback(
     (label: string) => {
@@ -246,7 +258,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   };
 
   useEffect(() => {
-    if (!mealModalVisible || mealModalMode !== 'search') return;
+    if (mealModalVisible && mealModalMode !== 'search') return;
     const trimmed = foodQuery.trim();
     if (trimmed.length < 1) {
       setFoodSuggestions([]);
@@ -275,6 +287,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     }, 300);
     return () => clearTimeout(searchTimeout);
   }, [foodQuery, mealModalVisible, mealModalMode, user.id]);
+
+  useEffect(() => {
+    if (!storedFoodsLoadedRef.current) {
+      loadStoredFoods();
+    }
+  }, [loadStoredFoods]);
 
   const handleSelectFoodSuggestion = async (food: FoodItem) => {
     try {
@@ -376,84 +394,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     );
   }
 
-  const renderMealGroup = (group: { mealType: string; entries: MealEntry[] }) => {
-    const { mealType, entries } = group;
-    if (entries.length === 0) return null;
-
-    const totals = computeEntriesMacroTotals(entries);
-    const caloriesLabel = `${Math.round(totals.calories) || 0} kcal`;
-
-    return (
-      <View key={mealType} style={styles.mealGroupCard}>
-        <View style={styles.mealGroupHeader}>
-          <View style={styles.mealGroupIconContainer}>
-            <Text style={styles.mealGroupEmoji}>{getMealEmoji(mealType)}</Text>
-          </View>
-          <View style={styles.mealGroupInfo}>
-            <Text style={styles.mealGroupTitle}>{mealType}</Text>
-            <Text style={styles.mealGroupMeta}>
-              {entries.length > 0 ? caloriesLabel : 'No items logged'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Logged meal entries */}
-        <View style={styles.loggedEntriesContainer}>
-          {entries.map((entry) => (
-            <View key={entry.id} style={styles.mealEntryCard}>
-              <View style={styles.mealEntryInfo}>
-                <Text style={styles.mealEntryName}>{entry.foodName}</Text>
-                <Text style={styles.mealEntryMeta}>{formatMealEntryMacros(entry)}</Text>
-              </View>
-              <View style={styles.mealEntryActions}>
-                {entry.isDone && (
-                  <View style={styles.mealEntryDoneBadge}>
-                    <Text style={styles.mealEntryDoneText}>✓</Text>
-                  </View>
-                )}
-                {!entry.isDone && (
-                  <TouchableOpacity
-                    style={styles.mealEntryDeleteButton}
-                    onPress={() => confirmDeleteEntry(entry.id)}
-                    disabled={isMealsMutating}
-                  >
-                    <Text style={styles.mealEntryDeleteText}>×</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  };
-
-  const renderMeals = () => {
-    const showEmptyState = mealGroups.length === 0 && !isMealsLoading;
-
-    return (
-      <View style={styles.mealsContainer}>
-        {isMealsLoading && !dailyMeal ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={COLORS.accent} />
-            <Text style={styles.loadingText}>Loading meals...</Text>
-          </View>
-        ) : showEmptyState ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyCardIcon}>🥗</Text>
-            <Text style={styles.emptyCardTitle}>No meals planned</Text>
-            <Text style={styles.emptyCardSubtitle}>
-              Tap the "+" button below to start planning your nutrition.
-            </Text>
-          </View>
-        ) : (
-          mealGroups.map((group) => renderMealGroup(group))
-        )}
-        {todayMealsError && <Text style={styles.errorText}>{todayMealsError}</Text>}
-      </View>
-    );
-  };
-
   const renderMealTypeSelector = () => {
     return (
       <View style={styles.mealTypeSelectorContainer}>
@@ -524,26 +464,213 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     );
   };
 
+  const renderMealGroup = ({ item: group }: { item: { mealType: string; entries: MealEntry[] } }) => {
+    const { mealType, entries } = group;
+
+    const totals = computeEntriesMacroTotals(entries);
+    const caloriesLabel = `${Math.round(totals.calories) || 0} kcal`;
+    const macroLine = `${Math.round(totals.protein) || 0}g P · ${Math.round(totals.carbs) || 0}g C · ${Math.round(totals.fats) || 0}g F`;
+
+    return (
+      <View style={styles.mealGroupCard}>
+        <View style={styles.mealGroupHeader}>
+          <View style={styles.mealGroupIcon}>
+            <Text style={styles.mealGroupEmoji}>{getMealEmoji(mealType)}</Text>
+          </View>
+          <View style={styles.mealGroupHeaderText}>
+            <Text style={styles.mealGroupTitle}>{mealType}</Text>
+            <Text style={styles.mealGroupMeta}>{caloriesLabel}</Text>
+            <Text style={styles.mealGroupMacros}>{macroLine}</Text>
+          </View>
+        </View>
+        <View style={styles.mealItems}>
+          {entries.map((entry, index) => (
+            <View
+              key={entry.id}
+              style={[
+                styles.mealEntryRow,
+                index === entries.length - 1 && styles.mealEntryRowLast,
+              ]}
+            >
+              <View style={styles.mealEntryInfo}>
+                <Text style={styles.mealEntryName}>{entry.foodName}</Text>
+                <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
+              </View>
+              <View style={styles.mealEntryActions}>
+                {entry.isDone ? (
+                  <View style={styles.mealEntryDoneBadge}>
+                    <Text style={styles.mealEntryDoneText}>✓</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.mealEntryDeleteButton}
+                    onPress={() => confirmDeleteEntry(entry.id)}
+                    disabled={isMealsMutating}
+                  >
+                    <Text style={styles.mealEntryDeleteText}>×</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  const renderMacroSummary = () => {
+    if (!mealGroups.length) return null;
+    const { calories, protein, carbs, fats } = totalDayMacros;
+    const calorieGoal = 2500;
+    const macroCalories = {
+      protein: (protein ?? 0) * 4,
+      carbs: (carbs ?? 0) * 4,
+      fats: (fats ?? 0) * 9,
+    };
+    const macroItems = [
+      {
+        label: 'Protein',
+        calories: macroCalories.protein,
+        grams: protein ?? 0,
+        color: '#00F5A0',
+        radius: 86,
+      },
+      {
+        label: 'Carbs',
+        calories: macroCalories.carbs,
+        grams: carbs ?? 0,
+        color: '#FF6B9D',
+        radius: 74,
+      },
+      {
+        label: 'Fat',
+        calories: macroCalories.fats,
+        grams: fats ?? 0,
+        color: '#FFB74D',
+        radius: 62,
+      },
+    ];
+    const ringSize = 190;
+    const ringCenter = ringSize / 2;
+
+    return (
+      <View style={styles.macroSummaryCard}>
+        <View style={styles.macroSummaryRow}>
+          <View style={styles.macroDonut}>
+            <Svg
+              width={ringSize}
+              height={ringSize}
+              viewBox={`0 0 ${ringSize} ${ringSize}`}
+              style={styles.ringSvg}
+            >
+              {macroItems.map((item) => {
+                const circumference = 2 * Math.PI * item.radius;
+                const progress = Math.min(item.calories / calorieGoal, 1);
+                return (
+                  <React.Fragment key={item.label}>
+                    <Circle
+                      cx={ringCenter}
+                      cy={ringCenter}
+                      r={item.radius}
+                      stroke="rgba(255,255,255,0.08)"
+                      strokeWidth={14}
+                      fill="none"
+                    />
+                    <Circle
+                      cx={ringCenter}
+                      cy={ringCenter}
+                      r={item.radius}
+                      stroke={item.color}
+                      strokeWidth={14}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeDasharray={`${circumference} ${circumference}`}
+                      strokeDashoffset={circumference * (1 - progress)}
+                      rotation={-90}
+                      originX={ringCenter}
+                      originY={ringCenter}
+                    />
+                  </React.Fragment>
+                );
+              })}
+            </Svg>
+            <View style={styles.donutCenter}>
+              <Text style={styles.donutLabel}>Calories</Text>
+              <Text style={styles.donutValue}>{Math.round(calories ?? 0)}</Text>
+              <Text style={styles.donutUnit}>kcal</Text>
+            </View>
+          </View>
+          <View style={styles.macroLegend}>
+            {macroItems.map((item) => {
+              const percent = calorieGoal
+                ? Math.min(100, Math.round((item.calories / calorieGoal) * 100))
+                : 0;
+              return (
+                <View key={item.label} style={styles.macroLegendItem}>
+                  <View style={[styles.macroLegendDot, { backgroundColor: item.color }]} />
+                  <View>
+                    <Text style={styles.macroLegendLabel}>{item.label}</Text>
+                    <Text style={styles.macroLegendValue}>
+                      {Math.round(item.grams)}g · {percent}% goal
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const renderMealsEmpty = () => {
+    if (isMealsLoading && !dailyMeal) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="small" color={COLORS.accent} />
+          <Text style={styles.loadingText}>Loading meals...</Text>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.emptyCard}>
+        <Text style={styles.emptyCardIcon}>🥗</Text>
+        <Text style={styles.emptyCardTitle}>No meals for today</Text>
+        <Text style={styles.emptyCardSubtitle}>
+          Tap the + button to add foods to your meals.
+        </Text>
+      </View>
+    );
+  };
+
+  const renderMealGroupSeparator = () => <View style={styles.mealGroupSeparator} />;
+  const renderMealListFooter = () => <View style={styles.mealsListFooter} />;
+
   return (
     <View style={styles.container}>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-        <ScrollView
-          stickyHeaderIndices={[0]}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-        >
-          {/* Sticky Header */}
-          <View style={styles.stickyHeader}>
-            <View style={styles.headerTop}>
-              <Text style={styles.headerTitle}>Nutrition</Text>
-            </View>
+        {/* Sticky Header */}
+        <View style={styles.stickyHeader}>
+          <View style={styles.headerTop}>
           </View>
+        </View>
 
-          {/* Content */}
-          <View style={styles.content}>
-            {renderMeals()}
-          </View>
-        </ScrollView>
+        {renderMacroSummary()}
+
+        {/* Content */}
+        <View style={styles.content}>
+          <FlatList
+            data={mealGroups}
+            renderItem={renderMealGroup}
+            keyExtractor={(item) => item.mealType}
+            showsVerticalScrollIndicator={false}
+            style={styles.mealsScroll}
+            contentContainerStyle={styles.mealsScrollContent}
+            ListEmptyComponent={renderMealsEmpty}
+            ItemSeparatorComponent={renderMealGroupSeparator}
+            ListFooterComponent={renderMealListFooter}
+          />
+        </View>
 
       </LinearGradient>
 
@@ -754,22 +881,14 @@ const styles = StyleSheet.create({
   gradient: {
     flex: 1,
   },
-  scrollContent: {
-    paddingBottom: 100,
-  },
   stickyHeader: {
     backgroundColor: COLORS.bgPrimary,
-    paddingTop: 60,
+    paddingTop: 72,
     paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    paddingBottom: 12,
   },
   headerTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+    minHeight: 16,
   },
   headerTitle: {
     fontSize: 32,
@@ -777,98 +896,162 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   content: {
-    padding: 20,
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    paddingTop: 0,
   },
-  mealsContainer: {
-    gap: 8,
+  mealsScroll: {
+    flex: 1,
   },
-  loadingContainer: {
+  macroSummaryCard: {
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    height: 220,
+    marginHorizontal: 20,
+    marginBottom: 16,
+  },
+  mealsScrollContent: {
+    paddingTop: 0,
+    flexGrow: 1,
+  },
+  mealsListFooter: {
+    height: 220,
+  },
+  macroSummaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-    gap: 12,
+    gap: 20,
   },
-  loadingText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-  },
-  emptyCard: {
-    padding: 32,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+  macroDonut: {
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    position: 'relative',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  emptyCardIcon: {
-    fontSize: 48,
-    marginBottom: 12,
+  ringSvg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
   },
-  emptyCardTitle: {
-    fontSize: 18,
+  donutCenter: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    position: 'absolute',
+    backgroundColor: COLORS.bgPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  donutLabel: {
+    fontSize: 11,
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  donutValue: {
+    fontSize: 24,
     fontWeight: '700',
     color: COLORS.textPrimary,
-    marginBottom: 8,
+    lineHeight: 24,
   },
-  emptyCardSubtitle: {
+  donutUnit: {
+    fontSize: 11,
+    color: COLORS.textTertiary,
+  },
+  macroLegend: {
+    flex: 1,
+    gap: 12,
+  },
+  macroLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  macroLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  macroLegendLabel: {
     fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  macroLegendValue: {
+    fontSize: 12,
     color: COLORS.textSecondary,
-    textAlign: 'center',
+  },
+  mealGroupSeparator: {
+    height: 16,
   },
   mealGroupCard: {
-    padding: 18,
-    borderRadius: 12,
     backgroundColor: COLORS.surface,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    gap: 12,
+    padding: 16,
   },
   mealGroupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
-  mealGroupIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  mealGroupIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: COLORS.elevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
   mealGroupEmoji: {
-    fontSize: 24,
+    fontSize: 20,
   },
-  mealGroupInfo: {
+  mealGroupHeaderText: {
     flex: 1,
   },
   mealGroupTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: COLORS.textPrimary,
-    marginBottom: 2,
+    marginBottom: 4,
   },
   mealGroupMeta: {
     fontSize: 13,
     color: COLORS.textSecondary,
+    marginBottom: 4,
   },
-  loggedEntriesContainer: {
-    gap: 6,
+  mealGroupMacros: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
   },
-  mealEntryCard: {
+  mealItems: {
+    paddingTop: 12,
+  },
+  mealEntryRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: COLORS.elevated,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    gap: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  mealEntryRowLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 0,
   },
   mealEntryInfo: {
     flex: 1,
+    paddingRight: 12,
   },
   mealEntryName: {
     fontSize: 15,
@@ -876,14 +1059,13 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     marginBottom: 4,
   },
-  mealEntryMeta: {
+  mealEntryMacros: {
     fontSize: 12,
     color: COLORS.textSecondary,
   },
   mealEntryActions: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
   },
   mealEntryDoneBadge: {
     width: 24,
@@ -901,9 +1083,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   mealEntryDeleteButton: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: 'rgba(255,59,48,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -912,12 +1094,41 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#FF3B30',
     fontWeight: '600',
+    marginTop: -2,
   },
-  errorText: {
-    color: '#FF3B30',
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingVertical: 24,
+  },
+  loadingText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+  },
+  emptyCard: {
+    padding: 24,
+    borderRadius: 16,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+  },
+  emptyCardIcon: {
+    fontSize: 40,
+    marginBottom: 12,
+  },
+  emptyCardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+  },
+  emptyCardSubtitle: {
     fontSize: 13,
+    color: COLORS.textSecondary,
     textAlign: 'center',
-    padding: 12,
   },
   emptyState: {
     flex: 1,

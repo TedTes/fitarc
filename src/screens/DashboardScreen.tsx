@@ -6,16 +6,13 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  Modal,
+  Pressable,
   Dimensions,
   Animated,
   Easing,
-  LayoutAnimation,
-  Platform,
-  UIManager,
-  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useNavigation } from '@react-navigation/native';
 import {
   User,
   PhasePlan,
@@ -23,24 +20,12 @@ import {
   MuscleGroup,
 } from '../types/domain';
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
-import { useTodayMeals } from '../hooks/useTodayMeals';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
-import { MealEntry } from '../services/mealService';
 import { useFabAction } from '../contexts/FabActionContext';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import { Calendar } from 'react-native-calendars';
 import { getBodyPartLabel } from '../utils';
 import { addDays, formatLocalDateYMD, parseYMDToDate } from '../utils/date';
-import {
-  computeEntriesMacroTotals,
-  formatMacroSummaryLine,
-  formatMealEntryMacros,
-} from '../utils/mealMacros';
-
-// Enable LayoutAnimation on Android
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 
 
@@ -67,7 +52,6 @@ const ACTIVITY_TOTAL_DAYS_FALLBACK = 182;
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(240, Math.round(SCREEN_HEIGHT * 0.20)));
 
-const MEAL_TYPE_ORDER = ['breakfast', 'lunch', 'dinner'] as const;
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
 
 // Animation configurations
@@ -194,7 +178,6 @@ type DashboardScreenProps = {
   onStartPhase?: () => void;
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
   onCreateSession?: (date: string) => void;
-  onCompleteAllToday?: () => void;
 };
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
@@ -205,38 +188,32 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onStartPhase,
   onToggleWorkoutExercise,
   onCreateSession: _onCreateSession,
-  onCompleteAllToday,
 }) => {
   const { setFabAction } = useFabAction();
   const { headerStyle, contentStyle } = useScreenAnimation();
-  const navigation = useNavigation<any>();
   const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const derivedPhaseId = phase?.id ?? homeData?.phase?.id;
   const { sessions: phaseSessions, isLoading: isSessionsLoading } = useWorkoutSessions(
     user.id,
     derivedPhaseId
   );
-  const [activeTab, setActiveTab] = useState<'workouts' | 'meals'>('workouts');
   const [localCompletionOverrides, setLocalCompletionOverrides] = useState<Record<string, boolean>>(
     {}
   );
   const [orderUpdateTrigger, setOrderUpdateTrigger] = useState(0);
+  const [workoutLogVisible, setWorkoutLogVisible] = useState(false);
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastActiveTabRef = useRef<'workouts' | 'meals'>('workouts');
   const orderUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // 🎨 Animation values
   const headerFadeAnim = useRef(new Animated.Value(0)).current;
   const activityCardSlideAnim = useRef(new Animated.Value(50)).current;
-  const tabSwitchAnim = useRef(new Animated.Value(0)).current;
   const exerciseCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
-  const [showMacrosSummary, setShowMacrosSummary] = useState(false);
-  const macrosSummaryAnim = useRef(new Animated.Value(0)).current;
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const hasActivePlan = resolvedPhase?.status === 'active';
@@ -426,66 +403,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return marks;
   }, [calendarRange, completedSessionsByDate, phaseDates, todayStr]);
 
-  const {
-    mealsByType,
-    isLoading: isMealsLoading,
-    isMutating: isMealsMutating,
-    error: _todayMealsError,
-    toggleDayCompleted,
-    toggleMealTypeCompleted,
-  } = useTodayMeals(
-    hasActivePlan ? user.id : undefined,
-    hasActivePlan ? today : undefined,
-    hasActivePlan,
-    activePhaseId
-  );
-
-  const orderedMealTypes = useMemo(() => {
-    const baseMealTypes = Object.keys(mealsByType);
-    const baseIndex = new Map(
-      baseMealTypes.map((mealType, index) => [mealType, index])
-    );
-    return [...baseMealTypes].sort((a, b) => {
-      const aKey = a.toLowerCase();
-      const bKey = b.toLowerCase();
-      const aRank = MEAL_TYPE_ORDER.indexOf(aKey as any);
-      const bRank = MEAL_TYPE_ORDER.indexOf(bKey as any);
-      const aOrder = aRank === -1 ? Number.POSITIVE_INFINITY : aRank;
-      const bOrder = bRank === -1 ? Number.POSITIVE_INFINITY : bRank;
-      if (aOrder !== bOrder) return aOrder - bOrder;
-      return (baseIndex.get(a) ?? 0) - (baseIndex.get(b) ?? 0);
-    });
-  }, [mealsByType]);
-  const mealGroups = useMemo(() => {
-    return orderedMealTypes
-      .map((mealType) => ({
-        mealType,
-        entries: mealsByType[mealType] ?? [],
-      }))
-      .filter((group) => group.entries.length > 0);
-  }, [mealsByType, orderedMealTypes]);
-  const pendingMealCount = useMemo(
-    () => mealGroups.reduce((sum, group) => sum + group.entries.filter((e) => !e.isDone).length, 0),
-    [mealGroups]
-  );
-  const totalDayMacros = useMemo(() => {
-    const allEntries = mealGroups.flatMap((group) => group.entries);
-    return computeEntriesMacroTotals(allEntries);
-  }, [mealGroups]);
-
   const canLogWorkouts = hasActivePlan && !!onToggleWorkoutExercise;
 
-  const pendingWorkoutCount = useMemo(
-    () => displayExercises.filter((exercise) => !isExerciseMarked(exercise)).length,
-    [displayExercises, isExerciseMarked]
-  );
-  const shouldPromptPlan = hasActivePlan && !hasSyncedWorkout;
-  const shouldPromptNext = hasActivePlan && hasSyncedWorkout && pendingWorkoutCount === 0;
   const shouldCreatePlan = !hasActivePlan && !!onStartPhase;
-  
-  const handleOpenPlans = useCallback(() => {
-    navigation.navigate('Workouts', { openExerciseModal: true });
-  }, [navigation]);
 
   // FAB Action configuration
   const getFabActionConfig = useCallback(() => {
@@ -495,22 +415,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       labelColor: COLORS.accent,
     };
 
-    if (activeTab === 'workouts') {
-      return {
-        ...baseConfig,
-        label: 'Meals',
-        icon: '🥗',
-        onPress: () => setActiveTab('meals'),
-      };
-    }
-    if (activeTab === 'meals') {
-      return {
-        ...baseConfig,
-        label: 'Workouts',
-        icon: '💪',
-        onPress: () => setActiveTab('workouts'),
-      };
-    }
     if (shouldCreatePlan) {
       return {
         ...baseConfig,
@@ -519,59 +423,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         onPress: onStartPhase!,
       };
     }
-    if (shouldPromptPlan) {
+    if (hasActivePlan) {
       return {
         ...baseConfig,
-        label: 'Session',
+        label: 'Workout',
         icon: '+',
-        onPress: handleOpenPlans,
-      };
-    }
-    if (activeTab === 'meals' && pendingMealCount > 0) {
-      return {
-        ...baseConfig,
-        label: 'Complete',
-        icon: '✓',
-        onPress: () => void toggleDayCompleted?.(true),
-      };
-    }
-    if (activeTab === 'meals' && pendingMealCount === 0) {
-      return {
-        ...baseConfig,
-        label: 'Completed',
-        icon: '✓',
-        onPress: () => Alert.alert("Great job!", "You have already completed today's meals."),
-      };
-    }
-    if (onCompleteAllToday && pendingWorkoutCount > 0) {
-      return {
-        ...baseConfig,
-        label: 'Complete',
-        icon: '✓',
-        onPress: onCompleteAllToday,
-      };
-    }
-    if (shouldPromptNext) {
-      return {
-        ...baseConfig,
-        label: 'Completed',
-        icon: '✓',
-        onPress: () => Alert.alert("Great job!", "Congrats, you have already completed today's workout."),
+        onPress: () => setWorkoutLogVisible(true),
       };
     }
     return null;
   }, [
     shouldCreatePlan,
-    shouldPromptPlan,
-    shouldPromptNext,
-    activeTab,
-    pendingMealCount,
-    pendingWorkoutCount,
     onStartPhase,
-    handleOpenPlans,
-    toggleDayCompleted,
-    onCompleteAllToday,
-    setActiveTab,
+    hasActivePlan,
   ]);
 
   useEffect(() => {
@@ -620,27 +484,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       }),
     ]).start();
   }, []);
-
-  // Tab switch animation
-  useEffect(() => {
-    LayoutAnimation.configureNext({
-      duration: 300,
-      create: {
-        type: LayoutAnimation.Types.easeInEaseOut,
-        property: LayoutAnimation.Properties.opacity,
-      },
-      update: {
-        type: LayoutAnimation.Types.spring,
-        springDamping: 0.7,
-      },
-    });
-
-    Animated.spring(tabSwitchAnim, {
-      toValue: activeTab === 'workouts' ? 0 : 1,
-      ...ANIMATION_CONFIG.springMedium,
-      useNativeDriver: true,
-    }).start();
-  }, [activeTab]);
 
   // Create button pulse animation
   useEffect(() => {
@@ -756,25 +599,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   };
 
   useEffect(() => {
-    if (lastActiveTabRef.current !== activeTab && activeTab === 'meals') {
-      void flushPendingToggles();
-    }
-    lastActiveTabRef.current = activeTab;
-  }, [activeTab, flushPendingToggles]);
-
-  useEffect(() => {
-    setShowMacrosSummary(activeTab === 'meals' && mealGroups.length > 0);
-  }, [activeTab, mealGroups.length]);
-
-  useEffect(() => {
-    Animated.spring(macrosSummaryAnim, {
-      toValue: showMacrosSummary ? 1 : 0,
-      ...ANIMATION_CONFIG.springMedium,
-      useNativeDriver: true,
-    }).start();
-  }, [macrosSummaryAnim, showMacrosSummary]);
-
-  useEffect(() => {
     return () => {
       void flushPendingToggles();
       if (orderUpdateTimeoutRef.current) {
@@ -785,80 +609,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   }, [flushPendingToggles]);
 
 
-  const renderMealGroup = (group: { mealType: string; entries: MealEntry[] }) => {
-    const { mealType, entries } = group;
-    if (entries.length === 0) return null;
-    const isMealComplete = entries.every((entry) => entry.isDone);
-
-    const totals = computeEntriesMacroTotals(entries);
-    const macroSummary = formatMacroSummaryLine(totals);
-    const totalCount = entries.length;
-    return (
-      <TouchableOpacity
-        key={mealType}
-        activeOpacity={0.9}
-        disabled={isMealsMutating}
-        onPress={() => {
-          void toggleMealTypeCompleted?.(mealType, !isMealComplete);
-        }}
-      >
-        <LinearGradient
-          colors={CARD_GRADIENT_DEFAULT}
-          style={styles.mealCard}
-        >
-          <View style={styles.mealCardHeader}>
-            <TouchableOpacity
-              style={[
-                styles.mealGroupToggle,
-                isMealComplete && styles.mealGroupToggleActive,
-              ]}
-              onPress={() => {
-                void toggleMealTypeCompleted?.(mealType, !isMealComplete);
-              }}
-              disabled={isMealsMutating}
-            >
-              {isMealComplete && (
-                <Text
-                  style={[
-                    styles.mealGroupToggleText,
-                    styles.mealGroupToggleTextActive,
-                  ]}
-                >
-                  ✓
-                </Text>
-              )}
-            </TouchableOpacity>
-            <View style={styles.mealInfo}>
-              <Text style={styles.mealName}>{mealType}</Text>
-              <Text style={styles.mealMeta}>
-                {totalCount
-                  ? `${totalCount} item${totalCount > 1 ? 's' : ''} · ${macroSummary}`
-                  : 'Suggested by your plan'}
-              </Text>
-            </View>
-          </View>
-          {entries.map((entry, index) => (
-            <View
-              key={entry.id}
-              style={[
-                styles.mealEntry,
-                index === entries.length - 1 && styles.mealEntryLast,
-              ]}
-            >
-              <View>
-                <Text style={styles.mealEntryName}>{entry.foodName}</Text>
-                <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
-              </View>
-            </View>
-          ))}
-        </LinearGradient>
-      </TouchableOpacity>
-    );
-  };
-
   const renderWorkoutsSection = () => {
-    const hasIncompleteExercises = displayExercises.some((exercise) => !isExerciseMarked(exercise));
-
     return (
       <View style={styles.section}>
         {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
@@ -946,121 +697,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               );
             })}
 
-            {hasIncompleteExercises && canLogWorkouts && onCompleteAllToday && (
-              <View style={styles.markAllContainer}>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  style={styles.markAllButton}
-                  onPress={onCompleteAllToday}
-                >
-                  <Text style={styles.markAllIcon}>✓</Text>
-                  <Text style={styles.markAllText}>Mark All Complete</Text>
-                </TouchableOpacity>
-              </View>
-            )}
           </View>
         )}
       </View>
-    );
-  };
-
-  const renderMealsSection = () => (
-    <View style={styles.section}>
-      {!hasActivePlan ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>🍽️</Text>
-          <Text style={styles.emptyTitle}>Meals unlock soon</Text>
-          <Text style={styles.emptyText}>Complete onboarding first.</Text>
-        </View>
-      ) : isMealsLoading ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>⏳</Text>
-          <Text style={styles.emptyTitle}>Loading meals</Text>
-          <Text style={styles.emptyText}>Fetching today's plan.</Text>
-        </View>
-      ) : mealGroups.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>🍽️</Text>
-          <Text style={styles.emptyTitle}>No meals for today</Text>
-          <Text style={styles.emptyText}>Use Menu tab to create meals.</Text>
-        </View>
-      ) : (
-        <View style={styles.verticalList}>
-          {mealGroups.map((group) => renderMealGroup(group))}
-          {pendingMealCount > 0 && toggleDayCompleted && (
-            <View style={styles.markAllContainer}>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                style={styles.markAllButton}
-                onPress={() => void toggleDayCompleted(true)}
-              >
-                <Text style={styles.markAllIcon}>✓</Text>
-                <Text style={styles.markAllText}>Mark All Complete</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-      )}
-    </View>
-  );
-
-  const renderMacrosSummary = () => {
-    const { calories, protein, carbs, fats } = totalDayMacros;
-    const macroItems = [
-      { label: 'Protein', value: protein ?? 0, color: '#00F5A0' },
-      { label: 'Carbs', value: carbs ?? 0, color: '#FF6B9D' },
-      { label: 'Fat', value: fats ?? 0, color: '#FFB74D' },
-    ];
-    const macroTotal = macroItems.reduce((sum, item) => sum + item.value, 0);
-
-    return (
-      <Animated.View
-        style={[
-          styles.macrosSummaryContainer,
-          {
-            opacity: macrosSummaryAnim,
-            transform: [
-              {
-                translateY: macrosSummaryAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [16, 0],
-                }),
-              },
-            ],
-          },
-        ]}
-      >
-        <View style={styles.macrosRow}>
-          <View style={styles.macrosPie}>
-            <View style={[styles.pieQuadrant, styles.pieTopLeft, { backgroundColor: macroItems[0].color }]} />
-            <View style={[styles.pieQuadrant, styles.pieTopRight, { backgroundColor: macroItems[1].color }]} />
-            <View style={[styles.pieQuadrant, styles.pieBottomLeft, { backgroundColor: macroItems[2].color }]} />
-            <View style={styles.pieCenter}>
-              <Text style={styles.pieCenterLabel}>Total</Text>
-              <Text style={styles.pieCenterValue}>{Math.round(calories ?? 0)}</Text>
-              <Text style={styles.pieCenterUnit}>kcal</Text>
-            </View>
-          </View>
-
-          <View style={styles.macrosLegend}>
-            {macroItems.map((item) => {
-              const percent = macroTotal ? Math.round((item.value / macroTotal) * 100) : 0;
-              return (
-                <View key={item.label} style={styles.macrosLegendItem}>
-                  <View style={[styles.macrosLegendSwatch, { backgroundColor: item.color }]} />
-                  <View>
-                    <Text style={styles.macrosLegendLabel}>{item.label}</Text>
-                    <Text style={styles.macrosLegendValue}>
-                      {Math.round(item.value)}g · {percent}%
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-
-      </Animated.View>
     );
   };
 
@@ -1087,22 +726,20 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
             <Text style={styles.userName}>{displayName}</Text>
-            {!showMacrosSummary && (
-              <View style={styles.calendarLegend}>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.legendDoneDot]} />
-                  <Text style={styles.legendLabel}>Done</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.legendTodayDot]} />
-                  <Text style={styles.legendLabel}>Today</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.legendUpcomingDot]} />
-                  <Text style={styles.legendLabel}>Upcoming</Text>
-                </View>
+            <View style={styles.calendarLegend}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, styles.legendDoneDot]} />
+                <Text style={styles.legendLabel}>Done</Text>
               </View>
-            )}
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, styles.legendTodayDot]} />
+                <Text style={styles.legendLabel}>Today</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, styles.legendUpcomingDot]} />
+                <Text style={styles.legendLabel}>Upcoming</Text>
+              </View>
+            </View>
           </View>
           {onProfilePress && (
             <TouchableOpacity style={styles.avatarButton} onPress={onProfilePress}>
@@ -1130,64 +767,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         >
           <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
             <View style={styles.activityCalendarWrapper}>
-              <Animated.View
-                style={[
-                  styles.activityCalendarLayer,
-                  {
-                    opacity: macrosSummaryAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1, 0],
-                    }),
-                    transform: [
-                      {
-                        translateY: macrosSummaryAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0, -12],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-                pointerEvents={showMacrosSummary ? 'none' : 'auto'}
-              >
-                {calendarRange ? (
-                  <Calendar
-                    current={calendarRange.currentKey}
-                    minDate={calendarRange.startKey}
-                    maxDate={calendarRange.endKey}
-                    enableSwipeMonths
-                    markingType="custom"
-                    markedDates={calendarMarkedDates}
-                    hideExtraDays={false}
-                    showSixWeeks
-                    theme={getCalendarTheme()}
-                    style={styles.activityCalendar}
-                  />
-                ) : (
-                  <Text style={styles.activityCalendarEmptyText}>
-                    No phase dates available.
-                  </Text>
-                )}
-              </Animated.View>
-              <Animated.View
-                style={[
-                  styles.activityCalendarLayer,
-                  {
-                    opacity: macrosSummaryAnim,
-                    transform: [
-                      {
-                        translateY: macrosSummaryAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [16, 0],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-                pointerEvents={showMacrosSummary ? 'auto' : 'none'}
-              >
-                {renderMacrosSummary()}
-              </Animated.View>
+              {calendarRange ? (
+                <Calendar
+                  current={calendarRange.currentKey}
+                  minDate={calendarRange.startKey}
+                  maxDate={calendarRange.endKey}
+                  enableSwipeMonths
+                  markingType="custom"
+                  markedDates={calendarMarkedDates}
+                  hideExtraDays={false}
+                  showSixWeeks
+                  theme={getCalendarTheme()}
+                  style={styles.activityCalendar}
+                />
+              ) : (
+                <Text style={styles.activityCalendarEmptyText}>
+                  No phase dates available.
+                </Text>
+              )}
             </View>
           </LinearGradient>
         </Animated.View>
@@ -1199,10 +796,42 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           showsVerticalScrollIndicator={false}
           bounces={true}
         >
-          {activeTab === 'workouts' ? renderWorkoutsSection() : renderMealsSection()}
+          {renderWorkoutsSection()}
         </ScrollView>
 
       </LinearGradient>
+
+      <Modal
+        visible={workoutLogVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setWorkoutLogVisible(false)}
+      >
+        <View style={styles.workoutModalOverlay}>
+          <Pressable
+            style={styles.workoutModalBackdrop}
+            onPress={() => setWorkoutLogVisible(false)}
+          />
+          <View style={styles.workoutModalCard}>
+            <View style={styles.workoutModalHeader}>
+              <Text style={styles.workoutModalTitle}>Today&apos;s Workout</Text>
+              <TouchableOpacity onPress={() => setWorkoutLogVisible(false)}>
+                <Text style={styles.workoutModalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {sortedWorkoutCards.map((exercise) => (
+                <View key={`${todayStr}-modal-${getExerciseKey(exercise)}`} style={styles.workoutModalRow}>
+                  <Text style={styles.workoutModalName}>{exercise.name}</Text>
+                  <Text style={styles.workoutModalMeta}>
+                    {formatBodyPartList(exercise.bodyParts)} · {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1333,87 +962,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     paddingVertical: 12,
   },
-  macrosSummaryContainer: {
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    minHeight: 220,
-    justifyContent: 'center',
-  },
-  macrosRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 45,
-  },
-  macrosPie: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    position: 'relative',
-  },
-  pieQuadrant: {
-    position: 'absolute',
-    width: '50%',
-    height: '50%',
-  },
-  pieTopLeft: { top: 0, left: 0 },
-  pieTopRight: { top: 0, right: 0 },
-  pieBottomLeft: { bottom: 0, left: 0 },
-  pieCenter: {
-    position: 'absolute',
-    top: '22%',
-    left: '22%',
-    width: '56%',
-    height: '56%',
-    borderRadius: 80,
-    backgroundColor: 'rgba(10, 14, 39, 0.92)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 4,
-  },
-  pieCenterLabel: {
-    fontSize: 10,
-    color: COLORS.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  pieCenterValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: COLORS.textPrimary,
-    letterSpacing: -0.4,
-  },
-  pieCenterUnit: {
-    fontSize: 10,
-    color: COLORS.textMuted,
-  },
-  macrosLegend: {
-    flexShrink: 1,
-    gap: 8,
-    alignItems: 'flex-start',
-  },
-  macrosLegendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  macrosLegendSwatch: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  macrosLegendValue: {
-    fontSize: 11,
-    color: COLORS.textMuted,
-  },
-  macrosLegendLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  
   verticalTabBar: {
     position: 'absolute',
     right: 20,
@@ -1583,35 +1131,6 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
     marginBottom: 4,
   },
-  markAllContainer: {
-    marginTop: 16,
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  markAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0, 245, 160, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 245, 160, 0.2)',
-    borderRadius: 16,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    gap: 10,
-  },
-  markAllIcon: {
-    fontSize: 18,
-    color: '#00F5A0',
-    fontWeight: '700',
-  },
-  markAllText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#00F5A0',
-    letterSpacing: 0.3,
-  },
   mealCard: {
     borderRadius: 20,
     padding: 18,
@@ -1681,5 +1200,52 @@ const styles = StyleSheet.create({
   },
   mealGroupToggleTextActive: {
     color: '#00F5A0',
+  },
+  workoutModalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  workoutModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(6, 8, 20, 0.7)',
+  },
+  workoutModalCard: {
+    backgroundColor: '#101427',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '70%',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.2)',
+  },
+  workoutModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  workoutModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  workoutModalClose: {
+    fontSize: 24,
+    color: '#8B93B0',
+  },
+  workoutModalRow: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  workoutModalName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 6,
+  },
+  workoutModalMeta: {
+    fontSize: 12,
+    color: '#8B93B0',
   },
 });
