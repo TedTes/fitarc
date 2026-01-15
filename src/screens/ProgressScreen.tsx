@@ -18,6 +18,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { useFabAction } from '../contexts/FabActionContext';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
+import { ExpandableCard } from './ExpandableCard';
 import {
   PhasePlan,
   User,
@@ -76,6 +77,18 @@ const COLORS = {
   borderStrong: 'rgba(255,255,255,0.12)',
 };
 
+// Movement pattern color mapping
+const MOVEMENT_COLORS: Record<string, string> = {
+  'h_push': '#6C63FF',      // Horizontal Push - Purple
+  'h_pull': '#00D4FF',      // Horizontal Pull - Cyan
+  'v_push': '#B794F6',      // Vertical Push - Light Purple
+  'v_pull': '#4ECDC4',      // Vertical Pull - Teal
+  'squat': '#FFB800',       // Squat - Gold
+  'hinge': '#00F5A0',       // Hinge - Green
+  'carry': '#FF6B9D',       // Carry - Pink
+  'rotation': '#FF8C42',    // Rotation - Orange
+};
+
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 
 type MetricType = 'volume' | 'strength' | 'movement' | 'records';
@@ -101,6 +114,92 @@ const toTrackingKey = (value: string) =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 
+// Mini sparkline component for trend visualization
+const MiniSparkline: React.FC<{ values: number[]; color: string; height?: number }> = ({ 
+  values, 
+  color, 
+  height = 20 
+}) => {
+  if (values.length < 2) return null;
+  
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  
+  const points = values.map((val, i) => {
+    const x = (i / (values.length - 1)) * 40;
+    const y = height - ((val - min) / range) * height;
+    return `${x},${y}`;
+  }).join(' ');
+  
+  return (
+    <View style={{ width: 40, height, overflow: 'visible' }}>
+      <svg width="40" height={height} style={{ position: 'absolute' }}>
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </View>
+  );
+};
+
+// Trend arrow component
+const TrendArrow: React.FC<{ direction: 'up' | 'down' | 'flat'; small?: boolean }> = ({ 
+  direction, 
+  small = false 
+}) => {
+  const arrows = {
+    up: '↗',
+    down: '↘',
+    flat: '→',
+  };
+  
+  const colors = {
+    up: COLORS.success,
+    down: '#FF6B6B',
+    flat: COLORS.textTertiary,
+  };
+  
+  return (
+    <Text style={{ 
+      fontSize: small ? 12 : 14, 
+      color: colors[direction],
+      fontWeight: '700'
+    }}>
+      {arrows[direction]}
+    </Text>
+  );
+};
+
+const AnimatedListItem: React.FC<{
+  children: React.ReactNode;
+  index: number;
+  visible: boolean;
+  delay?: number;
+}> = ({ children, index, visible, delay = 50 }) => {
+  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 200,
+        delay: index * delay,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.ease),
+      }).start();
+    } else {
+      opacity.setValue(0);
+    }
+  }, [visible, index, delay, opacity]);
+
+  return <Animated.View style={{ opacity }}>{children}</Animated.View>;
+};
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   user,
   phase,
@@ -125,11 +224,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const cardSlideAnim = useRef(new Animated.Value(30)).current;
   const cardFadeAnim = useRef(new Animated.Value(0)).current;
   const scrollY = useRef(new Animated.Value(0)).current;
-  const volumeCardRef = useRef<View | null>(null);
 
   const [activeMetrics] = useState<MetricType[]>(['volume', 'strength', 'movement']);
   const [showAllVolume, setShowAllVolume] = useState(false);
   const [showAllStrength, setShowAllStrength] = useState(false);
+  const [showAllMovement, setShowAllMovement] = useState(false);
   const [trackingModalVisible, setTrackingModalVisible] = useState(false);
   const [trackingDraft, setTrackingDraft] = useState<TrackingPreferences>(() =>
     createTrackingDraft(user.trackingPreferences)
@@ -247,6 +346,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     useCallback(() => {
       setShowAllVolume(false);
       setShowAllStrength(false);
+      setShowAllMovement(false);
       setFabAction('Progress', {
         label: 'Metrics',
         icon: '+',
@@ -259,6 +359,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       return () => {
         setShowAllVolume(false);
         setShowAllStrength(false);
+        setShowAllMovement(false);
         setFabAction('Progress', null);
       };
     }, [handleOpenTrackingModal, setFabAction])
@@ -414,6 +515,22 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs, labelMaps);
   const movementBalance = buildMovementBalanceSummary(workoutLogs, labelMaps);
 
+  // Calculate volume trends (mock data for now - you'd track historical volume)
+  const volumeTrends = useMemo(() => {
+    const trends = new Map<string, number[]>();
+    weeklyVolume.forEach((entry) => {
+      // Mock historical data - in production, you'd track this over time
+      const mockHistory = [
+        entry.sets * 0.7,
+        entry.sets * 0.8,
+        entry.sets * 0.9,
+        entry.sets,
+      ];
+      trends.set(entry.key, mockHistory);
+    });
+    return trends;
+  }, [weeklyVolume]);
+
   const selectedMuscles = Object.entries(user.trackingPreferences?.muscles ?? {}).map(
     ([key, label]) => ({ key, group: label, sets: 0 })
   );
@@ -472,11 +589,50 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           delta: 0,
         }));
 
+  // Calculate summary metrics
+  const summaryMetrics = useMemo(() => {
+    const totalVolume = volumeEntries.reduce((sum, entry) => sum + entry.sets, 0);
+    const prCount = bestLiftRows.filter(row => row.delta > 0).length;
+    
+    // Calculate push:pull ratio
+    const pushPatterns = ['h_push', 'v_push'];
+    const pullPatterns = ['h_pull', 'v_pull'];
+    const pushSets = movementEntries
+      .filter(m => pushPatterns.includes(toTrackingKey(m.name)))
+      .reduce((sum, m) => sum + m.sessions, 0);
+    const pullSets = movementEntries
+      .filter(m => pullPatterns.includes(toTrackingKey(m.name)))
+      .reduce((sum, m) => sum + m.sessions, 0);
+    const pushPullRatio = pullSets > 0 ? (pullSets / Math.max(pushSets, 1)).toFixed(1) : '0.0';
+    
+    return {
+      totalVolume,
+      prCount,
+      pushPullRatio,
+    };
+  }, [volumeEntries, bestLiftRows, movementEntries]);
+
   const getHeatColor = (intensity: number) => {
     if (intensity >= 0.8) return COLORS.success;
     if (intensity >= 0.5) return COLORS.accent;
     if (intensity >= 0.3) return '#4B5385';
     return '#4A527F';
+  };
+
+  const getMovementColor = (movementKey: string): string => {
+    return MOVEMENT_COLORS[movementKey] || COLORS.accent;
+  };
+
+  // Map exercises to movement patterns (simplified - you'd want a proper mapping service)
+  const getExerciseMovementPattern = (exerciseName: string): string => {
+    const name = exerciseName.toLowerCase();
+    if (name.includes('bench') || name.includes('push up') || name.includes('dip')) return 'h_push';
+    if (name.includes('row') || name.includes('pull')) return 'h_pull';
+    if (name.includes('press') && name.includes('shoulder')) return 'v_push';
+    if (name.includes('pull up') || name.includes('chin')) return 'v_pull';
+    if (name.includes('squat')) return 'squat';
+    if (name.includes('deadlift') || name.includes('hinge')) return 'hinge';
+    return 'h_push'; // default
   };
 
   const maxVolumeRows = 3;
@@ -487,14 +643,17 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const hasAnyMetricData = volumeHasData || strengthHasData || movementHasData || recordsHasData;
 
-  const hasExtraVolume = volumeEntries.length > maxVolumeRows;
   const visibleVolume = showAllVolume ? volumeEntries : volumeEntries.slice(0, maxVolumeRows);
 
   const maxStrengthRows = 3;
-  const hasExtraStrength = sortedStrengthTrendEntries.length > maxStrengthRows;
   const visibleStrength = showAllStrength
     ? sortedStrengthTrendEntries
     : sortedStrengthTrendEntries.slice(0, maxStrengthRows);
+
+  const maxMovementRows = 4;
+  const visibleMovements = showAllMovement
+    ? movementEntries
+    : movementEntries.slice(0, maxMovementRows);
 
   const planWeeks = Math.max(resolvedPhase?.expectedWeeks ?? 8, 1);
   const volumeWindowWeeks = 4;
@@ -513,26 +672,18 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     setShowAllStrength((prev) => !prev);
   };
 
-  const collapseVolumeIfExpanded = () => {
-    if (!showAllVolume) return;
+  const toggleMovementExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setShowAllVolume(false);
+    setShowAllMovement((prev) => !prev);
   };
 
-  const handleContentTap = useCallback(
-    (event: any) => {
-      if (!showAllVolume) return;
-      const pageY = event.nativeEvent.pageY;
-      const node = volumeCardRef.current;
-      if (!node) return;
-      node.measureInWindow((_x, y, _width, height) => {
-        if (pageY < y || pageY > y + height) {
-          collapseVolumeIfExpanded();
-        }
-      });
-    },
-    [showAllVolume]
-  );
+  const collapseAllExpanded = useCallback(() => {
+    if (!showAllVolume && !showAllStrength && !showAllMovement) return;
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setShowAllVolume(false);
+    setShowAllStrength(false);
+    setShowAllMovement(false);
+  }, [showAllMovement, showAllStrength, showAllVolume]);
 
   // Get available options based on category
   const getAvailableOptions = useCallback((): string[] => {
@@ -554,40 +705,87 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     }
   }, [trackingCategory, trackingDraft, muscleOptions, exerciseOptions, movementOptions]);
 
+  const renderSummaryCard = () => {
+    if (!hasAnyMetricData) return null;
+
+    return (
+      <View style={styles.summaryCard}>
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryValue}>{summaryMetrics.totalVolume}</Text>
+            <Text style={styles.summaryLabel}>Total Sets</Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryValue}>{summaryMetrics.pushPullRatio}:1</Text>
+            <Text style={styles.summaryLabel}>Pull:Push</Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryValue}>{summaryMetrics.prCount}</Text>
+            <Text style={styles.summaryLabel}>New PRs</Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   const renderVolumeCard = () => {
     if (!activeMetrics.includes('volume') || !volumeHasData) return null;
 
     return (
-      <View style={styles.card} ref={volumeCardRef}>
+      <ExpandableCard
+        expanded={showAllVolume}
+        onToggle={toggleVolumeExpand}
+        totalCount={volumeEntries.length}
+        visibleCount={maxVolumeRows}
+        style={styles.card}
+      >
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Training Volume</Text>
           <Text style={styles.cardSubtitle}>{completedDaysLabel}</Text>
         </View>
 
         <View style={styles.volumeGrid}>
-          {visibleVolume.map((volume) => {
+          {visibleVolume.map((volume, index) => {
             const intensity = Math.min(volume.sets / planBaseline, 1);
             const barColor = getHeatColor(intensity);
+            const trendData = volumeTrends.get(volume.key);
+            const hasTrend = trendData && trendData.length > 1;
+            const isNewlyVisible = index >= maxVolumeRows;
+            
+            // Determine trend direction
+            let trendDirection: 'up' | 'down' | 'flat' = 'flat';
+            if (hasTrend && trendData) {
+              const last = trendData[trendData.length - 1];
+              const prev = trendData[trendData.length - 2];
+              if (last > prev * 1.05) trendDirection = 'up';
+              else if (last < prev * 0.95) trendDirection = 'down';
+            }
+
             return (
-              <View key={volume.key} style={styles.volumeRow}>
-                <Text style={styles.volumeLabel}>{volume.group}</Text>
-                <View style={styles.volumeBarContainer}>
-                  <View style={[styles.volumeBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
+              <AnimatedListItem
+                key={volume.key}
+                index={isNewlyVisible ? index - maxVolumeRows : 0}
+                visible={!isNewlyVisible || showAllVolume}
+              >
+                <View style={styles.volumeRow}>
+                  <Text style={styles.volumeLabel}>{volume.group}</Text>
+                  <View style={styles.volumeBarContainer}>
+                    <View style={[styles.volumeBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
+                  </View>
+                  <View style={styles.volumeValueContainer}>
+                    {hasTrend && (
+                      <TrendArrow direction={trendDirection} small />
+                    )}
+                    <Text style={styles.volumeValue}>{volume.sets}</Text>
+                  </View>
                 </View>
-                <Text style={styles.volumeValue}>{volume.sets}</Text>
-              </View>
+              </AnimatedListItem>
             );
           })}
         </View>
-
-        {hasExtraVolume && (
-          <TouchableOpacity style={styles.volumeToggle} onPress={toggleVolumeExpand} activeOpacity={0.9}>
-            <Text style={styles.volumeToggleText}>
-              {showAllVolume ? 'Show Less' : `Show ${volumeEntries.length - maxVolumeRows} More`}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      </ExpandableCard>
     );
   };
 
@@ -600,7 +798,13 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     );
 
     return (
-      <View style={styles.card}>
+      <ExpandableCard
+        expanded={showAllStrength}
+        onToggle={toggleStrengthExpand}
+        totalCount={sortedStrengthTrendEntries.length}
+        visibleCount={maxStrengthRows}
+        style={styles.card}
+      >
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>💪 Strength Trends</Text>
           <Text style={styles.cardSubtitle}>
@@ -609,7 +813,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         </View>
 
         <View style={styles.strengthList}>
-          {visibleStrength.map((trend) => {
+          {visibleStrength.map((trend, index) => {
             const weight = trend.weights[trend.weights.length - 1] || 0;
             const delta = Math.max(trend.deltaLbs || 0, 0);
             const intensity =
@@ -619,36 +823,43 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                   ? 0.08
                   : 0;
             const barColor = delta > 0 ? COLORS.success : COLORS.accent;
+            
+            // Get movement pattern color for this exercise
+            const movementPattern = getExerciseMovementPattern(trend.lift);
+            const movementColor = getMovementColor(movementPattern);
+            const isNewlyVisible = index >= maxStrengthRows;
+
             return (
-              <View key={trend.key} style={styles.strengthRow}>
-                <View style={styles.strengthInfo}>
-                  <Text style={styles.strengthLift}>{trend.lift}</Text>
+              <AnimatedListItem
+                key={trend.key}
+                index={isNewlyVisible ? index - maxStrengthRows : 0}
+                visible={!isNewlyVisible || showAllStrength}
+              >
+                <View style={styles.strengthRow}>
+                  <View style={styles.strengthInfo}>
+                    <View style={styles.strengthTitleRow}>
+                      <View style={[styles.movementDot, { backgroundColor: movementColor }]} />
+                      <Text style={styles.strengthLift}>{trend.lift}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.strengthBarContainer}>
+                    <View style={[styles.strengthBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
+                  </View>
+                  <View style={styles.strengthStats}>
+                    <Text style={styles.strengthWeight}>{weight} lbs</Text>
+                    {trend.deltaLbs !== 0 && (
+                      <Text style={[styles.strengthDelta, trend.deltaLbs > 0 && styles.strengthDeltaPositive]}>
+                        {trend.deltaLbs > 0 ? '+' : ''}
+                        {trend.deltaLbs} lbs
+                      </Text>
+                    )}
+                  </View>
                 </View>
-                <View style={styles.strengthBarContainer}>
-                  <View style={[styles.strengthBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
-                </View>
-                <View style={styles.strengthStats}>
-                  <Text style={styles.strengthWeight}>{weight} lbs</Text>
-                  {trend.deltaLbs !== 0 && (
-                    <Text style={[styles.strengthDelta, trend.deltaLbs > 0 && styles.strengthDeltaPositive]}>
-                      {trend.deltaLbs > 0 ? '+' : ''}
-                      {trend.deltaLbs} lbs
-                    </Text>
-                  )}
-                </View>
-              </View>
+              </AnimatedListItem>
             );
           })}
         </View>
-
-        {hasExtraStrength && (
-          <TouchableOpacity style={styles.volumeToggle} onPress={toggleStrengthExpand} activeOpacity={0.9}>
-            <Text style={styles.volumeToggleText}>
-              {showAllStrength ? 'Show Less' : `Show ${strengthTrends.length - maxStrengthRows} More`}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      </ExpandableCard>
     );
   };
 
@@ -658,26 +869,74 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     const maxSessions = Math.max(...movementEntries.map((m) => m.sessions), 1);
 
     return (
-      <View style={styles.card}>
+      <ExpandableCard
+        expanded={showAllMovement}
+        onToggle={toggleMovementExpand}
+        totalCount={movementEntries.length}
+        visibleCount={maxMovementRows}
+        style={styles.card}
+      >
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>🎯 Movement Balance</Text>
           <Text style={styles.cardSubtitle}>{completedDaysLabel}</Text>
         </View>
 
-        <View style={styles.movementGrid}>
-          {movementEntries.map((movement) => {
+        <View style={styles.movementBalanceContainer}>
+          {visibleMovements.map((movement, index) => {
             const intensity = movement.sessions / maxSessions;
-            const pillColor = getHeatColor(intensity);
+            const movementKey = toTrackingKey(movement.name);
+            const movementColor = getMovementColor(movementKey);
+            const isNewlyVisible = index >= maxMovementRows;
+            
             return (
-              <View key={movement.key} style={styles.movementPill}>
-                <View style={[styles.movementIndicator, { backgroundColor: pillColor }]} />
-                <Text style={styles.movementName}>{movement.name}</Text>
-                <Text style={styles.movementCount}>×{movement.sessions}</Text>
-              </View>
+              <AnimatedListItem
+                key={movement.key}
+                index={isNewlyVisible ? index - maxMovementRows : 0}
+                visible={!isNewlyVisible || showAllMovement}
+              >
+                <View style={styles.movementBalanceRow}>
+                  <View style={styles.movementBalanceHeader}>
+                    <View style={[styles.movementIndicatorLarge, { backgroundColor: movementColor }]} />
+                    <Text style={styles.movementBalanceName}>{movement.name}</Text>
+                    <Text style={styles.movementBalanceCount}>×{movement.sessions}</Text>
+                  </View>
+                  <View style={styles.movementBalanceBarContainer}>
+                    <View 
+                      style={[
+                        styles.movementBalanceBar, 
+                        { 
+                          width: `${intensity * 100}%`, 
+                          backgroundColor: movementColor 
+                        }
+                      ]} 
+                    />
+                  </View>
+                </View>
+              </AnimatedListItem>
             );
           })}
         </View>
-      </View>
+
+        {showAllMovement && (
+          <View style={styles.movementLegend}>
+            <Text style={styles.movementLegendTitle}>Pattern Distribution</Text>
+            <View style={styles.movementLegendRow}>
+              {movementEntries.slice(0, 4).map((movement) => {
+                const movementKey = toTrackingKey(movement.name);
+                const movementColor = getMovementColor(movementKey);
+                const percentage = ((movement.sessions / Math.max(movementEntries.reduce((sum, m) => sum + m.sessions, 0), 1)) * 100).toFixed(0);
+                
+                return (
+                  <View key={movement.key} style={styles.movementLegendItem}>
+                    <View style={[styles.movementLegendDot, { backgroundColor: movementColor }]} />
+                    <Text style={styles.movementLegendText}>{percentage}%</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
+      </ExpandableCard>
     );
   };
 
@@ -740,14 +999,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
           onScrollBeginDrag={() => {
-            collapseVolumeIfExpanded();
-            setShowAllStrength(false);
+            collapseAllExpanded();
           }}
           onMomentumScrollBegin={() => {
-            collapseVolumeIfExpanded();
-            setShowAllStrength(false);
+            collapseAllExpanded();
           }}
-          onTouchStart={handleContentTap}
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         >
           <Animated.View
@@ -761,8 +1017,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           >
             <View style={styles.header}>
               <View>
-                <Text style={styles.headerTitle}>Progress</Text>
-                <Text style={styles.headerSubtitle}>Track your transformation</Text>
               </View>
             </View>
           </Animated.View>
@@ -777,6 +1031,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                 gap: 16,
               }}
             >
+              {renderSummaryCard()}
               {renderVolumeCard()}
               {renderStrengthCard()}
               {renderMovementCard()}
@@ -1008,6 +1263,42 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
+  // Summary Card
+  summaryCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  summaryItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  summaryDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: COLORS.border,
+  },
+
   // Cards
   card: {
     backgroundColor: COLORS.card,
@@ -1049,11 +1340,17 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   volumeBar: { height: '100%', borderRadius: 12 },
+  volumeValueContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    width: 60,
+    justifyContent: 'flex-end',
+  },
   volumeValue: {
     fontSize: 13,
     fontWeight: '700',
     color: COLORS.textSecondary,
-    width: 40,
     textAlign: 'right',
   },
   volumeToggle: {
@@ -1072,7 +1369,7 @@ const styles = StyleSheet.create({
   },
 
   // Strength
-  strengthList: { gap: 8 },
+  strengthList: { gap: 12 },
   strengthRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1084,12 +1381,22 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  strengthTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  movementDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   strengthLift: {
     fontSize: 14,
     fontWeight: '600',
     color: COLORS.textPrimary,
-    marginBottom: 4,
     flexWrap: 'wrap',
+    flex: 1,
   },
   strengthBarContainer: {
     flex: 1,
@@ -1120,9 +1427,81 @@ const styles = StyleSheet.create({
     color: COLORS.textTertiary,
     marginTop: 2,
   },
-   strengthDeltaPositive: { color: COLORS.success },
+  strengthDeltaPositive: { color: COLORS.success },
 
-  // Movement
+  // Movement Balance - Enhanced
+  movementBalanceContainer: {
+    gap: 14,
+  },
+  movementBalanceRow: {
+    gap: 8,
+  },
+  movementBalanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  movementIndicatorLarge: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  movementBalanceName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    flex: 1,
+  },
+  movementBalanceCount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+  },
+  movementBalanceBarContainer: {
+    height: 8,
+    backgroundColor: COLORS.bgTertiary,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  movementBalanceBar: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  movementLegend: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  movementLegendTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  movementLegendRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  movementLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  movementLegendDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  movementLegendText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+
+  // Movement (old pill style - keeping for compatibility)
   movementGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
