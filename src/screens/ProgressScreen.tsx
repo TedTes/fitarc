@@ -742,7 +742,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         style={styles.card}
       >
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>💪 Training Volume</Text>
+          <Text style={styles.cardTitle}>🔥 Training Volume</Text>
           <Text style={styles.cardSubtitle}>{completedDaysLabel}</Text>
         </View>
 
