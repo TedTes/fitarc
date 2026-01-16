@@ -631,6 +631,7 @@ function AppContent() {
       sex: profileData.sex,
       age: profileData.age,
       heightCm: profileData.heightCm,
+      weightKg: profileData.weightKg,
       experienceLevel: profileData.experienceLevel,
       trainingSplit: profileData.trainingSplit,
       eatingMode: profileData.eatingMode,

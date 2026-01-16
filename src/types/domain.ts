@@ -73,7 +73,7 @@ export type User = {
   sex: 'male' | 'female' | 'other';
   age: number;
   heightCm: number;
-  weightKg: number;
+  weightKg?: number | null;
   experienceLevel: ExperienceLevel;
   currentPhysiqueLevel: number;
   trainingSplit: TrainingSplit;

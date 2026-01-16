@@ -11,6 +11,7 @@ export type RemoteProfileRow = {
   gender: User['sex'] | null;
   birth_date: string | null;
   height_cm: number | null;
+  weight_kg: number | null;
   training_experience: ExperienceLevel | null;
   training_split?: User['trainingSplit'] | null;
   eating_mode?: User['eatingMode'] | null;
@@ -51,6 +52,7 @@ const mapRowToUser = (row: RemoteProfileRow): User => {
     sex: row.gender ?? 'male',
     age: calculateAgeFromBirthDate(row.birth_date),
     heightCm: row.height_cm ?? 0,
+    weightKg: row.weight_kg ?? undefined,
     experienceLevel: row.training_experience ?? 'beginner',
     currentPhysiqueLevel: row.current_physique_level ?? 1,
     trainingSplit: row.training_split ?? 'full_body',
@@ -102,6 +104,7 @@ export const saveUserProfile = async (user: User): Promise<void> => {
     gender: user.sex,
     birth_date: convertAgeToBirthDate(user.age),
     height_cm: user.heightCm,
+    weight_kg: user.weightKg ?? null,
     training_experience: user.experienceLevel,
     training_split: user.trainingSplit ?? 'full_body',
     eating_mode: user.eatingMode ?? 'maintenance',

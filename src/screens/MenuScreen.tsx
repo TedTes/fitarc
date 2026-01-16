@@ -26,6 +26,7 @@ import { FoodItem, MealEntry, createUserFood, fetchStoredFoods, searchFoods } fr
 import { generateMealsForDay } from '../services/mealGenerationService';
 import { useFabAction } from '../contexts/FabActionContext';
 import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
+import { estimateDailyCalories } from '../utils/calorieGoal';
 
 type MenuScreenProps = {
   user: User;
@@ -34,7 +35,6 @@ type MenuScreenProps = {
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'] as const;
-const CALORIE_GOAL_DEFAULT = 2500;
 const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 };
 const COLORS = {
   bgPrimary: '#0A0E27',
@@ -165,6 +165,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     const allEntries = mealGroups.flatMap((group) => group.entries);
     return computeEntriesMacroTotals(allEntries);
   }, [mealGroups]);
+  const calorieGoal = useMemo(
+    () => estimateDailyCalories(user).goalCalories,
+    [user]
+  );
 
   const buildMacroTargets = useCallback((calorieTarget: number) => {
     const proteinCalories = calorieTarget * MACRO_SPLIT.protein;
@@ -322,7 +326,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       mealGenerationAttemptedRef.current.add(attemptKey);
       setIsGeneratingMeals(true);
       try {
-        const calorieTarget = CALORIE_GOAL_DEFAULT;
+        const calorieTarget = calorieGoal;
         const macroTargets = buildMacroTargets(calorieTarget);
         await generateMealsForDay({
           user_id: user.id,
@@ -363,6 +367,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     generateMeals();
   }, [
     buildMacroTargets,
+    calorieGoal,
     isGeneratingMeals,
     isMealsLoading,
     mealGroups.length,
@@ -602,7 +607,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const renderMacroSummary = () => {
     if (!mealGroups.length) return null;
     const { calories, protein, carbs, fats } = totalDayMacros;
-    const calorieGoal = CALORIE_GOAL_DEFAULT;
+    const calorieTarget = calorieGoal;
     const macroCalories = {
       protein: (protein ?? 0) * 4,
       carbs: (carbs ?? 0) * 4,
@@ -646,7 +651,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
             >
               {macroItems.map((item) => {
                 const circumference = 2 * Math.PI * item.radius;
-                const progress = Math.min(item.calories / calorieGoal, 1);
+                const progress = Math.min(item.calories / calorieTarget, 1);
                 return (
                   <React.Fragment key={item.label}>
                     <Circle
@@ -683,8 +688,8 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           </View>
           <View style={styles.macroLegend}>
             {macroItems.map((item) => {
-              const percent = calorieGoal
-                ? Math.min(100, Math.round((item.calories / calorieGoal) * 100))
+              const percent = calorieTarget
+                ? Math.min(100, Math.round((item.calories / calorieTarget) * 100))
                 : 0;
               return (
                 <View key={item.label} style={styles.macroLegendItem}>
