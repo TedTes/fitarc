@@ -21,7 +21,7 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
   const [pendingTarget, setPendingTarget] = useState<number | null>(null);
 
   const physiqueLevels = getPhysiqueLevelsBySex(sex);
-  const selectableLevels = physiqueLevels.filter((level) => level.id !== currentLevelId);
+  const selectableLevels = physiqueLevels.filter((level) => level.id > currentLevelId);
 
   useEffect(() => {
     if (selectedTarget !== null) return;
@@ -30,7 +30,7 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
   }, [currentLevelId, selectableLevels, selectedTarget]);
 
   const handleContinue = () => {
-    if (!selectedTarget) return;
+    if (selectedTarget === null || selectedTarget === undefined) return;
     setPendingTarget(selectedTarget);
     setConfirmVisible(true);
   };
@@ -45,7 +45,7 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
   };
 
   const handleConfirmStart = () => {
-    if (!pendingTarget) return;
+    if (pendingTarget === null || pendingTarget === undefined) return;
     setConfirmVisible(false);
     onSelectTarget(pendingTarget);
   };
@@ -58,7 +58,7 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>Please select your next goal</Text>
+            <Text style={styles.title}>Choose your next target</Text>
           </View>
 
           <View style={styles.currentBadge}>
@@ -119,7 +119,7 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
               </TouchableOpacity>
             ) : null}
 
-            {selectedTarget && (
+            {selectedTarget !== null && selectedTarget !== undefined && (
               <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
                 <LinearGradient
                   colors={['#00F5A0', '#00D9A3']}

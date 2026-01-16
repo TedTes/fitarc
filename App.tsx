@@ -615,6 +615,7 @@ function AppContent() {
     sex: 'male' | 'female' | 'other';
     age: number;
     heightCm: number;
+    weightKg: number;
     experienceLevel: 'beginner' | 'intermediate' | 'advanced';
     trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
     eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
@@ -922,7 +923,7 @@ function AppContent() {
             sex={tempProfileData.sex}
             currentLevelId={tempCurrentLevel}
             onSelectTarget={handleTargetPhysiqueSelect}
-            onCancel={canCancel ? () => setOnboardingStep('current_physique') : undefined}
+            onCancel={() => setOnboardingStep('current_physique')}
           />
           <StatusBar style="light" />
         </View>

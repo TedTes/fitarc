@@ -29,7 +29,7 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
   }, [currentLevelId]);
 
   const handleContinue = () => {
-    if (selectedLevel) {
+    if (selectedLevel !== null && selectedLevel !== undefined) {
       onSelectLevel(selectedLevel);
     }
   };
@@ -46,10 +46,10 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
       >
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>Please select current Level</Text>
-            {currentLevelId ? (
+            <Text style={styles.title}>Select your current physique level</Text>
+            {selectedLevel !== null && selectedLevel !== undefined ? (
               <Text style={styles.currentLevelText}>
-                Current level: {currentLevelId}
+                Current: Level {selectedLevel} — {physiqueLevels.find((level) => level.id === selectedLevel)?.name}
               </Text>
             ) : null}
           </View>
@@ -87,12 +87,16 @@ export const CurrentPhysiqueSelectionScreen: React.FC<CurrentPhysiqueSelectionSc
             ) : null}
 
             <TouchableOpacity
-              style={[styles.continueButton, !selectedLevel && styles.continueButtonDisabled]}
+              style={[styles.continueButton, selectedLevel === null && styles.continueButtonDisabled]}
               onPress={handleContinue}
-              disabled={!selectedLevel}
+              disabled={selectedLevel === null}
             >
               <LinearGradient
-                colors={selectedLevel ? ['#6C63FF', '#5449CC'] : ['#2A2F4F', '#1E2340']}
+                colors={
+                  selectedLevel !== null
+                    ? ['#6C63FF', '#5449CC']
+                    : ['#2A2F4F', '#1E2340']
+                }
                 style={styles.continueButtonGradient}
               >
                 <Text style={styles.continueButtonText}>Continue</Text>

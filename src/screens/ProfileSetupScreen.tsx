@@ -19,6 +19,7 @@ type ProfileSetupScreenProps = {
     sex: 'male' | 'female' | 'other';
     age: number;
     heightCm: number;
+    weightKg: number;
     experienceLevel: 'beginner' | 'intermediate' | 'advanced';
     trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
     eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
@@ -52,11 +53,15 @@ const DEFAULT_AGE = 25;
 const HEIGHT_MIN = 157;
 const HEIGHT_MAX = 173;
 const DEFAULT_HEIGHT = 160;
+const WEIGHT_MIN = 40;
+const WEIGHT_MAX = 200;
+const DEFAULT_WEIGHT = 70;
 export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComplete }) => {
   const [name, setName] = useState('');
   const [sex, setSex] = useState<'male' | 'female' | 'other'>('male');
   const [age, setAge] = useState(DEFAULT_AGE);
   const [heightCm, setHeightCm] = useState(DEFAULT_HEIGHT);
+  const [weightKg, setWeightKg] = useState(DEFAULT_WEIGHT);
   const [experienceLevel, setExperienceLevel] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner');
   const [trainingSplit, setTrainingSplit] = useState<'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom'>('full_body');
   const [eatingMode, setEatingMode] = useState<'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance'>('maintenance');
@@ -81,11 +86,17 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
       return;
     }
 
+    if (Number.isNaN(weightKg) || weightKg < WEIGHT_MIN || weightKg > WEIGHT_MAX) {
+      Alert.alert('Invalid Input', `Please enter a valid weight (${WEIGHT_MIN}-${WEIGHT_MAX} kg)`);
+      return;
+    }
+
     onComplete({
       name: trimmedName,
       sex,
       age: ageNum,
       heightCm: heightNum,
+      weightKg,
       experienceLevel,
       trainingSplit,
       eatingMode,
@@ -131,12 +142,27 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
     </TouchableOpacity>
   );
 
-  const [activePicker, setActivePicker] = useState<'age' | 'height' | null>(null);
+  const [activePicker, setActivePicker] = useState<'age' | 'height' | 'weight' | null>(null);
   const ageOptions = Array.from({ length: AGE_MAX - AGE_MIN + 1 }, (_, i) => AGE_MIN + i);
   const heightOptions = Array.from({ length: HEIGHT_MAX - HEIGHT_MIN + 1 }, (_, i) => HEIGHT_MIN + i);
-  const activeOptions = activePicker === 'age' ? ageOptions : heightOptions;
-  const activeValue = activePicker === 'age' ? age : heightCm;
-  const activeLabel = activePicker === 'age' ? 'Select age' : 'Select height';
+  const weightOptions = Array.from(
+    { length: (WEIGHT_MAX - WEIGHT_MIN) * 2 + 1 },
+    (_, i) => WEIGHT_MIN + i * 0.5
+  );
+  const activeOptions =
+    activePicker === 'age'
+      ? ageOptions
+      : activePicker === 'height'
+        ? heightOptions
+        : weightOptions;
+  const activeValue =
+    activePicker === 'age' ? age : activePicker === 'height' ? heightCm : weightKg;
+  const activeLabel =
+    activePicker === 'age'
+      ? 'Select age'
+      : activePicker === 'height'
+        ? 'Select height'
+        : 'Select weight (kg)';
 
   return (
     <View style={styles.container}>
@@ -227,10 +253,29 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
           </View>
 
           <View style={styles.formSection}>
-            <View style={styles.inlineRowTop}>
+            <View style={styles.inlineRow}>
               <View style={styles.labelRow}>
                 <View style={styles.stepBadge}>
                   <Text style={styles.stepBadgeText}>5</Text>
+                </View>
+                <Text style={styles.rowLabel}>Weight (kg)</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.rightColumn, styles.selectField]}
+                onPress={() => setActivePicker('weight')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.selectText}>{weightKg.toFixed(1)}</Text>
+                <Text style={styles.selectChevron}>▾</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.formSection}>
+            <View style={styles.inlineRowTop}>
+              <View style={styles.labelRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>6</Text>
                 </View>
                 <View>
                   <Text style={styles.rowLabel}>Training Experience</Text>
@@ -253,7 +298,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
             <View style={styles.inlineRowTop}>
               <View style={styles.labelRow}>
                 <View style={styles.stepBadge}>
-                  <Text style={styles.stepBadgeText}>6</Text>
+                  <Text style={styles.stepBadgeText}>7</Text>
                 </View>
                 <View>
                   <Text style={styles.rowLabel}>Training Split</Text>
@@ -276,7 +321,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
             <View style={styles.inlineRowTop}>
               <View style={styles.labelRow}>
                 <View style={styles.stepBadge}>
-                  <Text style={styles.stepBadgeText}>7</Text>
+                  <Text style={styles.stepBadgeText}>8</Text>
                 </View>
                 <View>
                   <Text style={styles.rowLabel}>Eating Mode</Text>
@@ -326,14 +371,16 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
                     onPress={() => {
                       if (activePicker === 'age') {
                         setAge(option);
-                      } else {
+                      } else if (activePicker === 'height') {
                         setHeightCm(option);
+                      } else {
+                        setWeightKg(option);
                       }
                       setActivePicker(null);
                     }}
                   >
                     <Text style={[styles.modalOptionText, isSelected && styles.modalOptionTextSelected]}>
-                      {option}
+                      {activePicker === 'weight' ? `${option.toFixed(1)} kg` : option}
                     </Text>
                   </TouchableOpacity>
                 );

@@ -45,8 +45,6 @@ export const generateMealsForDay = async (
   const { data, error } = await supabase.functions.invoke('generate-meals', {
     body: params,
   });
-  console.log("from fron")
-  console.log(data)
   if (error) {
     throw error;
   }

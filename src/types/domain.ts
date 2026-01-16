@@ -73,6 +73,7 @@ export type User = {
   sex: 'male' | 'female' | 'other';
   age: number;
   heightCm: number;
+  weightKg: number;
   experienceLevel: ExperienceLevel;
   currentPhysiqueLevel: number;
   trainingSplit: TrainingSplit;
@@ -82,6 +83,7 @@ export type User = {
   trackingPreferences?: TrackingPreferences;
   createdAt: string;
 };
+
 
 export type PhasePlanStatus = 'active' | 'completed';
 
