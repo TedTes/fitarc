@@ -13,6 +13,7 @@ import {
   View,
   ActivityIndicator,
   FlatList,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle } from 'react-native-svg';
@@ -22,6 +23,7 @@ import { formatLocalDateYMD } from '../utils/date';
 import { useMealPlans } from '../hooks/useMealPlans';
 import { useTodayMeals, DUPLICATE_MEAL_ENTRY_ERROR } from '../hooks/useTodayMeals';
 import { FoodItem, MealEntry, createUserFood, fetchStoredFoods, searchFoods } from '../services/mealService';
+import { generateMealsForDay } from '../services/mealGenerationService';
 import { useFabAction } from '../contexts/FabActionContext';
 import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
 
@@ -32,6 +34,8 @@ type MenuScreenProps = {
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'] as const;
+const CALORIE_GOAL_DEFAULT = 2500;
+const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 };
 const COLORS = {
   bgPrimary: '#0A0E27',
   card: '#101427',
@@ -103,7 +107,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     isMutating: isMealsMutating,
     addEntryFromFood: addFoodEntry,
     removeEntry,
-
+    refetch: refetchMeals,
   } = useTodayMeals(
     phase ? user.id : undefined,
     phase ? selectedDateObj : undefined,
@@ -115,6 +119,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const [mealModalMode, setMealModalMode] = useState<'search' | 'custom'>('search');
   const [selectedMealTypeForAdding, setSelectedMealTypeForAdding] = useState<string>('');
   const [customMealTypes, setCustomMealTypes] = useState<string[]>([]);
+  const [isGeneratingMeals, setIsGeneratingMeals] = useState(false);
   const [mealTypeDraftVisible, setMealTypeDraftVisible] = useState(false);
   const [mealTypeDraft, setMealTypeDraft] = useState('');
   const [foodQuery, setFoodQuery] = useState('');
@@ -134,6 +139,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const [storedFoods, setStoredFoods] = useState<FoodItem[]>([]);
   const foodSearchCache = useRef<Map<string, FoodItem[]>>(new Map());
   const storedFoodsLoadedRef = useRef(false);
+  const mealGenerationAttemptedRef = useRef<Set<string>>(new Set());
 
   const loadStoredFoods = useCallback(async () => {
     try {
@@ -159,6 +165,17 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     const allEntries = mealGroups.flatMap((group) => group.entries);
     return computeEntriesMacroTotals(allEntries);
   }, [mealGroups]);
+
+  const buildMacroTargets = useCallback((calorieTarget: number) => {
+    const proteinCalories = calorieTarget * MACRO_SPLIT.protein;
+    const carbCalories = calorieTarget * MACRO_SPLIT.carbs;
+    const fatCalories = calorieTarget * MACRO_SPLIT.fats;
+    return {
+      protein_g: Math.round(proteinCalories / 4),
+      carbs_g: Math.round(carbCalories / 4),
+      fats_g: Math.round(fatCalories / 9),
+    };
+  }, []);
 
   // Meal types shown in the UI (plan + logged + custom)
   const allMealTypes = useMemo((): string[] => {
@@ -293,6 +310,67 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       loadStoredFoods();
     }
   }, [loadStoredFoods]);
+
+  useEffect(() => {
+    if (!phase || !user?.id) return;
+    if (isMealsLoading || isGeneratingMeals) return;
+     if (mealGroups.length > 0) return;
+    const attemptKey = `${phase.id}:${todayKey}`;
+    if (mealGenerationAttemptedRef.current.has(attemptKey)) return;
+
+    const generateMeals = async () => {
+      mealGenerationAttemptedRef.current.add(attemptKey);
+      setIsGeneratingMeals(true);
+      try {
+        const calorieTarget = CALORIE_GOAL_DEFAULT;
+        const macroTargets = buildMacroTargets(calorieTarget);
+        await generateMealsForDay({
+          user_id: user.id,
+          plan_id: phase.id,
+          date: todayKey,
+          calorie_target: calorieTarget,
+          macro_targets: macroTargets,
+          meal_count: 3,
+          dietary_tags: [],
+          excluded_ingredients: [],
+          preferred_ingredients: [
+            'chicken',
+            'tofu',
+            'oats',
+            'greek yogurt',
+            'apple',
+            'orange',
+            'kiwi',
+            'sweet potatoes',
+            'sardine',
+            'cottage cheese',
+            'chickpeas',
+            'peanut butter',
+            'eggs',
+          ],
+          cuisine: '',
+          max_ready_time_minutes: 30,
+          force_regenerate: false,
+        });
+        await refetchMeals();
+      } catch (err) {
+        console.error('Failed to generate meals', err);
+      } finally {
+        setIsGeneratingMeals(false);
+      }
+    };
+
+    generateMeals();
+  }, [
+    buildMacroTargets,
+    isGeneratingMeals,
+    isMealsLoading,
+    mealGroups.length,
+    phase,
+    refetchMeals,
+    todayKey,
+    user?.id,
+  ]);
 
   const handleSelectFoodSuggestion = async (food: FoodItem) => {
     try {
@@ -492,6 +570,9 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                 index === entries.length - 1 && styles.mealEntryRowLast,
               ]}
             >
+              {entry.imageUrl ? (
+                <Image source={{ uri: entry.imageUrl }} style={styles.mealEntryImage} />
+              ) : null}
               <View style={styles.mealEntryInfo}>
                 <Text style={styles.mealEntryName}>{entry.foodName}</Text>
                 <Text style={styles.mealEntryMacros}>{formatMealEntryMacros(entry)}</Text>
@@ -521,7 +602,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const renderMacroSummary = () => {
     if (!mealGroups.length) return null;
     const { calories, protein, carbs, fats } = totalDayMacros;
-    const calorieGoal = 2500;
+    const calorieGoal = CALORIE_GOAL_DEFAULT;
     const macroCalories = {
       protein: (protein ?? 0) * 4,
       carbs: (carbs ?? 0) * 4,
@@ -624,6 +705,14 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   };
 
   const renderMealsEmpty = () => {
+    if (isGeneratingMeals) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="small" color={COLORS.accent} />
+          <Text style={styles.loadingText}>Generating meals...</Text>
+        </View>
+      );
+    }
     if (isMealsLoading && !dailyMeal) {
       return (
         <View style={styles.loadingContainer}>
@@ -1044,6 +1133,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+  },
+  mealEntryImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    marginRight: 12,
+    backgroundColor: COLORS.elevated,
   },
   mealEntryRowLast: {
     borderBottomWidth: 0,

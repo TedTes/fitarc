@@ -13,6 +13,7 @@ export type MealEntryRecord = {
   protein_g: number | null;
   carbs_g: number | null;
   fat_g: number | null;
+  image_url: string | null;
   created_at: string;
   is_done: boolean | null;
 };
@@ -36,6 +37,7 @@ export type MealEntry = {
   protein: number | null;
   carbs: number | null;
   fats: number | null;
+  imageUrl: string | null;
   createdAt: string;
   isDone: boolean;
 };
@@ -116,6 +118,7 @@ const mapMealEntryRow = (row: MealEntryRecord): MealEntry => ({
   protein: row.protein_g,
   carbs: row.carbs_g,
   fats: row.fat_g,
+  imageUrl: row.image_url ?? null,
   createdAt: row.created_at,
   isDone: Boolean(row.is_done),
 });
@@ -261,7 +264,8 @@ export const fetchMealPlansForRange = async (
         calories,
         protein_g,
         carbs_g,
-        fat_g
+        fat_g,
+        image_url
       )
     `
     )
@@ -348,6 +352,7 @@ export const fetchMealEntries = async (dailyMealId: string): Promise<MealEntry[]
       protein_g,
       carbs_g,
       fat_g,
+      image_url,
       created_at,
       is_done
     `
