@@ -14,6 +14,8 @@ export type MealEntryRecord = {
   carbs_g: number | null;
   fat_g: number | null;
   image_url: string | null;
+  source_url: string | null;
+  ingredients: string[] | null;
   created_at: string;
   is_done: boolean | null;
 };
@@ -29,6 +31,8 @@ export type MealEntry = {
   carbs: number | null;
   fats: number | null;
   imageUrl: string | null;
+  sourceUrl: string | null;
+  ingredients: string[] | null;
   createdAt: string;
   isDone: boolean;
 };
@@ -70,6 +74,8 @@ export type CreateMealEntryInput = {
   protein?: number | null;
   carbs?: number | null;
   fats?: number | null;
+  sourceUrl?: string | null;
+  ingredients?: string[] | null;
 };
 
 export type UpdateMealEntryInput = Partial<{
@@ -80,6 +86,8 @@ export type UpdateMealEntryInput = Partial<{
   protein: number | null;
   carbs: number | null;
   fats: number | null;
+  sourceUrl: string | null;
+  ingredients: string[] | null;
 }>;
 
 const normalizeMealType = (value?: string | null): string => {
@@ -110,6 +118,8 @@ const mapMealEntryRow = (row: MealEntryRecord): MealEntry => ({
   carbs: row.carbs_g,
   fats: row.fat_g,
   imageUrl: row.image_url ?? null,
+  sourceUrl: row.source_url ?? null,
+  ingredients: row.ingredients ?? null,
   createdAt: row.created_at,
   isDone: Boolean(row.is_done),
 });
@@ -301,6 +311,8 @@ export const fetchMealEntries = async (dailyMealId: string): Promise<MealEntry[]
       protein_g,
       carbs_g,
       fat_g,
+      source_url,
+      ingredients,
       image_url,
       created_at,
       is_done
@@ -344,6 +356,8 @@ const buildEntryPayload = (input: CreateMealEntryInput | UpdateMealEntryInput) =
   if ('protein' in input) payload.protein_g = input.protein ?? null;
   if ('carbs' in input) payload.carbs_g = input.carbs ?? null;
   if ('fats' in input) payload.fat_g = input.fats ?? null;
+  if ('sourceUrl' in input) payload.source_url = input.sourceUrl ?? null;
+  if ('ingredients' in input) payload.ingredients = input.ingredients ?? null;
   return payload;
 };
 
@@ -368,6 +382,9 @@ export const createMealEntry = async (
       protein_g,
       carbs_g,
       fat_g,
+      source_url,
+      ingredients,
+      image_url,
       created_at,
       is_done
     `
@@ -386,21 +403,24 @@ export const updateMealEntry = async (
   if (!Object.keys(payload).length) {
     const { data, error } = await supabase
       .from('fitarc_meal_entries')
-      .select(
+    .select(
         `
-        id,
-        daily_meal_id,
-        meal_type,
-        food_name,
-        calories,
-        protein_g,
-        carbs_g,
-        fat_g,
-        created_at,
-        is_done
-      `
-      )
-      .eq('id', entryId)
+      id,
+      daily_meal_id,
+      meal_type,
+      food_name,
+      calories,
+      protein_g,
+      carbs_g,
+      fat_g,
+      source_url,
+      ingredients,
+      image_url,
+      created_at,
+      is_done
+    `
+    )
+    .eq('id', entryId)
       .single();
 
     if (error) throw error;
@@ -421,6 +441,9 @@ export const updateMealEntry = async (
       protein_g,
       carbs_g,
       fat_g,
+      source_url,
+      ingredients,
+      image_url,
       created_at,
       is_done
     `

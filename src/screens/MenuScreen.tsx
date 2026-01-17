@@ -126,7 +126,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     phase?.id ?? null
   );
 
-  const [expandedMeals, setExpandedMeals] = useState<Set<string>>(new Set());
   const [mealModalVisible, setMealModalVisible] = useState(false);
   const [mealModalMode, setMealModalMode] = useState<'search' | 'custom'>('search');
   const [selectedMealTypeForAdding, setSelectedMealTypeForAdding] = useState<string>('');
@@ -149,6 +148,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   });
   const [isCreatingFood, setIsCreatingFood] = useState(false);
   const [storedFoods, setStoredFoods] = useState<FoodItem[]>([]);
+  const [mealDetailsVisible, setMealDetailsVisible] = useState(false);
+  const [mealDetailsGroup, setMealDetailsGroup] = useState<{
+    mealType: string;
+    entries: MealEntry[];
+    featured?: MealEntry | null;
+  } | null>(null);
   const foodSearchCache = useRef<Map<string, FoodItem[]>>(new Map());
   const storedFoodsLoadedRef = useRef(false);
   const mealGenerationAttemptedRef = useRef<Set<string>>(new Set());
@@ -331,7 +336,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   useEffect(() => {
     if (!phase || !user?.id) return;
     if (isMealsLoading || isGeneratingMeals) return;
-    if (mealGroups.length > 0) return;
     const attemptKey = `${phase.id}:${todayKey}`;
     if (mealGenerationAttemptedRef.current.has(attemptKey)) return;
 
@@ -468,16 +472,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     ]);
   };
 
-  const toggleMealExpanded = (mealType: string) => {
-    setExpandedMeals((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(mealType)) {
-        newSet.delete(mealType);
-      } else {
-        newSet.add(mealType);
-      }
-      return newSet;
-    });
+  const openMealDetails = (mealType: string, entries: MealEntry[]) => {
+    const featured = entries.find((entry) => entry.imageUrl) || entries[0] || null;
+    setMealDetailsGroup({ mealType, entries, featured });
+    setMealDetailsVisible(true);
+  };
+
+  const closeMealDetails = () => {
+    setMealDetailsVisible(false);
+    setMealDetailsGroup(null);
   };
 
   useFocusEffect(
@@ -575,7 +578,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const renderMealGroup = ({ item: group }: { item: { mealType: string; entries: MealEntry[] } }) => {
     const { mealType, entries } = group;
     const totals = computeEntriesMacroTotals(entries);
-    const isExpanded = expandedMeals.has(mealType);
     const gradientColors = getMealGradient(mealType);
 
     // Get the first entry with an image for the card header
@@ -584,7 +586,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     return (
       <TouchableOpacity
         activeOpacity={0.9}
-        onPress={() => toggleMealExpanded(mealType)}
+        onPress={() => openMealDetails(mealType, entries)}
         style={styles.mealCardContainer}
       >
         <View style={styles.mealCard}>
@@ -1060,6 +1062,50 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
             )}
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={mealDetailsVisible}
+        onRequestClose={closeMealDetails}
+      >
+        <View style={styles.detailModalOverlay}>
+          <Pressable style={styles.detailModalBackdrop} onPress={closeMealDetails} />
+          <View style={styles.detailModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Ingredients</Text>
+              <TouchableOpacity onPress={closeMealDetails}>
+                <Text style={styles.modalCloseButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.ingredientsList}>
+              {mealDetailsGroup?.entries.map((entry) => {
+                const ingredients = entry.ingredients ?? [];
+                return (
+                  <View key={entry.id} style={styles.detailMealBlock}>
+                    <View style={styles.detailMealHeader}>
+                      <View style={styles.detailMealHeaderText}>
+                        <Text style={styles.detailMealTitle}>{entry.foodName}</Text>
+                        <Text style={styles.detailMealMacros}>{formatMealEntryMacros(entry)}</Text>
+                      </View>
+                    </View>
+                    {ingredients.length > 0 ? (
+                      ingredients.map((ingredient, index) => (
+                        <View key={`${entry.id}-ingredient-${index}`} style={styles.detailIngredientRow}>
+                          <View style={styles.detailIngredientBullet} />
+                          <Text style={styles.detailIngredientText}>{ingredient}</Text>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.detailIngredientEmpty}>Ingredients unavailable.</Text>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -1553,6 +1599,76 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 40,
     maxHeight: '85%',
+  },
+  ingredientsList: {
+    maxHeight: 520,
+  },
+  detailModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  detailModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  detailModalContent: {
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+    maxHeight: '85%',
+  },
+  detailMealBlock: {
+    paddingBottom: 16,
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  detailMealHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    gap: 12,
+  },
+  detailMealHeaderText: {
+    flex: 1,
+  },
+  detailMealTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  detailMealMacros: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+  detailIngredientRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 8,
+  },
+  detailIngredientBullet: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: COLORS.accent,
+    marginTop: 7,
+  },
+  detailIngredientText: {
+    flex: 1,
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
+  },
+  detailIngredientEmpty: {
+    fontSize: 13,
+    color: COLORS.textTertiary,
+    fontStyle: 'italic',
   },
   modalHeader: {
     flexDirection: 'row',
