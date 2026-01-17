@@ -18,15 +18,6 @@ export type MealEntryRecord = {
   is_done: boolean | null;
 };
 
-export type SeedMealPlanParams = {
-  userId: string;
-  startDate: string;
-  days?: number;
-  planId?: string | null;
-  includeSnack?: boolean;
-  eatingMode?: string;
-};
-
 export type MealEntry = {
   id: string;
   dailyMealId: string;
@@ -196,48 +187,6 @@ export const ensureDailyMealsForWeek = async (
     records.push(record);
   }
   return records;
-};
-
-export const hasDailyMealsInRange = async (
-  userId: string,
-  fromDate: string,
-  toDate: string,
-  planId?: string | null
-): Promise<boolean> => {
-  const query = supabase
-    .from('fitarc_daily_meals')
-    .select('id', { head: true, count: 'exact' })
-    .eq('user_id', userId)
-    .gte('meal_date', fromDate)
-    .lte('meal_date', toDate)
-    .limit(1);
-  if (planId) {
-    query.eq('plan_id', planId);
-  }
-  const { count, error } = await query;
-  if (error) throw error;
-  return Boolean(count && count > 0);
-};
-
-export const createMealPlanWithSeed = async ({
-  userId,
-  startDate,
-  days = 7,
-  planId,
-  includeSnack = false,
-  eatingMode = 'balanced',
-}: SeedMealPlanParams): Promise<string> => {
-  const { data, error } = await supabase.rpc('fitarc_create_meal_plan_with_seed', {
-    p_user_id: userId,
-    p_start_date: startDate,
-    p_days: days,
-    p_name: null,
-    p_eating_mode: eatingMode,
-    p_plan_id: planId ?? null,
-    p_include_snack: includeSnack,
-  });
-  if (error) throw error;
-  return (data as string) ?? '';
 };
 
 export const fetchMealPlansForRange = async (

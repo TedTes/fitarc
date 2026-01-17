@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchMealPlansForRange } from '../services/mealService';
-import {
-  hasDailyMealsInRange,
-  createMealPlanWithSeed,
-} from '../services/mealService';
 import { DailyMealPlan } from '../types/domain';
 
 const cache = new Map<string, DailyMealPlan[]>();
@@ -29,18 +25,6 @@ export const useMealPlans = (
     try {
       setIsLoading(true);
       setError(null);
-      const hasMeals = await hasDailyMealsInRange(userId, from, to, planId ?? null);
-      if (!hasMeals) {
-        await createMealPlanWithSeed({
-          userId,
-          startDate: from,
-          planId: planId ?? null,
-        });
-        const keyToInvalidate = buildKey(userId, from, to, planId);
-        if (keyToInvalidate) {
-          cache.delete(keyToInvalidate);
-        }
-      }
       const data = await fetchMealPlansForRange(userId, from, to, planId ?? undefined);
       const key = buildKey(userId, from, to, planId);
       if (key) {

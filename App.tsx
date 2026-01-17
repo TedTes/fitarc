@@ -39,11 +39,7 @@ import {
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile, updateTrackingPreferences, getSignedAvatarUrl } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/dashboardService';
-import { addDays, formatLocalDateYMD, parseYMDToDate } from './src/utils/date';
-import {
-  createMealPlanWithSeed,
-  hasDailyMealsInRange,
-} from './src/services/mealService';
+import { formatLocalDateYMD } from './src/utils/date';
 import { 
   createPhaseWithWorkouts,
   completePhase as completeRemotePhase 
@@ -574,23 +570,7 @@ function AppContent() {
       if (seededSessions.length) {
         await hydrateFromRemote({ workoutSessions: seededSessions });
       }
-      const mealStartDate = remotePhase.startDate;
-      const mealEndDate = formatLocalDateYMD(addDays(parseYMDToDate(mealStartDate), 6));
-      const hasMeals = await hasDailyMealsInRange(
-        authUser.id,
-        mealStartDate,
-        mealEndDate,
-        remotePhase.id
-      );
-      if (!hasMeals) {
-        await createMealPlanWithSeed({
-          userId: authUser.id,
-          startDate: mealStartDate,
-          days: 7,
-          planId: remotePhase.id,
-          eatingMode: state.user.eatingMode ?? 'maintenance',
-        });
-      }
+      // Meal entries are generated on demand via the generate-meals edge function.
       await loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id);
       await loadMealPlansFromSupabase(authUser.id, remotePhase.id);
       
