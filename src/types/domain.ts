@@ -22,6 +22,13 @@ export type TrackingPreferences = {
   muscles?: Record<string, string>;
 };
 
+export type MealPreferences = {
+  cuisine: string;
+  dietary_tags: string[];
+  excluded_ingredients: string[];
+  max_ready_time_minutes: number;
+};
+
 export type WorkoutSetEntry = {
   setNumber?: number | null;
   weight?: number | null;
@@ -81,6 +88,7 @@ export type User = {
   avatarUrl?: string;
   avatarPath?: string;
   trackingPreferences?: TrackingPreferences;
+  mealPreferences?: MealPreferences;
   createdAt: string;
 };
 

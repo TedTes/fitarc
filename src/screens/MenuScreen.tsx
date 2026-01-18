@@ -18,14 +18,14 @@ import {
   Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Circle } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
-import { PhasePlan, User } from '../types/domain';
+import { MealPreferences, PhasePlan, User } from '../types/domain';
 import { formatLocalDateYMD } from '../utils/date';
 import { useMealPlans } from '../hooks/useMealPlans';
 import { useTodayMeals, DUPLICATE_MEAL_ENTRY_ERROR } from '../hooks/useTodayMeals';
 import { FoodItem, MealEntry, createUserFood, fetchStoredFoods, searchFoods } from '../services/mealService';
 import { generateMealsForDay } from '../services/mealGenerationService';
+import { updateMealPreferences } from '../services/userProfileService';
 import { useFabAction } from '../contexts/FabActionContext';
 import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
 import { estimateDailyCalories } from '../utils/calorieGoal';
@@ -56,6 +56,43 @@ const COLORS = {
   protein: '#00F5A0',
   carbs: '#6C63FF',
   fats: '#FF6B9D',
+};
+
+const CUISINE_OPTIONS = [
+  { id: 'mixed', label: 'Mixed (No Preference)', emoji: '🌍' },
+  { id: 'mediterranean', label: 'Mediterranean', emoji: '🫒' },
+  { id: 'asian', label: 'Asian', emoji: '🍜' },
+  { id: 'american', label: 'American', emoji: '🍔' },
+  { id: 'latin american', label: 'Latin American', emoji: '🌮' },
+  { id: 'middle eastern', label: 'Middle Eastern', emoji: '🧆' },
+];
+
+const DIETARY_OPTIONS = [
+  { id: 'vegetarian', label: 'Vegetarian' },
+  { id: 'vegan', label: 'Vegan' },
+  { id: 'gluten free', label: 'Gluten-Free' },
+  { id: 'dairy free', label: 'Dairy-Free' },
+  { id: 'ketogenic', label: 'Keto/Low-Carb' },
+];
+
+const COOK_TIME_OPTIONS = [15, 30, 45, 60];
+
+const buildDefaultMealPreferences = (): MealPreferences => ({
+  cuisine: 'mixed',
+  dietary_tags: [],
+  excluded_ingredients: [],
+  max_ready_time_minutes: 30,
+});
+
+const resolveMealPreferences = (prefs?: MealPreferences | null): MealPreferences => {
+  const base = buildDefaultMealPreferences();
+  if (!prefs) return base;
+  return {
+    ...base,
+    ...prefs,
+    dietary_tags: prefs.dietary_tags ?? [],
+    excluded_ingredients: prefs.excluded_ingredients ?? [],
+  };
 };
 
 const getMealEmoji = (title: string): string => {
@@ -154,9 +191,19 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     entries: MealEntry[];
     featured?: MealEntry | null;
   } | null>(null);
+  const [preferencesModalVisible, setPreferencesModalVisible] = useState(false);
+  const [mealPreferences, setMealPreferences] = useState<MealPreferences>(() =>
+    resolveMealPreferences(user.mealPreferences)
+  );
+  const [excludeInputVisible, setExcludeInputVisible] = useState(false);
+  const [excludeInput, setExcludeInput] = useState('');
   const foodSearchCache = useRef<Map<string, FoodItem[]>>(new Map());
   const storedFoodsLoadedRef = useRef(false);
   const mealGenerationAttemptedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setMealPreferences(resolveMealPreferences(user.mealPreferences));
+  }, [user.mealPreferences]);
 
   const loadStoredFoods = useCallback(async () => {
     try {
@@ -273,11 +320,11 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
         colors: ['#6C63FF', '#4C3BFF'] as const,
         iconColor: '#0A0E27',
         labelColor: '#6C63FF',
-        onPress: () => openAddMealModal(),
+        onPress: () => setPreferencesModalVisible(true),
       });
 
       return () => setFabAction('Menu', null);
-    }, [openAddMealModal, setFabAction])
+    }, [setFabAction])
   );
 
   const closeMealModal = () => {
@@ -352,25 +399,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           calorie_target: calorieTarget,
           macro_targets: macroTargets,
           meal_count: 3,
-          dietary_tags: [],
-          excluded_ingredients: [],
-          preferred_ingredients: [
-            'chicken',
-            'tofu',
-            'oats',
-            'greek yogurt',
-            'apple',
-            'orange',
-            'kiwi',
-            'sweet potatoes',
-            'sardine',
-            'cottage cheese',
-            'chickpeas',
-            'peanut butter',
-            'eggs',
-          ],
-          cuisine: '',
-          max_ready_time_minutes: 30,
+          dietary_tags: mealPreferences.dietary_tags,
+          excluded_ingredients: mealPreferences.excluded_ingredients,
+          cuisine: mealPreferences.cuisine === 'mixed' ? '' : mealPreferences.cuisine,
+          max_ready_time_minutes: mealPreferences.max_ready_time_minutes,
           force_regenerate: false,
         });
         await refetchMeals();
@@ -388,6 +420,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     isGeneratingMeals,
     isMealsLoading,
     mealGroups.length,
+    mealPreferences,
     phase,
     refetchMeals,
     todayKey,
@@ -454,23 +487,46 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     }
   };
 
-  const confirmDeleteEntry = (entryId: string) => {
-    Alert.alert('Delete Meal', 'Remove this meal item?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await removeEntry(entryId);
-            await refreshMealPlans();
-          } catch (err: any) {
-            Alert.alert('Error', err?.message || 'Unable to delete meal item.');
-          }
-        },
-      },
-    ]);
+  const handleToggleDietaryTag = (tag: string) => {
+    setMealPreferences((prev) => ({
+      ...prev,
+      dietary_tags: prev.dietary_tags.includes(tag)
+        ? prev.dietary_tags.filter((t) => t !== tag)
+        : [...prev.dietary_tags, tag],
+    }));
   };
+
+  const handleAddExclusion = () => {
+    const trimmed = excludeInput.trim();
+    if (!trimmed) return;
+
+    setMealPreferences((prev) => ({
+      ...prev,
+      excluded_ingredients: [...prev.excluded_ingredients, trimmed],
+    }));
+    setExcludeInput('');
+    setExcludeInputVisible(false);
+  };
+
+  const handleRemoveExclusion = (ingredient: string) => {
+    setMealPreferences((prev) => ({
+      ...prev,
+      excluded_ingredients: prev.excluded_ingredients.filter((i) => i !== ingredient),
+    }));
+  };
+
+  const handleSavePreferences = async () => {
+    try {
+      await updateMealPreferences(user.id, mealPreferences);
+      setPreferencesModalVisible(false);
+      Alert.alert('Preferences Saved', 'Your meal preferences have been updated.');
+    } catch (err) {
+      console.error('Failed to save meal preferences', err);
+      Alert.alert('Error', 'Unable to save meal preferences.');
+    }
+  };
+
+ 
 
   const openMealDetails = (mealType: string, entries: MealEntry[]) => {
     const featured = entries.find((entry) => entry.imageUrl) || entries[0] || null;
@@ -708,85 +764,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     );
   };
 
-  const renderMacroSummary = () => {
-    if (!mealGroups.length) return null;
-    const { calories, protein, carbs, fats } = totalDayMacros;
-    const macroTargets = buildMacroTargets(calorieGoal);
-
-    const macroItems = [
-      {
-        label: 'Protein',
-        current: protein ?? 0,
-        target: macroTargets.protein_g,
-        color: COLORS.protein,
-        size: 80,
-      },
-      {
-        label: 'Carbs',
-        current: carbs ?? 0,
-        target: macroTargets.carbs_g,
-        color: COLORS.carbs,
-        size: 80,
-      },
-      {
-        label: 'Fat',
-        current: fats ?? 0,
-        target: macroTargets.fats_g,
-        color: COLORS.fats,
-        size: 80,
-      },
-    ];
-
-    return (
-      <View style={styles.macroSummaryCard}>
-        <View style={styles.macroRingsRow}>
-          {macroItems.map((item) => {
-            const radius = (item.size - 6) / 2;
-            const circumference = 2 * Math.PI * radius;
-            const progress = Math.min(item.current / item.target, 1);
-            const strokeDashoffset = circumference * (1 - progress);
-
-            return (
-              <View key={item.label} style={styles.macroRingContainer}>
-                <Svg width={item.size} height={item.size} style={{ transform: [{ rotate: '-90deg' }] }}>
-                  <Circle
-                    cx={item.size / 2}
-                    cy={item.size / 2}
-                    r={radius}
-                    stroke={COLORS.border}
-                    strokeWidth={6}
-                    fill="none"
-                  />
-                  <Circle
-                    cx={item.size / 2}
-                    cy={item.size / 2}
-                    r={radius}
-                    stroke={item.color}
-                    strokeWidth={6}
-                    fill="none"
-                    strokeDasharray={circumference}
-                    strokeDashoffset={strokeDashoffset}
-                    strokeLinecap="round"
-                  />
-                </Svg>
-                <View style={styles.macroRingCenter}>
-                  <Text style={styles.macroRingValue}>{Math.round(item.current)}</Text>
-                  <Text style={styles.macroRingLabel}>{item.label[0]}</Text>
-                </View>
-                <Text style={styles.macroRingTarget}>/{item.target}g</Text>
-              </View>
-            );
-          })}
-        </View>
-
-        <View style={styles.calorieSummary}>
-          <Text style={styles.calorieValue}>{Math.round(calories ?? 0).toLocaleString()}</Text>
-          <Text style={styles.calorieLabel}>/ {calorieGoal.toLocaleString()} kcal</Text>
-        </View>
-      </View>
-    );
-  };
-
   const renderMealsEmpty = () => {
     if (isGeneratingMeals) {
       return (
@@ -828,28 +805,31 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
         >
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.headerDate}>
-              {today.toLocaleDateString('en-US', {
-                weekday: 'long',
-                month: 'long',
-                day: 'numeric',
-              })}
+            <Text style={styles.headerTitle}>
+              {Math.round(totalDayMacros.calories ?? 0).toLocaleString()} kcal
             </Text>
-            <Text style={styles.headerSubtitle}>Your Daily Nutrition</Text>
+            <Text style={styles.headerSubtitle}>
+              {Math.round(totalDayMacros.protein ?? 0)}P · {Math.round(totalDayMacros.carbs ?? 0)}C ·{' '}
+              {Math.round(totalDayMacros.fats ?? 0)}F
+            </Text>
           </View>
-
-          {/* Macro Summary */}
-          {renderMacroSummary()}
 
           {/* Meals Section */}
           <View style={styles.mealsSection}>
             {mealGroups.length > 0 && (
               <View style={styles.mealsSectionHeader}>
                 <Text style={styles.mealsSectionTitle}>Today's Meals</Text>
-                <View style={styles.completionBadge}>
-                  <Text style={styles.completionBadgeText}>
-                    {mealGroups.filter(g => g.entries.every(e => e.isDone)).length}/{mealGroups.length}
-                  </Text>
+                <View style={styles.progressDots}>
+                  {mealGroups.map((group, index) => (
+                    <View
+                      key={`${group.mealType}-${index}`}
+                      style={[
+                        styles.progressDot,
+                        group.entries.every((entry) => entry.isDone) &&
+                          styles.progressDotComplete,
+                      ]}
+                    />
+                  ))}
                 </View>
               </View>
             )}
@@ -1107,6 +1087,184 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        transparent
+        animationType="slide"
+        visible={preferencesModalVisible}
+        onRequestClose={() => setPreferencesModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => setPreferencesModalVisible(false)}
+          />
+          <View style={styles.preferencesModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Meal Preferences</Text>
+              <TouchableOpacity onPress={() => setPreferencesModalVisible(false)}>
+                <Text style={styles.modalCloseButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.preferencesScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.prefSection}>
+                <Text style={styles.prefSectionTitle}>Cuisine Style</Text>
+                <View style={styles.cuisineGrid}>
+                  {CUISINE_OPTIONS.map((cuisine) => {
+                    const isSelected = mealPreferences.cuisine === cuisine.id;
+                    return (
+                      <TouchableOpacity
+                        key={cuisine.id}
+                        style={[styles.cuisineChip, isSelected && styles.cuisineChipSelected]}
+                        onPress={() =>
+                          setMealPreferences((prev) => ({ ...prev, cuisine: cuisine.id }))
+                        }
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.cuisineEmoji}>{cuisine.emoji}</Text>
+                        <Text
+                          style={[styles.cuisineLabel, isSelected && styles.cuisineLabelSelected]}
+                        >
+                          {cuisine.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.prefSection}>
+                <Text style={styles.prefSectionTitle}>Dietary Restrictions</Text>
+                <View style={styles.dietaryGrid}>
+                  {DIETARY_OPTIONS.map((option) => {
+                    const isSelected = mealPreferences.dietary_tags.includes(option.id);
+                    return (
+                      <TouchableOpacity
+                        key={option.id}
+                        style={[styles.dietaryChip, isSelected && styles.dietaryChipSelected]}
+                        onPress={() => handleToggleDietaryTag(option.id)}
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[
+                            styles.dietaryLabel,
+                            isSelected && styles.dietaryLabelSelected,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.prefSection}>
+                <Text style={styles.prefSectionTitle}>Exclude Foods</Text>
+                <Text style={styles.prefSectionSubtitle}>
+                  Add ingredients you want to avoid (allergies, dislikes, etc.)
+                </Text>
+
+                {mealPreferences.excluded_ingredients.length > 0 && (
+                  <View style={styles.exclusionsList}>
+                    {mealPreferences.excluded_ingredients.map((ingredient) => (
+                      <View key={ingredient} style={styles.exclusionChip}>
+                        <Text style={styles.exclusionText}>{ingredient}</Text>
+                        <TouchableOpacity
+                          onPress={() => handleRemoveExclusion(ingredient)}
+                          style={styles.exclusionRemove}
+                        >
+                          <Text style={styles.exclusionRemoveText}>×</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {!excludeInputVisible ? (
+                  <TouchableOpacity
+                    style={styles.addExclusionButton}
+                    onPress={() => setExcludeInputVisible(true)}
+                  >
+                    <Text style={styles.addExclusionText}>+ Add Food to Exclude</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.exclusionInputContainer}>
+                    <TextInput
+                      style={styles.exclusionInput}
+                      placeholder="e.g., Mushrooms, Shellfish, Cilantro"
+                      placeholderTextColor={COLORS.textTertiary}
+                      value={excludeInput}
+                      onChangeText={setExcludeInput}
+                      autoFocus
+                    />
+                    <View style={styles.exclusionActions}>
+                      <TouchableOpacity
+                        style={[styles.exclusionButton, styles.exclusionCancel]}
+                        onPress={() => {
+                          setExcludeInput('');
+                          setExcludeInputVisible(false);
+                        }}
+                      >
+                        <Text style={styles.exclusionButtonText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.exclusionButton, styles.exclusionConfirm]}
+                        onPress={handleAddExclusion}
+                      >
+                        <Text
+                          style={[
+                            styles.exclusionButtonText,
+                            styles.exclusionConfirmText,
+                          ]}
+                        >
+                          Add
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.prefSection}>
+                <Text style={styles.prefSectionTitle}>Max Cooking Time</Text>
+                <View style={styles.cookTimeGrid}>
+                  {COOK_TIME_OPTIONS.map((minutes) => {
+                    const isSelected = mealPreferences.max_ready_time_minutes === minutes;
+                    return (
+                      <TouchableOpacity
+                        key={minutes}
+                        style={[styles.cookTimeChip, isSelected && styles.cookTimeChipSelected]}
+                        onPress={() =>
+                          setMealPreferences((prev) => ({
+                            ...prev,
+                            max_ready_time_minutes: minutes,
+                          }))
+                        }
+                        activeOpacity={0.7}
+                      >
+                        <Text
+                          style={[styles.cookTimeLabel, isSelected && styles.cookTimeLabelSelected]}
+                        >
+                          {minutes} min
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity style={styles.savePreferencesButton} onPress={handleSavePreferences}>
+              <Text style={styles.savePreferencesButtonText}>Save Preferences</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 };
@@ -1132,78 +1290,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     marginBottom: 24,
   },
-  headerDate: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
-  },
-
-  // Macro Summary
-  macroSummaryCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 20,
-    padding: 20,
-    marginHorizontal: 20,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  macroRingsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 20,
-  },
-  macroRingContainer: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  macroRingCenter: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  macroRingValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  macroRingLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    marginTop: -2,
-  },
-  macroRingTarget: {
-    fontSize: 13,
-    color: COLORS.textTertiary,
-    fontWeight: '600',
-  },
-  calorieSummary: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'center',
-    gap: 6,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  calorieValue: {
+  headerTitle: {
     fontSize: 32,
     fontWeight: '700',
     color: COLORS.textPrimary,
+    marginBottom: 2,
   },
-  calorieLabel: {
-    fontSize: 15,
+  headerSubtitle: {
+    fontSize: 14,
     color: COLORS.textSecondary,
     fontWeight: '600',
   },
@@ -1223,18 +1317,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textPrimary,
   },
-  completionBadge: {
-    backgroundColor: COLORS.accentDim,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.accent,
+  progressDots: {
+    flexDirection: 'row',
+    gap: 6,
   },
-  completionBadgeText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.accent,
+  progressDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.border,
+  },
+  progressDotComplete: {
+    backgroundColor: COLORS.success,
   },
 
   // Meal Card
@@ -1249,7 +1343,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   mealImageContainer: {
-    height: 220,
+    height: 180,
     position: 'relative',
   },
   mealImage: {
@@ -1619,6 +1713,214 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 30,
     maxHeight: '85%',
+  },
+  preferencesModalContent: {
+    backgroundColor: COLORS.card,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+    maxHeight: '85%',
+  },
+  preferencesScroll: {
+    maxHeight: 520,
+  },
+  prefSection: {
+    marginBottom: 24,
+  },
+  prefSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 12,
+  },
+  prefSectionSubtitle: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 12,
+  },
+  cuisineGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  cuisineChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cuisineChipSelected: {
+    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.accent,
+  },
+  cuisineEmoji: {
+    fontSize: 16,
+  },
+  cuisineLabel: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  cuisineLabelSelected: {
+    color: COLORS.accent,
+  },
+  dietaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  dietaryChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  dietaryChipSelected: {
+    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.accent,
+  },
+  dietaryLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  dietaryLabelSelected: {
+    color: COLORS.accent,
+  },
+  exclusionsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  exclusionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  exclusionText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  exclusionRemove: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,59,48,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exclusionRemoveText: {
+    fontSize: 14,
+    color: '#FF3B30',
+    fontWeight: '700',
+    marginTop: -1,
+  },
+  addExclusionButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.surface,
+    alignItems: 'center',
+  },
+  addExclusionText: {
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  exclusionInputContainer: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+    borderRadius: 12,
+    padding: 12,
+  },
+  exclusionInput: {
+    color: COLORS.textPrimary,
+    fontSize: 14,
+    paddingVertical: 6,
+  },
+  exclusionActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 10,
+  },
+  exclusionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  exclusionCancel: {
+    backgroundColor: COLORS.surface,
+  },
+  exclusionConfirm: {
+    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.accent,
+  },
+  exclusionButtonText: {
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  exclusionConfirmText: {
+    color: COLORS.accent,
+  },
+  cookTimeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  cookTimeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cookTimeChipSelected: {
+    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.accent,
+  },
+  cookTimeLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  cookTimeLabelSelected: {
+    color: COLORS.accent,
+  },
+  savePreferencesButton: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  savePreferencesButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
   },
   detailMealBlock: {
     paddingBottom: 16,

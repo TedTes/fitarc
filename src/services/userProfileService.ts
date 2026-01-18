@@ -1,7 +1,12 @@
 import { supabase } from '../lib/supabaseClient';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
-import { User, ExperienceLevel, TrackingPreferences } from '../types/domain';
+import {
+  User,
+  ExperienceLevel,
+  TrackingPreferences,
+  MealPreferences,
+} from '../types/domain';
 
 const PROFILE_TABLE = process.env.EXPO_PUBLIC_PROFILE_TABLE || 'fitarc_user_profiles';
 
@@ -18,6 +23,7 @@ export type RemoteProfileRow = {
   current_physique_level?: number | null;
   avatar_url?: string | null;
   tracking_preferences?: TrackingPreferences | null;
+  meal_preferences?: MealPreferences | null;
   created_at: string;
 };
 
@@ -60,6 +66,7 @@ const mapRowToUser = (row: RemoteProfileRow): User => {
     avatarUrl: isUrl ? storedAvatar : undefined,
     avatarPath: isUrl ? undefined : storedAvatar,
     trackingPreferences: row.tracking_preferences ?? undefined,
+    mealPreferences: row.meal_preferences ?? undefined,
     createdAt: row.created_at,
   };
 };
@@ -117,6 +124,10 @@ export const saveUserProfile = async (user: User): Promise<void> => {
     payload.tracking_preferences = user.trackingPreferences ?? null;
   }
 
+  if (user.mealPreferences !== undefined) {
+    payload.meal_preferences = user.mealPreferences ?? null;
+  }
+
   const { error } = await supabase.from(PROFILE_TABLE).upsert(payload);
 
   if (error) {
@@ -131,6 +142,19 @@ export const updateTrackingPreferences = async (
   const { error } = await supabase
     .from(PROFILE_TABLE)
     .update({ tracking_preferences: preferences })
+    .eq('user_id', userId);
+  if (error) {
+    throw error;
+  }
+};
+
+export const updateMealPreferences = async (
+  userId: string,
+  preferences: MealPreferences
+): Promise<void> => {
+  const { error } = await supabase
+    .from(PROFILE_TABLE)
+    .update({ meal_preferences: preferences })
     .eq('user_id', userId);
   if (error) {
     throw error;
