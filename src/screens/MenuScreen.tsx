@@ -85,9 +85,12 @@ const CircularProgress: React.FC<{
 }> = ({ size, strokeWidth, progress, color }) => {
   const AnimatedCircle = useMemo(() => Animated.createAnimatedComponent(Circle), []);
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const clampedProgress = Math.min(Math.max(progress, 0), 1);
+  const normalizedProgress = Math.max(progress, 0);
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
+  const gapLength = Math.max(8, strokeWidth * 0.9);
+  const maxProgress = (circumference - gapLength) / circumference;
+  const clampedProgress = Math.min(normalizedProgress, maxProgress);
 
   useEffect(() => {
     Animated.spring(progressAnim, {
@@ -322,7 +325,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
         });
         await refetchMeals();
       } catch (err) {
-        console.error('Failed to generate meals', err);
+        // Suppress noisy error logs in the UI.
       } finally {
         setIsGeneratingMeals(false);
       }
@@ -392,12 +395,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
         force_regenerate: true,
       });
       await refetchMeals();
-      setPreferencesModalVisible(false);
       Alert.alert('Preferences Saved', 'Your meal preferences have been updated.');
     } catch (err) {
-      console.error('Failed to save meal preferences', err);
+      // Avoid noisy error overlays in the app UI.
       Alert.alert('Try Again', 'We could not update your meals. Please try again.');
     } finally {
+      setPreferencesModalVisible(false);
       setIsGeneratingMeals(false);
     }
   };
