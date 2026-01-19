@@ -56,6 +56,7 @@ const COLORS = {
   protein: '#00F5A0',
   carbs: '#6C63FF',
   fats: '#FF6B9D',
+  calories: '#FFB800',
 };
 
 const CUISINE_OPTIONS = [
@@ -76,6 +77,95 @@ const DIETARY_OPTIONS = [
 ];
 
 const COOK_TIME_OPTIONS = [15, 30, 45, 60];
+
+const HEADER_EXPANDED_HEIGHT = 240;
+const HEADER_COLLAPSED_HEIGHT = 80;
+
+// Pure React Native Circular Progress Component
+const CircularProgress: React.FC<{
+  size: number;
+  strokeWidth: number;
+  progress: number;
+  color: string;
+}> = ({ size, strokeWidth, progress, color }) => {
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const clampedProgress = Math.min(Math.max(progress, 0), 1);
+
+  useEffect(() => {
+    Animated.spring(progressAnim, {
+      toValue: clampedProgress,
+      useNativeDriver: true,
+      tension: 40,
+      friction: 8,
+    }).start();
+  }, [clampedProgress, progressAnim]);
+
+  const rotation = progressAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <View style={{ width: size, height: size, position: 'relative' }}>
+      {/* Background circle */}
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: strokeWidth,
+          borderColor: 'transparent',
+          backgroundColor: 'transparent',
+        }}
+      />
+      
+      {/* Progress circle using rotation */}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          width: size,
+          height: size,
+          transform: [{ rotate: rotation }],
+        }}
+      >
+        <LinearGradient
+          colors={[color, color]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderWidth: strokeWidth,
+            borderColor: 'transparent',
+            borderTopColor: color,
+            borderRightColor: color,
+          }}
+        />
+      </Animated.View>
+
+      {/* Mask for incomplete progress */}
+      {clampedProgress < 1 && (
+        <View
+          style={{
+            position: 'absolute',
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderWidth: strokeWidth,
+            borderColor: 'transparent',
+            borderBottomColor: 'transparent',
+            borderLeftColor: 'transparent',
+            transform: [{ rotate: `${clampedProgress * 360}deg` }],
+          }}
+        />
+      )}
+    </View>
+  );
+};
+
 
 const buildDefaultMealPreferences = (): MealPreferences => ({
   cuisine: 'mixed',
@@ -113,17 +203,7 @@ const getMealGradient = (mealType: string): [string, string] => {
   return ['#6C63FF', '#9D8FFF'];
 };
 
-const formatFoodDisplayName = (food: FoodItem): string =>
-  food.brand ? `${food.name} (${food.brand})` : food.name;
 
-const formatFoodMacroSummary = (food: FoodItem): string => {
-  const parts: string[] = [];
-  if (typeof food.calories === 'number') parts.push(`${food.calories} kcal`);
-  if (typeof food.protein === 'number') parts.push(`${food.protein}g P`);
-  if (typeof food.carbs === 'number') parts.push(`${food.carbs}g C`);
-  if (typeof food.fats === 'number') parts.push(`${food.fats}g F`);
-  return parts.length ? parts.join(' · ') : 'Macros TBD';
-};
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const { setFabAction } = useFabAction();
@@ -134,12 +214,33 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   endDate.setDate(today.getDate() + 6);
   const endKey = formatLocalDateYMD(endDate);
 
+  const scrollY = useRef(new Animated.Value(0)).current;
+  
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, 80],
+    outputRange: [HEADER_EXPANDED_HEIGHT, HEADER_COLLAPSED_HEIGHT],
+    extrapolate: 'clamp',
+  });
+
+  const expandedOpacity = scrollY.interpolate({
+    inputRange: [0, 40],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
+  const compactOpacity = scrollY.interpolate({
+    inputRange: [40, 80],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
   const { refresh: refreshMealPlans } = useMealPlans(
     user.id,
     todayKey,
     endKey,
     phase?.id ?? null
   );
+  
   const selectedDateObj = useMemo(() => {
     const [yearStr, monthStr, dayStr] = todayKey.split('-');
     const year = Number(yearStr);
@@ -245,6 +346,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       carbs_g: Math.round(carbCalories / 4),
       fats_g: Math.round(fatCalories / 9),
     };
+  }, []);
+
+  const macroTargets = useMemo(
+    () => buildMacroTargets(calorieGoal),
+    [buildMacroTargets, calorieGoal]
+  );
+  const formatPercent = useCallback((current: number, goal: number) => {
+    if (!goal || goal <= 0) return 0;
+    return Math.min(Math.round((current / goal) * 100), 999);
   }, []);
 
   const allMealTypes = useMemo((): string[] => {
@@ -447,45 +557,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     }
   };
 
-  const handleCustomFoodFormChange = (field: keyof typeof customFoodForm, value: string) => {
-    setCustomFoodForm((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleSaveCustomFood = async () => {
-    const baseName = (customFoodForm.name || foodQuery).trim();
-    if (!baseName) {
-      Alert.alert('Missing Name', 'Enter a food name to save.');
-      return;
-    }
-    if (!selectedMealTypeForAdding) {
-      Alert.alert('Select Meal Type', 'Please choose which meal to add this to.');
-      return;
-    }
-    try {
-      setIsCreatingFood(true);
-      const food = await createUserFood(user.id, {
-        name: baseName,
-        brand: customFoodForm.brand.trim() || undefined,
-        servingLabel: customFoodForm.servingLabel.trim() || undefined,
-        calories: parseNumberField(customFoodForm.calories) ?? undefined,
-        protein: parseNumberField(customFoodForm.protein) ?? undefined,
-        carbs: parseNumberField(customFoodForm.carbs) ?? undefined,
-        fats: parseNumberField(customFoodForm.fats) ?? undefined,
-      });
-      await addFoodEntry(selectedMealTypeForAdding, food);
-      await refreshMealPlans();
-      closeMealModal();
-    } catch (err: any) {
-      if (err?.message === DUPLICATE_MEAL_ENTRY_ERROR) {
-        Alert.alert('Duplicate Item', 'This meal already contains that food.');
-      } else {
-        console.error('Failed to create custom food', err);
-        Alert.alert('Error', 'Unable to save this food.');
-      }
-    } finally {
-      setIsCreatingFood(false);
-    }
-  };
 
   const handleToggleDietaryTag = (tag: string) => {
     setMealPreferences((prev) => ({
@@ -526,17 +597,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     }
   };
 
- 
-
   const openMealDetails = (mealType: string, entries: MealEntry[]) => {
     const featured = entries.find((entry) => entry.imageUrl) || entries[0] || null;
     setMealDetailsGroup({ mealType, entries, featured });
     setMealDetailsVisible(true);
-  };
-
-  const closeMealDetails = () => {
-    setMealDetailsVisible(false);
-    setMealDetailsGroup(null);
   };
 
   useFocusEffect(
@@ -561,82 +625,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     );
   }
 
-  const renderMealTypeSelector = () => {
-    return (
-      <View style={styles.mealTypeSelectorContainer}>
-        <Text style={styles.mealTypeSelectorLabel}>Add to:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mealTypeChipsScroll}>
-          <View style={styles.mealTypeChips}>
-            {allMealTypes.map((type) => {
-              const isSelected = selectedMealTypeForAdding === type;
-              return (
-                <TouchableOpacity
-                  key={type}
-                  style={[styles.mealTypeChip, isSelected && styles.mealTypeChipSelected]}
-                  onPress={() => setSelectedMealTypeForAdding(type)}
-                >
-                  <Text style={[styles.mealTypeChipText, isSelected && styles.mealTypeChipTextSelected]}>
-                    {type}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-            <TouchableOpacity
-              style={styles.mealTypeChip}
-              onPress={() => {
-                setMealTypeDraft('');
-                setMealTypeDraftVisible(true);
-              }}
-            >
-              <Text style={styles.mealTypeChipText}>+ New</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-        {mealTypeDraftVisible && (
-          <View style={styles.customMealTypeInputContainer}>
-            <TextInput
-              style={styles.customMealTypeInput}
-              placeholder="New meal name"
-              placeholderTextColor={COLORS.textTertiary}
-              value={mealTypeDraft}
-              onChangeText={setMealTypeDraft}
-              autoFocus
-            />
-            <View style={styles.customMealTypeActions}>
-              <TouchableOpacity
-                style={[styles.customMealTypeButton, styles.customMealTypeCancel]}
-                onPress={() => {
-                  setMealTypeDraft('');
-                  setMealTypeDraftVisible(false);
-                }}
-              >
-                <Text style={styles.customMealTypeButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.customMealTypeButton, styles.customMealTypeConfirm]}
-                onPress={() => {
-                  handleAddCustomMealType(mealTypeDraft);
-                  setMealTypeDraft('');
-                  setMealTypeDraftVisible(false);
-                }}
-              >
-                <Text style={[styles.customMealTypeButtonText, styles.customMealTypeConfirmText]}>
-                  Add
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-      </View>
-    );
-  };
 
   const renderMealGroup = ({ item: group }: { item: { mealType: string; entries: MealEntry[] } }) => {
     const { mealType, entries } = group;
     const totals = computeEntriesMacroTotals(entries);
     const gradientColors = getMealGradient(mealType);
 
-    // Get the first entry with an image for the card header
     const featuredEntry = entries.find(e => e.imageUrl) || entries[0];
 
     return (
@@ -646,7 +640,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
         style={styles.mealCardContainer}
       >
         <View style={styles.mealCard}>
-          {/* Meal Image Header */}
           {featuredEntry?.imageUrl ? (
             <View style={styles.mealImageContainer}>
               <Image
@@ -659,7 +652,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                 style={styles.mealImageGradient}
               />
 
-              {/* Meal Type Badge */}
               <LinearGradient
                 colors={gradientColors}
                 start={{ x: 0, y: 0 }}
@@ -670,21 +662,18 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                 <Text style={styles.mealTypeBadgeText}>{mealType}</Text>
               </LinearGradient>
 
-              {/* Completion Badge */}
               {entries.every(e => e.isDone) && (
                 <View style={styles.completedBadge}>
                   <Text style={styles.completedBadgeText}>✓</Text>
                 </View>
               )}
 
-              {/* Meal Name Overlay - Bottom Left */}
               <View style={styles.mealNameOverlay}>
                 <Text style={styles.mealNameText} numberOfLines={2}>
                   {featuredEntry.foodName}
                 </Text>
               </View>
 
-              {/* Macro Grid Overlay - Bottom */}
               <View style={styles.macroGridOverlay}>
                 <View style={styles.macroItemOverlay}>
                   <Text style={styles.macroValueOverlay}>{Math.round(totals.calories) || 0}</Text>
@@ -758,7 +747,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
               </View>
             </View>
           )}
-
         </View>
       </TouchableOpacity>
     );
@@ -798,22 +786,137 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   return (
     <View style={styles.container}>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-        <ScrollView
+        {/* Radial Progress Header */}
+        <Animated.View style={[styles.stickyHeader, { height: headerHeight }]}>
+          <LinearGradient colors={SCREEN_GRADIENT} style={styles.stickyHeaderGradient}>
+            {/* Expanded View */}
+            <Animated.View style={[styles.expandedHeader, { opacity: expandedOpacity }]}>
+              <Text style={styles.headerLabel}>Daily Nutrition</Text>
+              <View style={styles.headerContentRow}>
+                <LinearGradient colors={SCREEN_GRADIENT} style={styles.headerRadialStack}>
+                  <CircularProgress
+                    size={120}
+                    strokeWidth={7}
+                    progress={
+                      macroTargets.protein_g
+                        ? (totalDayMacros.protein ?? 0) / macroTargets.protein_g
+                        : 0
+                    }
+                    color={COLORS.protein}
+                  />
+                  <LinearGradient
+                    colors={SCREEN_GRADIENT}
+                    style={[styles.headerRadialRing, styles.headerRadialRingGap]}
+                  >
+                    <CircularProgress
+                      size={100}
+                      strokeWidth={7}
+                      progress={
+                        macroTargets.carbs_g
+                          ? (totalDayMacros.carbs ?? 0) / macroTargets.carbs_g
+                          : 0
+                      }
+                      color={COLORS.carbs}
+                    />
+                  </LinearGradient>
+                  <LinearGradient
+                    colors={SCREEN_GRADIENT}
+                    style={[styles.headerRadialRing, styles.headerRadialRingGap]}
+                  >
+                    <CircularProgress
+                      size={80}
+                      strokeWidth={7}
+                      progress={
+                        macroTargets.fats_g
+                          ? (totalDayMacros.fats ?? 0) / macroTargets.fats_g
+                          : 0
+                      }
+                      color={COLORS.fats}
+                    />
+                  </LinearGradient>
+                  <LinearGradient colors={SCREEN_GRADIENT} style={styles.headerRadialCore} />
+                  <View style={styles.headerRadialCenter}>
+                    <Text style={styles.headerRadialValue}>
+                      {Math.round(totalDayMacros.calories ?? 0).toLocaleString()}
+                    </Text>
+                    <Text style={styles.headerRadialLabel}>kcal</Text>
+                  </View>
+                </LinearGradient>
+                <View style={styles.headerLegend}>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: COLORS.protein }]} />
+                    <View style={styles.legendText}>
+                      <Text style={styles.legendLabel}>Protein</Text>
+                      <Text style={styles.legendValue}>
+                        {Math.round(totalDayMacros.protein ?? 0)}g ·{' '}
+                        {formatPercent(totalDayMacros.protein ?? 0, macroTargets.protein_g)}% goal
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: COLORS.carbs }]} />
+                    <View style={styles.legendText}>
+                      <Text style={styles.legendLabel}>Carbs</Text>
+                      <Text style={styles.legendValue}>
+                        {Math.round(totalDayMacros.carbs ?? 0)}g ·{' '}
+                        {formatPercent(totalDayMacros.carbs ?? 0, macroTargets.carbs_g)}% goal
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: COLORS.fats }]} />
+                    <View style={styles.legendText}>
+                      <Text style={styles.legendLabel}>Fat</Text>
+                      <Text style={styles.legendValue}>
+                        {Math.round(totalDayMacros.fats ?? 0)}g ·{' '}
+                        {formatPercent(totalDayMacros.fats ?? 0, macroTargets.fats_g)}% goal
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </Animated.View>
+
+            {/* Compact View */}
+            <Animated.View style={[styles.compactHeader, { opacity: compactOpacity }]}>
+              <View style={styles.headerRowCompact}>
+                <View style={styles.headerTextBlock}>
+                  <Text style={styles.compactHeaderLabel}>Today</Text>
+                  <Text style={styles.compactHeaderKcal}>
+                    {Math.round(totalDayMacros.calories ?? 0).toLocaleString()} kcal
+                  </Text>
+                </View>
+                <View style={styles.headerRadialCompact}>
+                  <CircularProgress
+                    size={54}
+                    strokeWidth={5}
+                    progress={
+                      calorieGoal ? (totalDayMacros.calories ?? 0) / calorieGoal : 0
+                    }
+                    color={COLORS.calories}
+                  />
+                  <View style={styles.headerRadialCoreSmall} />
+                  <View style={styles.headerRadialCenter}>
+                    <Text style={styles.headerRadialValueSmall}>
+                      {Math.round(totalDayMacros.calories ?? 0)}
+                    </Text>
+                    <Text style={styles.headerRadialLabelSmall}>kcal</Text>
+                  </View>
+                </View>
+              </View>
+            </Animated.View>
+          </LinearGradient>
+        </Animated.View>
+
+        <Animated.ScrollView
           showsVerticalScrollIndicator={false}
-          style={styles.scrollView}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+            { useNativeDriver: false }
+          )}
+          scrollEventThrottle={16}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>
-              {Math.round(totalDayMacros.calories ?? 0).toLocaleString()} kcal
-            </Text>
-            <Text style={styles.headerSubtitle}>
-              {Math.round(totalDayMacros.protein ?? 0)}P · {Math.round(totalDayMacros.carbs ?? 0)}C ·{' '}
-              {Math.round(totalDayMacros.fats ?? 0)}F
-            </Text>
-          </View>
-
           {/* Meals Section */}
           <View style={styles.mealsSection}>
             {mealGroups.length > 0 && (
@@ -845,248 +948,8 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
               ListFooterComponent={renderMealListFooter}
             />
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </LinearGradient>
-
-      {/* Add Food Modal */}
-      <Modal
-        transparent
-        animationType="slide"
-        visible={mealModalVisible}
-        onRequestClose={closeMealModal}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.modalOverlay}
-        >
-          <Pressable style={styles.modalBackdrop} onPress={closeMealModal} />
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {mealModalMode === 'search' ? 'Search Foods' : 'Create Custom Food'}
-              </Text>
-              <TouchableOpacity onPress={closeMealModal}>
-                <Text style={styles.modalCloseButton}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            {renderMealTypeSelector()}
-
-            <View style={styles.modalModeToggle}>
-              <TouchableOpacity
-                style={[styles.modeToggleButton, mealModalMode === 'search' && styles.modeToggleButtonActive]}
-                onPress={() => setMealModalMode('search')}
-              >
-                <Text style={[styles.modeToggleText, mealModalMode === 'search' && styles.modeToggleTextActive]}>
-                  Search
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modeToggleButton, mealModalMode === 'custom' && styles.modeToggleButtonActive]}
-                onPress={() => setMealModalMode('custom')}
-              >
-                <Text style={[styles.modeToggleText, mealModalMode === 'custom' && styles.modeToggleTextActive]}>
-                  Custom
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {mealModalMode === 'search' ? (
-              <>
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search for a food..."
-                  placeholderTextColor={COLORS.textTertiary}
-                  value={foodQuery}
-                  onChangeText={handleFoodQueryChange}
-                />
-
-                <ScrollView style={styles.foodList}>
-                  {isSearchingFoods && (
-                    <View style={styles.searchingContainer}>
-                      <ActivityIndicator size="small" color={COLORS.accent} />
-                      <Text style={styles.searchingText}>Searching...</Text>
-                    </View>
-                  )}
-                  {foodSearchError && (
-                    <Text style={styles.errorText}>{foodSearchError}</Text>
-                  )}
-                  {!isSearchingFoods && foodQuery.trim() && foodSuggestions.length === 0 && (
-                    <Text style={styles.noResultsText}>No foods found. Try creating a custom food.</Text>
-                  )}
-                  {foodSuggestions.map((food) => (
-                    <TouchableOpacity
-                      key={food.id}
-                      style={styles.foodSuggestionItem}
-                      onPress={() => handleSelectFoodSuggestion(food)}
-                    >
-                      <View style={styles.foodSuggestionInfo}>
-                        <Text style={styles.foodSuggestionName}>{formatFoodDisplayName(food)}</Text>
-                        <Text style={styles.foodSuggestionMeta}>{formatFoodMacroSummary(food)}</Text>
-                      </View>
-                      <Text style={styles.foodSuggestionArrow}>+</Text>
-                    </TouchableOpacity>
-                  ))}
-                  {!foodQuery.trim() && storedFoods.length > 0 && (
-                    <>
-                      <Text style={styles.recentFoodsLabel}>Recent Foods</Text>
-                      {storedFoods.slice(0, 10).map((food) => (
-                        <TouchableOpacity
-                          key={food.id}
-                          style={styles.foodSuggestionItem}
-                          onPress={() => handleSelectFoodSuggestion(food)}
-                        >
-                          <View style={styles.foodSuggestionInfo}>
-                            <Text style={styles.foodSuggestionName}>{formatFoodDisplayName(food)}</Text>
-                            <Text style={styles.foodSuggestionMeta}>{formatFoodMacroSummary(food)}</Text>
-                          </View>
-                          <Text style={styles.foodSuggestionArrow}>+</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </>
-                  )}
-                </ScrollView>
-              </>
-            ) : (
-              <ScrollView style={styles.customFoodForm}>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Food Name *</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="e.g. Chicken Breast"
-                    placeholderTextColor={COLORS.textTertiary}
-                    value={customFoodForm.name}
-                    onChangeText={(text) => handleCustomFoodFormChange('name', text)}
-                  />
-                </View>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Brand (optional)</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="e.g. Kirkland"
-                    placeholderTextColor={COLORS.textTertiary}
-                    value={customFoodForm.brand}
-                    onChangeText={(text) => handleCustomFoodFormChange('brand', text)}
-                  />
-                </View>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Serving Size (optional)</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="e.g. 100g"
-                    placeholderTextColor={COLORS.textTertiary}
-                    value={customFoodForm.servingLabel}
-                    onChangeText={(text) => handleCustomFoodFormChange('servingLabel', text)}
-                  />
-                </View>
-                <View style={styles.macrosRow}>
-                  <View style={[styles.formGroup, styles.macroField]}>
-                    <Text style={styles.formLabel}>Calories</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="0"
-                      placeholderTextColor={COLORS.textTertiary}
-                      keyboardType="numeric"
-                      value={customFoodForm.calories}
-                      onChangeText={(text) => handleCustomFoodFormChange('calories', text)}
-                    />
-                  </View>
-                  <View style={[styles.formGroup, styles.macroField]}>
-                    <Text style={styles.formLabel}>Protein (g)</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="0"
-                      placeholderTextColor={COLORS.textTertiary}
-                      keyboardType="numeric"
-                      value={customFoodForm.protein}
-                      onChangeText={(text) => handleCustomFoodFormChange('protein', text)}
-                    />
-                  </View>
-                </View>
-                <View style={styles.macrosRow}>
-                  <View style={[styles.formGroup, styles.macroField]}>
-                    <Text style={styles.formLabel}>Carbs (g)</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="0"
-                      placeholderTextColor={COLORS.textTertiary}
-                      keyboardType="numeric"
-                      value={customFoodForm.carbs}
-                      onChangeText={(text) => handleCustomFoodFormChange('carbs', text)}
-                    />
-                  </View>
-                  <View style={[styles.formGroup, styles.macroField]}>
-                    <Text style={styles.formLabel}>Fats (g)</Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="0"
-                      placeholderTextColor={COLORS.textTertiary}
-                      keyboardType="numeric"
-                      value={customFoodForm.fats}
-                      onChangeText={(text) => handleCustomFoodFormChange('fats', text)}
-                    />
-                  </View>
-                </View>
-                <TouchableOpacity
-                  style={[styles.saveCustomFoodButton, isCreatingFood && styles.saveCustomFoodButtonDisabled]}
-                  onPress={handleSaveCustomFood}
-                  disabled={isCreatingFood}
-                >
-                  {isCreatingFood ? (
-                    <ActivityIndicator size="small" color={COLORS.textPrimary} />
-                  ) : (
-                    <Text style={styles.saveCustomFoodButtonText}>Save & Add to Meal</Text>
-                  )}
-                </TouchableOpacity>
-              </ScrollView>
-            )}
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      <Modal
-        transparent
-        animationType="fade"
-        visible={mealDetailsVisible}
-        onRequestClose={closeMealDetails}
-      >
-        <View style={styles.detailModalOverlay}>
-          <Pressable style={styles.detailModalBackdrop} onPress={closeMealDetails} />
-          <View style={styles.detailModalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Ingredients</Text>
-              <TouchableOpacity onPress={closeMealDetails}>
-                <Text style={styles.modalCloseButton}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.ingredientsList}>
-              {mealDetailsGroup?.entries.map((entry) => {
-                const ingredients = entry.ingredients ?? [];
-                return (
-                  <View key={entry.id} style={styles.detailMealBlock}>
-                    <View style={styles.detailMealHeader}>
-                      <View style={styles.detailMealHeaderText}>
-                        <Text style={styles.detailMealTitle}>{entry.foodName}</Text>
-                        <Text style={styles.detailMealMacros}>{formatMealEntryMacros(entry)}</Text>
-                      </View>
-                    </View>
-                    {ingredients.length > 0 ? (
-                      ingredients.map((ingredient, index) => (
-                        <View key={`${entry.id}-ingredient-${index}`} style={styles.detailIngredientRow}>
-                          <View style={styles.detailIngredientBullet} />
-                          <Text style={styles.detailIngredientText}>{ingredient}</Text>
-                        </View>
-                      ))
-                    ) : (
-                      <Text style={styles.detailIngredientEmpty}>Ingredients unavailable.</Text>
-                    )}
-                  </View>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       <Modal
         transparent
@@ -1126,9 +989,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                         activeOpacity={0.7}
                       >
                         <Text style={styles.cuisineEmoji}>{cuisine.emoji}</Text>
-                        <Text
-                          style={[styles.cuisineLabel, isSelected && styles.cuisineLabelSelected]}
-                        >
+                        <Text style={[styles.cuisineLabel, isSelected && styles.cuisineLabelSelected]}>
                           {cuisine.label}
                         </Text>
                       </TouchableOpacity>
@@ -1149,12 +1010,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                         onPress={() => handleToggleDietaryTag(option.id)}
                         activeOpacity={0.7}
                       >
-                        <Text
-                          style={[
-                            styles.dietaryLabel,
-                            isSelected && styles.dietaryLabelSelected,
-                          ]}
-                        >
+                        <Text style={[styles.dietaryLabel, isSelected && styles.dietaryLabelSelected]}>
                           {option.label}
                         </Text>
                       </TouchableOpacity>
@@ -1216,12 +1072,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                         style={[styles.exclusionButton, styles.exclusionConfirm]}
                         onPress={handleAddExclusion}
                       >
-                        <Text
-                          style={[
-                            styles.exclusionButtonText,
-                            styles.exclusionConfirmText,
-                          ]}
-                        >
+                        <Text style={[styles.exclusionButtonText, styles.exclusionConfirmText]}>
                           Add
                         </Text>
                       </TouchableOpacity>
@@ -1247,9 +1098,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                         }
                         activeOpacity={0.7}
                       >
-                        <Text
-                          style={[styles.cookTimeLabel, isSelected && styles.cookTimeLabelSelected]}
-                        >
+                        <Text style={[styles.cookTimeLabel, isSelected && styles.cookTimeLabelSelected]}>
                           {minutes} min
                         </Text>
                       </TouchableOpacity>
@@ -1277,32 +1126,188 @@ const styles = StyleSheet.create({
   gradient: {
     flex: 1,
   },
-  scrollView: {
-    flex: 1,
-  },
   scrollContent: {
-    paddingTop: 60,
+    paddingTop: HEADER_EXPANDED_HEIGHT + 24,
     paddingBottom: 100,
   },
 
-  // Header
-  header: {
+  // Sticky Header
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    overflow: 'hidden',
+  },
+  stickyHeaderGradient: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingTop: 28,
+    paddingBottom: 20,
     paddingHorizontal: 20,
-    marginBottom: 24,
-  },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 2,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    fontWeight: '600',
   },
 
-  // Meals Section
+  // Expanded Header
+  expandedHeader: {
+    position: 'absolute',
+    top: 24,
+    left: 20,
+    right: 20,
+  },
+  headerRowCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerTextBlock: {
+    flex: 1,
+  },
+  headerLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  headerContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 28,
+  },
+  headerRadialStack: {
+    position: 'relative',
+    width: 120,
+    height: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 60,
+    marginTop: 40,
+    marginLeft: 44
+  },
+  headerRadialRing: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRadialRingGap: {
+    borderRadius: 999,
+    padding: 4,
+  },
+  headerRadialCompact: {
+    position: 'relative',
+    width: 54,
+    height: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRadialCenter: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRadialCore: {
+    position: 'absolute',
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+  },
+  headerRadialCoreSmall: {
+    position: 'absolute',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.bgPrimary,
+  },
+  headerRadialValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  headerRadialLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    marginTop: 1,
+  },
+  headerRadialValueSmall: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  headerRadialLabelSmall: {
+    fontSize: 8,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    marginTop: 1,
+  },
+  headerLegend: {
+    flex: 1,
+    gap: 12,
+    alignItems: 'flex-end',
+    alignSelf: 'flex-end',
+    marginLeft: 'auto',
+    paddingLeft: 20,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendText: {
+    flex: 1,
+    alignItems: 'flex-start',
+  },
+  legendLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    textAlign: 'left',
+  },
+  legendValue: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+    textAlign: 'left',
+  },
+
+  // Compact Header
+  compactHeader: {
+    position: 'absolute',
+    top: 18,
+    left: 20,
+    right: 20,
+  },
+  compactHeaderLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 4,
+  },
+  compactHeaderKcal: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+
+  // Meals Section (keeping all original meal card styles)
   mealsSection: {
     paddingHorizontal: 20,
   },
@@ -1330,881 +1335,103 @@ const styles = StyleSheet.create({
   progressDotComplete: {
     backgroundColor: COLORS.success,
   },
-
-  // Meal Card
-  mealCardContainer: {
-    marginBottom: 16,
-  },
-  mealCard: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  mealImageContainer: {
-    height: 180,
-    position: 'relative',
-  },
-  mealImage: {
-    width: '100%',
-    height: '100%',
-  },
-  mealImageGradient: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 140,
-  },
-  mealTypeBadge: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  mealTypeBadgeEmoji: {
-    fontSize: 16,
-  },
-  mealTypeBadgeText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  completedBadge: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.success,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  completedBadgeText: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  mealNameOverlay: {
-    position: 'absolute',
-    bottom: 60,
-    left: 16,
-    right: 16,
-  },
-  mealNameText: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    lineHeight: 26,
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  macroGridOverlay: {
-    position: 'absolute',
-    bottom: 16,
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    borderRadius: 12,
-    padding: 10,
-    backdropFilter: 'blur(10px)',
-  },
-  macroItemOverlay: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  macroItemDividerOverlay: {
-    width: 1,
-    height: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  macroValueOverlay: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 2,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  macroLabelOverlay: {
-    fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.8)',
-    fontWeight: '600',
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  mealHeaderNoImage: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  mealHeaderNoImageTop: {
-    marginBottom: 12,
-  },
-  mealTypeBadgeNoImage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    alignSelf: 'flex-start',
-  },
-  mealNameNoImage: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 12,
-    lineHeight: 24,
-  },
-  macroGridNoImage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: COLORS.bgPrimary,
-    borderRadius: 12,
-    padding: 12,
-  },
-
-  // Macro items (for no-image cards)
-  macroItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  macroItemDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: COLORS.border,
-  },
-  macroValue: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 2,
-  },
-  macroLabel: {
-    fontSize: 11,
-    color: COLORS.textTertiary,
-    fontWeight: '600',
-  },
-  expandIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    padding: 16,
-  },
-  expandIndicatorWithBorder: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  expandText: {
-    fontSize: 13,
-    color: COLORS.accent,
-    fontWeight: '600',
-  },
-  expandIcon: {
-    fontSize: 18,
-    color: COLORS.accent,
-    fontWeight: '700',
-    transform: [{ rotate: '90deg' }],
-  },
-  expandIconRotated: {
-    transform: [{ rotate: '270deg' }],
-  },
-
-  // Expanded Items
-  mealItemsContainer: {
-    backgroundColor: COLORS.bgPrimary,
-    padding: 16,
-    paddingTop: 8,
-  },
-  mealEntryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  mealEntryImage: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    marginRight: 12,
-    backgroundColor: COLORS.elevated,
-  },
-  mealEntryRowLast: {
-    borderBottomWidth: 0,
-    paddingBottom: 0,
-  },
-  mealEntryInfo: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  mealEntryName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  mealEntryMacros: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-  },
-  mealEntryActions: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mealEntryDoneBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: COLORS.successDim,
-    borderWidth: 1,
-    borderColor: COLORS.success,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mealEntryDoneText: {
-    fontSize: 14,
-    color: COLORS.success,
-    fontWeight: '700',
-  },
-  mealEntryDeleteButton: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: 'rgba(255,59,48,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mealEntryDeleteText: {
-    fontSize: 18,
-    color: '#FF3B30',
-    fontWeight: '600',
-    marginTop: -2,
-  },
-
-  // Empty States
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    paddingVertical: 40,
-  },
-  loadingText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-  },
-  emptyCard: {
-    padding: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: 'center',
-  },
-  emptyCardIcon: {
-    fontSize: 40,
-    marginBottom: 12,
-  },
-  emptyCardTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 6,
-  },
-  emptyCardSubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-  },
-  emptyState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-  },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-  },
-
-  mealGroupSeparator: {
-    height: 0,
-  },
-  mealsListFooter: {
-    height: 32,
-  },
-
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  modalContent: {
-    backgroundColor: COLORS.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    maxHeight: '85%',
-  },
-  ingredientsList: {
-    maxHeight: 520,
-  },
-  detailModalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  detailModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  detailModalContent: {
-    backgroundColor: COLORS.card,
-    borderRadius: 24,
-    paddingTop: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    maxHeight: '85%',
-  },
-  preferencesModalContent: {
-    backgroundColor: COLORS.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    maxHeight: '85%',
-  },
-  preferencesScroll: {
-    maxHeight: 520,
-  },
-  prefSection: {
-    marginBottom: 24,
-  },
-  prefSectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 12,
-  },
-  prefSectionSubtitle: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginBottom: 12,
-  },
-  cuisineGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  cuisineChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  cuisineChipSelected: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  cuisineEmoji: {
-    fontSize: 16,
-  },
-  cuisineLabel: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  cuisineLabelSelected: {
-    color: COLORS.accent,
-  },
-  dietaryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  dietaryChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  dietaryChipSelected: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  dietaryLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  dietaryLabelSelected: {
-    color: COLORS.accent,
-  },
-  exclusionsList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  exclusionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  exclusionText: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  exclusionRemove: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: 'rgba(255,59,48,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  exclusionRemoveText: {
-    fontSize: 14,
-    color: '#FF3B30',
-    fontWeight: '700',
-    marginTop: -1,
-  },
-  addExclusionButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
-    alignItems: 'center',
-  },
-  addExclusionText: {
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  exclusionInputContainer: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    borderRadius: 12,
-    padding: 12,
-  },
-  exclusionInput: {
-    color: COLORS.textPrimary,
-    fontSize: 14,
-    paddingVertical: 6,
-  },
-  exclusionActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-    marginTop: 10,
-  },
-  exclusionButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  exclusionCancel: {
-    backgroundColor: COLORS.surface,
-  },
-  exclusionConfirm: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  exclusionButtonText: {
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  exclusionConfirmText: {
-    color: COLORS.accent,
-  },
-  cookTimeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  cookTimeChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  cookTimeChipSelected: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  cookTimeLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  cookTimeLabelSelected: {
-    color: COLORS.accent,
-  },
-  savePreferencesButton: {
-    backgroundColor: COLORS.accent,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  savePreferencesButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  detailMealBlock: {
-    paddingBottom: 16,
-    marginBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  detailMealHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    gap: 12,
-  },
-  detailMealHeaderText: {
-    flex: 1,
-  },
-  detailMealTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  detailMealMacros: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-  },
-  detailIngredientRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 8,
-  },
-  detailIngredientBullet: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: COLORS.accent,
-    marginTop: 7,
-  },
-  detailIngredientText: {
-    flex: 1,
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    lineHeight: 20,
-  },
-  detailIngredientEmpty: {
-    fontSize: 13,
-    color: COLORS.textTertiary,
-    fontStyle: 'italic',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  modalCloseButton: {
-    fontSize: 28,
-    color: COLORS.textSecondary,
-    fontWeight: '300',
-  },
-  mealTypeSelectorContainer: {
-    marginBottom: 16,
-  },
-  mealTypeSelectorLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginBottom: 8,
-  },
-  mealTypeChipsScroll: {
-    flexDirection: 'row',
-  },
-  mealTypeChips: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  mealTypeChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  mealTypeChipSelected: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  mealTypeChipText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  mealTypeChipTextSelected: {
-    color: COLORS.accent,
-  },
-  customMealTypeInputContainer: {
-    marginTop: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    borderRadius: 12,
-    padding: 12,
-  },
-  customMealTypeInput: {
-    color: COLORS.textPrimary,
-    fontSize: 15,
-    paddingVertical: 8,
-  },
-  customMealTypeActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-    marginTop: 10,
-  },
-  customMealTypeButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  customMealTypeCancel: {
-    backgroundColor: COLORS.surface,
-  },
-  customMealTypeConfirm: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  customMealTypeButtonText: {
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  customMealTypeConfirmText: {
-    color: COLORS.accent,
-  },
-  modalModeToggle: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 16,
-  },
-  modeToggleButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  modeToggleButtonActive: {
-    backgroundColor: COLORS.elevated,
-  },
-  modeToggleText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  modeToggleTextActive: {
-    color: COLORS.textPrimary,
-  },
-  searchInput: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    color: COLORS.textPrimary,
-    marginBottom: 16,
-  },
-  foodList: {
-    maxHeight: 400,
-  },
-  searchingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-    gap: 12,
-  },
-  searchingText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-  },
-  noResultsText: {
-    textAlign: 'center',
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    padding: 20,
-  },
-  errorText: {
-    textAlign: 'center',
-    color: '#FF3B30',
-    fontSize: 14,
-    padding: 20,
-  },
-  recentFoodsLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-    marginTop: 8,
-  },
-  foodSuggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginBottom: 8,
-  },
-  foodSuggestionInfo: {
-    flex: 1,
-  },
-  foodSuggestionName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  foodSuggestionMeta: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-  },
-  foodSuggestionArrow: {
-    fontSize: 18,
-    color: COLORS.accent,
-    marginLeft: 8,
-  },
-  customFoodForm: {
-    maxHeight: 450,
-  },
-  formGroup: {
-    marginBottom: 16,
-  },
-  formLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginBottom: 6,
-  },
-  formInput: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 15,
-    color: COLORS.textPrimary,
-  },
-  macrosRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  macroField: {
-    flex: 1,
-  },
-  saveCustomFoodButton: {
-    backgroundColor: COLORS.accent,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  saveCustomFoodButtonDisabled: {
-    opacity: 0.5,
-  },
-  saveCustomFoodButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
+  mealCardContainer: { marginBottom: 16 },
+  mealCard: { borderRadius: 20, overflow: 'hidden', backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+  mealImageContainer: { height: 180, position: 'relative' },
+  mealImage: { width: '100%', height: '100%' },
+  mealImageGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 },
+  mealTypeBadge: { position: 'absolute', top: 16, left: 16, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
+  mealTypeBadgeEmoji: { fontSize: 16 },
+  mealTypeBadgeText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF', textShadowColor: 'rgba(0, 0, 0, 0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  completedBadge: { position: 'absolute', top: 16, right: 16, width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.success, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
+  completedBadgeText: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
+  mealNameOverlay: { position: 'absolute', bottom: 60, left: 16, right: 16 },
+  mealNameText: { fontSize: 20, fontWeight: '700', color: '#FFFFFF', lineHeight: 26, textShadowColor: 'rgba(0, 0, 0, 0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  macroGridOverlay: { position: 'absolute', bottom: 16, left: 16, right: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(0, 0, 0, 0.4)', borderRadius: 12, padding: 10, backdropFilter: 'blur(10px)' },
+  macroItemOverlay: { flex: 1, alignItems: 'center' },
+  macroItemDividerOverlay: { width: 1, height: 28, backgroundColor: 'rgba(255, 255, 255, 0.2)' },
+  macroValueOverlay: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', marginBottom: 2, textShadowColor: 'rgba(0, 0, 0, 0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  macroLabelOverlay: { fontSize: 10, color: 'rgba(255, 255, 255, 0.8)', fontWeight: '600', textShadowColor: 'rgba(0, 0, 0, 0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  mealHeaderNoImage: { padding: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  mealHeaderNoImageTop: { marginBottom: 12 },
+  mealTypeBadgeNoImage: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, alignSelf: 'flex-start' },
+  mealNameNoImage: { fontSize: 18, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 12, lineHeight: 24 },
+  macroGridNoImage: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: COLORS.bgPrimary, borderRadius: 12, padding: 12 },
+  macroItem: { flex: 1, alignItems: 'center' },
+  macroItemDivider: { width: 1, height: 32, backgroundColor: COLORS.border },
+  macroValue: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 2 },
+  macroLabel: { fontSize: 11, color: COLORS.textTertiary, fontWeight: '600' },
+  loadingContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingVertical: 40 },
+  loadingText: { color: COLORS.textSecondary, fontSize: 14 },
+  emptyCard: { padding: 32, borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' },
+  emptyCardIcon: { fontSize: 40, marginBottom: 12 },
+  emptyCardTitle: { fontSize: 17, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 6 },
+  emptyCardSubtitle: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center' },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
+  emptyIcon: { fontSize: 64, marginBottom: 16 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 8 },
+  emptySubtitle: { fontSize: 15, color: COLORS.textSecondary, textAlign: 'center' },
+  mealGroupSeparator: { height: 0 },
+  mealsListFooter: { height: 32 },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)' },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: COLORS.textPrimary },
+  modalCloseButton: { fontSize: 28, color: COLORS.textSecondary, fontWeight: '300' },
+  preferencesModalContent: { backgroundColor: COLORS.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 20, paddingHorizontal: 20, paddingBottom: 30, maxHeight: '85%' },
+  preferencesScroll: { maxHeight: 520 },
+  prefSection: { marginBottom: 24 },
+  prefSectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 12 },
+  prefSectionSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 12 },
+  cuisineGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  cuisineChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  cuisineChipSelected: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
+  cuisineEmoji: { fontSize: 16 },
+  cuisineLabel: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '600' },
+  cuisineLabelSelected: { color: COLORS.accent },
+  dietaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  dietaryChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  dietaryChipSelected: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
+  dietaryLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
+  dietaryLabelSelected: { color: COLORS.accent },
+  exclusionsList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  exclusionChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
+  exclusionText: { fontSize: 12, color: COLORS.textSecondary, fontWeight: '600' },
+  exclusionRemove: { width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(255,59,48,0.2)', alignItems: 'center', justifyContent: 'center' },
+  exclusionRemoveText: { fontSize: 14, color: '#FF3B30', fontWeight: '700', marginTop: -1 },
+  addExclusionButton: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.borderStrong, backgroundColor: COLORS.surface, alignItems: 'center' },
+  addExclusionText: { color: COLORS.textSecondary, fontWeight: '600', fontSize: 13 },
+  exclusionInputContainer: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.borderStrong, borderRadius: 12, padding: 12 },
+  exclusionInput: { color: COLORS.textPrimary, fontSize: 14, paddingVertical: 6 },
+  exclusionActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
+  exclusionButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border },
+  exclusionCancel: { backgroundColor: COLORS.surface },
+  exclusionConfirm: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
+  exclusionButtonText: { color: COLORS.textSecondary, fontWeight: '600' },
+  exclusionConfirmText: { color: COLORS.accent },
+  cookTimeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  cookTimeChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  cookTimeChipSelected: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
+  cookTimeLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
+  cookTimeLabelSelected: { color: COLORS.accent },
+  savePreferencesButton: { backgroundColor: COLORS.accent, borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 8 },
+  savePreferencesButtonText: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
+  mealTypeSelectorContainer: {},
+  mealTypeSelectorLabel: {},
+  mealTypeChipsScroll: {},
+  mealTypeChips: {},
+  mealTypeChip: {},
+  mealTypeChipSelected: {},
+  mealTypeChipText: {},
+  mealTypeChipTextSelected: {},
+  customMealTypeInputContainer: {},
+  customMealTypeInput: {},
+  customMealTypeActions: {},
+  customMealTypeButton: {},
+  customMealTypeCancel: {},
+  customMealTypeConfirm: {},
+  customMealTypeButtonText: {},
+  customMealTypeConfirmText: {},
 });
 
 export default MenuScreen;
