@@ -15,19 +15,17 @@ import {
   FlatList,
   Image,
   Animated,
-  Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { MealPreferences, PhasePlan, User } from '../types/domain';
 import { formatLocalDateYMD } from '../utils/date';
-import { useMealPlans } from '../hooks/useMealPlans';
-import { useTodayMeals, DUPLICATE_MEAL_ENTRY_ERROR } from '../hooks/useTodayMeals';
-import { FoodItem, MealEntry, createUserFood, fetchStoredFoods, searchFoods } from '../services/mealService';
+import { useTodayMeals } from '../hooks/useTodayMeals';
+import { MealEntry } from '../services/mealService';
 import { generateMealsForDay } from '../services/mealGenerationService';
 import { updateMealPreferences } from '../services/userProfileService';
 import { useFabAction } from '../contexts/FabActionContext';
-import { computeEntriesMacroTotals, formatMealEntryMacros } from '../utils/mealMacros';
+import { computeEntriesMacroTotals } from '../utils/mealMacros';
 import { estimateDailyCalories } from '../utils/calorieGoal';
 
 type MenuScreenProps = {
@@ -36,7 +34,6 @@ type MenuScreenProps = {
 };
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
-const DEFAULT_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'] as const;
 const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 };
 const COLORS = {
   bgPrimary: '#0A0E27',
@@ -89,8 +86,6 @@ const CircularProgress: React.FC<{
   color: string;
 }> = ({ size, strokeWidth, progress, color }) => {
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
   const clampedProgress = Math.min(Math.max(progress, 0), 1);
 
   useEffect(() => {
@@ -211,9 +206,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayKey = formatLocalDateYMD(today);
-  const endDate = new Date(today);
-  endDate.setDate(today.getDate() + 6);
-  const endKey = formatLocalDateYMD(endDate);
 
   const scrollY = useRef(new Animated.Value(0)).current;
   
@@ -235,12 +227,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     extrapolate: 'clamp',
   });
 
-  const { refresh: refreshMealPlans } = useMealPlans(
-    user.id,
-    todayKey,
-    endKey,
-    phase?.id ?? null
-  );
   
   const selectedDateObj = useMemo(() => {
     const [yearStr, monthStr, dayStr] = todayKey.split('-');
@@ -254,9 +240,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     dailyMeal,
     mealsByType,
     isLoading: isMealsLoading,
-    isMutating: isMealsMutating,
-    addEntryFromFood: addFoodEntry,
-    removeEntry,
     refetch: refetchMeals,
   } = useTodayMeals(
     phase ? user.id : undefined,
@@ -265,57 +248,18 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     phase?.id ?? null
   );
 
-  const [mealModalVisible, setMealModalVisible] = useState(false);
-  const [mealModalMode, setMealModalMode] = useState<'search' | 'custom'>('search');
-  const [selectedMealTypeForAdding, setSelectedMealTypeForAdding] = useState<string>('');
-  const [customMealTypes, setCustomMealTypes] = useState<string[]>([]);
   const [isGeneratingMeals, setIsGeneratingMeals] = useState(false);
-  const [mealTypeDraftVisible, setMealTypeDraftVisible] = useState(false);
-  const [mealTypeDraft, setMealTypeDraft] = useState('');
-  const [foodQuery, setFoodQuery] = useState('');
-  const [foodSuggestions, setFoodSuggestions] = useState<FoodItem[]>([]);
-  const [isSearchingFoods, setIsSearchingFoods] = useState(false);
-  const [foodSearchError, setFoodSearchError] = useState<string | null>(null);
-  const [customFoodForm, setCustomFoodForm] = useState({
-    name: '',
-    brand: '',
-    servingLabel: '',
-    calories: '',
-    protein: '',
-    carbs: '',
-    fats: '',
-  });
-  const [isCreatingFood, setIsCreatingFood] = useState(false);
-  const [storedFoods, setStoredFoods] = useState<FoodItem[]>([]);
-  const [mealDetailsVisible, setMealDetailsVisible] = useState(false);
-  const [mealDetailsGroup, setMealDetailsGroup] = useState<{
-    mealType: string;
-    entries: MealEntry[];
-    featured?: MealEntry | null;
-  } | null>(null);
   const [preferencesModalVisible, setPreferencesModalVisible] = useState(false);
   const [mealPreferences, setMealPreferences] = useState<MealPreferences>(() =>
     resolveMealPreferences(user.mealPreferences)
   );
   const [excludeInputVisible, setExcludeInputVisible] = useState(false);
   const [excludeInput, setExcludeInput] = useState('');
-  const foodSearchCache = useRef<Map<string, FoodItem[]>>(new Map());
-  const storedFoodsLoadedRef = useRef(false);
   const mealGenerationAttemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setMealPreferences(resolveMealPreferences(user.mealPreferences));
   }, [user.mealPreferences]);
-
-  const loadStoredFoods = useCallback(async () => {
-    try {
-      const foods = await fetchStoredFoods(user.id);
-      setStoredFoods(foods);
-      storedFoodsLoadedRef.current = true;
-    } catch (err) {
-      console.error('Failed to load stored foods', err);
-    }
-  }, [user.id]);
 
   const baseMealTypes = useMemo(() => Object.keys(mealsByType), [mealsByType]);
 
@@ -358,71 +302,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     return Math.min(Math.round((current / goal) * 100), 999);
   }, []);
 
-  const allMealTypes = useMemo((): string[] => {
-    const seen = new Set<string>();
-    const ordered: string[] = [];
-    const pushType = (type?: string) => {
-      const normalized = (type || '').trim();
-      if (!normalized) return;
-      const key = normalized.toLowerCase();
-      if (seen.has(key)) return;
-      ordered.push(normalized);
-      seen.add(key);
-    };
-    DEFAULT_MEAL_TYPES.forEach((type) => pushType(type));
-    mealGroups.forEach((group) => pushType(group.mealType));
-    customMealTypes.forEach((type) => pushType(type));
-    return ordered;
-  }, [mealGroups, customMealTypes]);
-
-  useEffect(() => {
-    if (!selectedMealTypeForAdding && allMealTypes.length > 0) {
-      setSelectedMealTypeForAdding(allMealTypes[0]);
-    }
-  }, [allMealTypes, selectedMealTypeForAdding]);
-
-  const handleAddCustomMealType = useCallback(
-    (label: string) => {
-      const trimmed = label.trim();
-      if (!trimmed) return;
-      const lower = trimmed.toLowerCase();
-      const existingTypes = [...mealGroups.map((group) => group.mealType), ...customMealTypes];
-      if (!existingTypes.some((type) => type.toLowerCase() === lower)) {
-        setCustomMealTypes((prev) => [...prev, trimmed]);
-      }
-      setSelectedMealTypeForAdding(trimmed);
-    },
-    [customMealTypes, mealGroups]
-  );
-
-  const parseNumberField = (value: string): number | null => {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = parseFloat(trimmed);
-    return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
-  };
-
-  const openAddMealModal = useCallback((defaultMealType?: string) => {
-    setSelectedMealTypeForAdding(defaultMealType || allMealTypes[0] || '');
-    setMealModalMode('search');
-    setFoodQuery('');
-    setFoodSuggestions([]);
-    setFoodSearchError(null);
-    setCustomFoodForm({
-      name: '',
-      brand: '',
-      servingLabel: '',
-      calories: '',
-      protein: '',
-      carbs: '',
-      fats: '',
-    });
-    setMealModalVisible(true);
-    if (!storedFoodsLoadedRef.current) {
-      loadStoredFoods();
-    }
-  }, [allMealTypes, loadStoredFoods]);
-
   useFocusEffect(
     useCallback(() => {
       setFabAction('Menu', {
@@ -438,58 +317,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     }, [setFabAction])
   );
 
-  const closeMealModal = () => {
-    setMealModalVisible(false);
-    setFoodQuery('');
-    setFoodSuggestions([]);
-    setSelectedMealTypeForAdding('');
-    setMealModalMode('search');
-  };
-
-  const handleFoodQueryChange = (text: string) => {
-    setFoodQuery(text);
-    setFoodSearchError(null);
-    if (!text.trim()) {
-      setFoodSuggestions([]);
-    }
-  };
-
-  useEffect(() => {
-    if (mealModalVisible && mealModalMode !== 'search') return;
-    const trimmed = foodQuery.trim();
-    if (trimmed.length < 1) {
-      setFoodSuggestions([]);
-      setIsSearchingFoods(false);
-      return;
-    }
-    const normalized = trimmed.toLowerCase();
-    if (foodSearchCache.current.has(normalized)) {
-      setFoodSuggestions(foodSearchCache.current.get(normalized)!);
-      return;
-    }
-    const searchTimeout = setTimeout(async () => {
-      if (!mealModalVisible) return;
-      try {
-        setIsSearchingFoods(true);
-        const results = await searchFoods(trimmed, user.id);
-        foodSearchCache.current.set(normalized, results);
-        setFoodSuggestions(results);
-        setFoodSearchError(null);
-      } catch (err) {
-        console.error('Failed to search foods', err);
-        setFoodSearchError('Unable to fetch foods.');
-      } finally {
-        setIsSearchingFoods(false);
-      }
-    }, 300);
-    return () => clearTimeout(searchTimeout);
-  }, [foodQuery, mealModalVisible, mealModalMode, user.id]);
-
-  useEffect(() => {
-    if (!storedFoodsLoadedRef.current) {
-      loadStoredFoods();
-    }
-  }, [loadStoredFoods]);
 
   useEffect(() => {
     if (!isFocused) return;
@@ -540,25 +367,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     user?.id,
   ]);
 
-  const handleSelectFoodSuggestion = async (food: FoodItem) => {
-    try {
-      if (!selectedMealTypeForAdding) {
-        Alert.alert('Select Meal Type', 'Please choose which meal to add this to.');
-        return;
-      }
-      await addFoodEntry(selectedMealTypeForAdding, food);
-      await refreshMealPlans();
-      await loadStoredFoods();
-      closeMealModal();
-    } catch (err: any) {
-      if (err?.message === DUPLICATE_MEAL_ENTRY_ERROR) {
-        Alert.alert('Duplicate Item', 'This meal already contains that food.');
-        return;
-      }
-      console.error('Failed to add food entry', err);
-      Alert.alert('Error', 'Unable to add this food.');
-    }
-  };
 
 
   const handleToggleDietaryTag = (tag: string) => {
@@ -600,18 +408,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     }
   };
 
-  const openMealDetails = (mealType: string, entries: MealEntry[]) => {
-    const featured = entries.find((entry) => entry.imageUrl) || entries[0] || null;
-    setMealDetailsGroup({ mealType, entries, featured });
-    setMealDetailsVisible(true);
-  };
-
-  useFocusEffect(
-    useCallback(() => {
-      refreshMealPlans();
-    }, [refreshMealPlans])
-  );
-
   if (!phase) {
     return (
       <View style={styles.container}>
@@ -637,11 +433,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     const featuredEntry = entries.find(e => e.imageUrl) || entries[0];
 
     return (
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onPress={() => openMealDetails(mealType, entries)}
-        style={styles.mealCardContainer}
-      >
+      <View style={styles.mealCardContainer}>
         <View style={styles.mealCard}>
           {featuredEntry?.imageUrl ? (
             <View style={styles.mealImageContainer}>
@@ -751,7 +543,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
             </View>
           )}
         </View>
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -1419,22 +1211,6 @@ const styles = StyleSheet.create({
   cookTimeLabelSelected: { color: COLORS.accent },
   savePreferencesButton: { backgroundColor: COLORS.accent, borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 8 },
   savePreferencesButtonText: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
-  mealTypeSelectorContainer: {},
-  mealTypeSelectorLabel: {},
-  mealTypeChipsScroll: {},
-  mealTypeChips: {},
-  mealTypeChip: {},
-  mealTypeChipSelected: {},
-  mealTypeChipText: {},
-  mealTypeChipTextSelected: {},
-  customMealTypeInputContainer: {},
-  customMealTypeInput: {},
-  customMealTypeActions: {},
-  customMealTypeButton: {},
-  customMealTypeCancel: {},
-  customMealTypeConfirm: {},
-  customMealTypeButtonText: {},
-  customMealTypeConfirmText: {},
 });
 
 export default MenuScreen;
