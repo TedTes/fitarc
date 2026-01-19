@@ -17,6 +17,7 @@ import {
   Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle } from 'react-native-svg';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { MealPreferences, PhasePlan, User } from '../types/domain';
 import { formatLocalDateYMD } from '../utils/date';
@@ -75,9 +76,6 @@ const DIETARY_OPTIONS = [
 
 const COOK_TIME_OPTIONS = [15, 30, 45, 60];
 
-const HEADER_EXPANDED_HEIGHT = 240;
-const HEADER_COLLAPSED_HEIGHT = 80;
-
 // Pure React Native Circular Progress Component
 const CircularProgress: React.FC<{
   size: number;
@@ -85,79 +83,49 @@ const CircularProgress: React.FC<{
   progress: number;
   color: string;
 }> = ({ size, strokeWidth, progress, color }) => {
+  const AnimatedCircle = useMemo(() => Animated.createAnimatedComponent(Circle), []);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const clampedProgress = Math.min(Math.max(progress, 0), 1);
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
 
   useEffect(() => {
     Animated.spring(progressAnim, {
       toValue: clampedProgress,
-      useNativeDriver: true,
+      useNativeDriver: false,
       tension: 40,
       friction: 8,
     }).start();
   }, [clampedProgress, progressAnim]);
 
-  const rotation = progressAnim.interpolate({
+  const strokeDashoffset = progressAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
+    outputRange: [circumference, 0],
   });
 
   return (
-    <View style={{ width: size, height: size, position: 'relative' }}>
-      {/* Background circle */}
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: strokeWidth,
-          borderColor: 'transparent',
-          backgroundColor: 'transparent',
-        }}
+    <Svg width={size} height={size}>
+      <Circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        stroke="transparent"
+        strokeWidth={strokeWidth}
+        fill="none"
       />
-      
-      {/* Progress circle using rotation */}
-      <Animated.View
-        style={{
-          position: 'absolute',
-          width: size,
-          height: size,
-          transform: [{ rotate: rotation }],
-        }}
-      >
-        <LinearGradient
-          colors={[color, color]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            borderWidth: strokeWidth,
-            borderColor: 'transparent',
-            borderTopColor: color,
-            borderRightColor: color,
-          }}
-        />
-      </Animated.View>
-
-      {/* Mask for incomplete progress */}
-      {clampedProgress < 1 && (
-        <View
-          style={{
-            position: 'absolute',
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            borderWidth: strokeWidth,
-            borderColor: 'transparent',
-            borderBottomColor: 'transparent',
-            borderLeftColor: 'transparent',
-            transform: [{ rotate: `${clampedProgress * 360}deg` }],
-          }}
-        />
-      )}
-    </View>
+      <AnimatedCircle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        stroke={color}
+        strokeWidth={strokeWidth}
+        fill="none"
+        strokeDasharray={`${circumference} ${circumference}`}
+        strokeDashoffset={strokeDashoffset}
+        strokeLinecap="round"
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+    </Svg>
   );
 };
 
@@ -207,27 +175,29 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   today.setHours(0, 0, 0, 0);
   const todayKey = formatLocalDateYMD(today);
 
+  // Animated scroll values
   const scrollY = useRef(new Animated.Value(0)).current;
-  
   const headerHeight = scrollY.interpolate({
-    inputRange: [0, 80],
-    outputRange: [HEADER_EXPANDED_HEIGHT, HEADER_COLLAPSED_HEIGHT],
+    inputRange: [0, 100],
+    outputRange: [170, 90],
+    extrapolate: 'clamp',
+  });
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 50],
+    outputRange: [1, 0.95],
+    extrapolate: 'clamp',
+  });
+  const ringScale = scrollY.interpolate({
+    inputRange: [0, 100],
+    outputRange: [1, 0.7],
+    extrapolate: 'clamp',
+  });
+  const ringOpacity = scrollY.interpolate({
+    inputRange: [0, 60, 100],
+    outputRange: [1, 0.6, 0],
     extrapolate: 'clamp',
   });
 
-  const expandedOpacity = scrollY.interpolate({
-    inputRange: [0, 40],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-
-  const compactOpacity = scrollY.interpolate({
-    inputRange: [40, 80],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-
-  
   const selectedDateObj = useMemo(() => {
     const [yearStr, monthStr, dayStr] = todayKey.split('-');
     const year = Number(yearStr);
@@ -297,10 +267,16 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     () => buildMacroTargets(calorieGoal),
     [buildMacroTargets, calorieGoal]
   );
-  const formatPercent = useCallback((current: number, goal: number) => {
-    if (!goal || goal <= 0) return 0;
-    return Math.min(Math.round((current / goal) * 100), 999);
-  }, []);
+
+  const preferencesKey = useMemo(() => {
+    const normalized = {
+      cuisine: mealPreferences.cuisine,
+      dietary_tags: [...mealPreferences.dietary_tags].sort(),
+      excluded_ingredients: [...mealPreferences.excluded_ingredients].sort(),
+      max_ready_time_minutes: mealPreferences.max_ready_time_minutes,
+    };
+    return JSON.stringify(normalized);
+  }, [mealPreferences]);
 
   useFocusEffect(
     useCallback(() => {
@@ -317,12 +293,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     }, [setFabAction])
   );
 
-
   useEffect(() => {
     if (!isFocused) return;
+    if (preferencesModalVisible) return;
     if (!phase || !user?.id) return;
     if (isMealsLoading || isGeneratingMeals) return;
-    const attemptKey = `${phase.id}:${todayKey}`;
+    const attemptKey = `${phase.id}:${todayKey}:${preferencesKey}`;
     if (mealGenerationAttemptedRef.current.has(attemptKey)) return;
 
     const generateMeals = async () => {
@@ -360,14 +336,13 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     isGeneratingMeals,
     isMealsLoading,
     mealGroups.length,
-    mealPreferences,
+    preferencesKey,
+    preferencesModalVisible,
     phase,
     refetchMeals,
     todayKey,
     user?.id,
   ]);
-
-
 
   const handleToggleDietaryTag = (tag: string) => {
     setMealPreferences((prev) => ({
@@ -423,7 +398,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       </View>
     );
   }
-
 
   const renderMealGroup = ({ item: group }: { item: { mealType: string; entries: MealEntry[] } }) => {
     const { mealType, entries } = group;
@@ -581,136 +555,124 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   return (
     <View style={styles.container}>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
-        {/* Radial Progress Header */}
-        <Animated.View style={[styles.stickyHeader, { height: headerHeight }]}>
-          <LinearGradient colors={SCREEN_GRADIENT} style={styles.stickyHeaderGradient}>
-            {/* Expanded View */}
-            <Animated.View style={[styles.expandedHeader, { opacity: expandedOpacity }]}>
-              <Text style={styles.headerLabel}>Daily Nutrition</Text>
-              <View style={styles.headerContentRow}>
-                <LinearGradient colors={SCREEN_GRADIENT} style={styles.headerRadialStack}>
-                  <CircularProgress
-                    size={120}
-                    strokeWidth={7}
-                    progress={
-                      macroTargets.protein_g
-                        ? (totalDayMacros.protein ?? 0) / macroTargets.protein_g
-                        : 0
-                    }
-                    color={COLORS.protein}
-                  />
-                  <LinearGradient
-                    colors={SCREEN_GRADIENT}
-                    style={[styles.headerRadialRing, styles.headerRadialRingGap]}
-                  >
-                    <CircularProgress
-                      size={100}
-                      strokeWidth={7}
-                      progress={
-                        macroTargets.carbs_g
-                          ? (totalDayMacros.carbs ?? 0) / macroTargets.carbs_g
-                          : 0
-                      }
-                      color={COLORS.carbs}
-                    />
-                  </LinearGradient>
-                  <LinearGradient
-                    colors={SCREEN_GRADIENT}
-                    style={[styles.headerRadialRing, styles.headerRadialRingGap]}
-                  >
-                    <CircularProgress
-                      size={80}
-                      strokeWidth={7}
-                      progress={
-                        macroTargets.fats_g
-                          ? (totalDayMacros.fats ?? 0) / macroTargets.fats_g
-                          : 0
-                      }
-                      color={COLORS.fats}
-                    />
-                  </LinearGradient>
-                  <LinearGradient colors={SCREEN_GRADIENT} style={styles.headerRadialCore} />
-                  <View style={styles.headerRadialCenter}>
-                    <Text style={styles.headerRadialValue}>
-                      {Math.round(totalDayMacros.calories ?? 0).toLocaleString()}
-                    </Text>
-                    <Text style={styles.headerRadialLabel}>kcal</Text>
-                  </View>
-                </LinearGradient>
-                <View style={styles.headerLegend}>
-                  <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: COLORS.protein }]} />
-                    <View style={styles.legendText}>
-                      <Text style={styles.legendLabel}>Protein</Text>
-                      <Text style={styles.legendValue}>
-                        {Math.round(totalDayMacros.protein ?? 0)}g ·{' '}
-                        {formatPercent(totalDayMacros.protein ?? 0, macroTargets.protein_g)}% goal
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: COLORS.carbs }]} />
-                    <View style={styles.legendText}>
-                      <Text style={styles.legendLabel}>Carbs</Text>
-                      <Text style={styles.legendValue}>
-                        {Math.round(totalDayMacros.carbs ?? 0)}g ·{' '}
-                        {formatPercent(totalDayMacros.carbs ?? 0, macroTargets.carbs_g)}% goal
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: COLORS.fats }]} />
-                    <View style={styles.legendText}>
-                      <Text style={styles.legendLabel}>Fat</Text>
-                      <Text style={styles.legendValue}>
-                        {Math.round(totalDayMacros.fats ?? 0)}g ·{' '}
-                        {formatPercent(totalDayMacros.fats ?? 0, macroTargets.fats_g)}% goal
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            </Animated.View>
-
-            {/* Compact View */}
-            <Animated.View style={[styles.compactHeader, { opacity: compactOpacity }]}>
-              <View style={styles.headerRowCompact}>
-                <View style={styles.headerTextBlock}>
-                  <Text style={styles.compactHeaderLabel}>Today</Text>
-                  <Text style={styles.compactHeaderKcal}>
-                    {Math.round(totalDayMacros.calories ?? 0).toLocaleString()} kcal
+        {/* Animated Sticky Header with Radial Progress */}
+        <Animated.View 
+          style={[
+            styles.stickyHeader, 
+            { 
+              height: headerHeight,
+              opacity: headerOpacity,
+            }
+          ]}
+        >
+          <Animated.View 
+            style={[
+              styles.headerRingRow,
+              {
+                opacity: ringOpacity,
+                transform: [{ scale: ringScale }],
+              }
+            ]}
+          >
+            <View style={styles.headerRingItem}>
+              <View style={styles.headerRingWrap}>
+                <CircularProgress
+                  size={76}
+                  strokeWidth={8}
+                  progress={calorieGoal ? (totalDayMacros.calories ?? 0) / calorieGoal : 0}
+                  color={COLORS.calories}
+                />
+                <View style={styles.headerRingCenter}>
+                  <Text style={styles.headerRingValue}>
+                    {Math.round(totalDayMacros.calories ?? 0)}
+                  </Text>
+                  <Text style={styles.headerRingTarget}>
+                    /{Math.round(calorieGoal).toLocaleString()}kcal
                   </Text>
                 </View>
-                <View style={styles.headerRadialCompact}>
-                  <CircularProgress
-                    size={54}
-                    strokeWidth={5}
-                    progress={
-                      calorieGoal ? (totalDayMacros.calories ?? 0) / calorieGoal : 0
-                    }
-                    color={COLORS.calories}
-                  />
-                  <View style={styles.headerRadialCoreSmall} />
-                  <View style={styles.headerRadialCenter}>
-                    <Text style={styles.headerRadialValueSmall}>
-                      {Math.round(totalDayMacros.calories ?? 0)}
-                    </Text>
-                    <Text style={styles.headerRadialLabelSmall}>kcal</Text>
-                  </View>
+              </View>
+              <Text style={styles.headerRingLabel}>Cal</Text>
+            </View>
+            <View style={styles.headerRingItem}>
+              <View style={styles.headerRingWrap}>
+                <CircularProgress
+                  size={76}
+                  strokeWidth={8}
+                  progress={
+                    macroTargets.protein_g
+                      ? (totalDayMacros.protein ?? 0) / macroTargets.protein_g
+                      : 0
+                  }
+                  color={COLORS.protein}
+                />
+                <View style={styles.headerRingCenter}>
+                  <Text style={styles.headerRingValue}>
+                    {Math.round(totalDayMacros.protein ?? 0)}
+                  </Text>
+                  <Text style={styles.headerRingTarget}>
+                    /{Math.round(macroTargets.protein_g)}g
+                  </Text>
                 </View>
               </View>
-            </Animated.View>
-          </LinearGradient>
+              <Text style={styles.headerRingLabel}>Protein</Text>
+            </View>
+            <View style={styles.headerRingItem}>
+              <View style={styles.headerRingWrap}>
+                <CircularProgress
+                  size={76}
+                  strokeWidth={8}
+                  progress={
+                    macroTargets.carbs_g
+                      ? (totalDayMacros.carbs ?? 0) / macroTargets.carbs_g
+                      : 0
+                  }
+                  color={COLORS.carbs}
+                />
+                <View style={styles.headerRingCenter}>
+                  <Text style={styles.headerRingValue}>
+                    {Math.round(totalDayMacros.carbs ?? 0)}
+                  </Text>
+                  <Text style={styles.headerRingTarget}>
+                    /{Math.round(macroTargets.carbs_g)}g
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.headerRingLabel}>Carbs</Text>
+            </View>
+            <View style={styles.headerRingItem}>
+              <View style={styles.headerRingWrap}>
+                <CircularProgress
+                  size={76}
+                  strokeWidth={8}
+                  progress={
+                    macroTargets.fats_g
+                      ? (totalDayMacros.fats ?? 0) / macroTargets.fats_g
+                      : 0
+                  }
+                  color={COLORS.fats}
+                />
+                <View style={styles.headerRingCenter}>
+                  <Text style={styles.headerRingValue}>
+                    {Math.round(totalDayMacros.fats ?? 0)}
+                  </Text>
+                  <Text style={styles.headerRingTarget}>
+                    /{Math.round(macroTargets.fats_g)}g
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.headerRingLabel}>Fat</Text>
+            </View>
+          </Animated.View>
         </Animated.View>
 
         <Animated.ScrollView
           showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
             { useNativeDriver: false }
           )}
           scrollEventThrottle={16}
-          contentContainerStyle={styles.scrollContent}
         >
           {/* Meals Section */}
           <View style={styles.mealsSection}>
@@ -922,7 +884,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingTop: HEADER_EXPANDED_HEIGHT + 24,
+    paddingTop: 180,
     paddingBottom: 100,
   },
 
@@ -933,176 +895,56 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 100,
-    overflow: 'hidden',
-  },
-  stickyHeaderGradient: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingTop: 28,
+    backgroundColor: COLORS.bgPrimary,
+    paddingTop: 60,
     paddingBottom: 20,
-    paddingHorizontal: 20,
+    justifyContent: 'center',
   },
 
-  // Expanded Header
-  expandedHeader: {
-    position: 'absolute',
-    top: 24,
-    left: 20,
-    right: 20,
-  },
-  headerRowCompact: {
+  // Header Ring Layout
+  headerRingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    paddingHorizontal: 12,
+    gap: 8,
   },
-  headerTextBlock: {
+  headerRingItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
     flex: 1,
   },
-  headerLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 8,
-  },
-  headerContentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 28,
-  },
-  headerRadialStack: {
+  headerRingWrap: {
     position: 'relative',
-    width: 120,
-    height: 120,
+    width: 76,
+    height: 76,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 60,
-    marginTop: 40,
-    marginLeft: 44
   },
-  headerRadialRing: {
+  headerRingCenter: {
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerRadialRingGap: {
-    borderRadius: 999,
-    padding: 4,
-  },
-  headerRadialCompact: {
-    position: 'relative',
-    width: 54,
-    height: 54,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerRadialCenter: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerRadialCore: {
-    position: 'absolute',
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-  },
-  headerRadialCoreSmall: {
-    position: 'absolute',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.bgPrimary,
-  },
-  headerRadialValue: {
-    fontSize: 16,
+  headerRingValue: {
+    fontSize: 13,
     fontWeight: '700',
     color: COLORS.textPrimary,
   },
-  headerRadialLabel: {
+  headerRingTarget: {
     fontSize: 9,
     fontWeight: '600',
     color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    marginTop: 1,
-  },
-  headerRadialValueSmall: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  headerRadialLabelSmall: {
-    fontSize: 8,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    marginTop: 1,
-  },
-  headerLegend: {
-    flex: 1,
-    gap: 12,
-    alignItems: 'flex-end',
-    alignSelf: 'flex-end',
-    marginLeft: 'auto',
-    paddingLeft: 20,
-  },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    justifyContent: 'flex-end',
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  legendText: {
-    flex: 1,
-    alignItems: 'flex-start',
-  },
-  legendLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    textAlign: 'left',
-  },
-  legendValue: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
     marginTop: 2,
-    textAlign: 'left',
   },
-
-  // Compact Header
-  compactHeader: {
-    position: 'absolute',
-    top: 18,
-    left: 20,
-    right: 20,
-  },
-  compactHeaderLabel: {
+  headerRingLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginBottom: 4,
-  },
-  compactHeaderKcal: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
+    color: COLORS.textSecondary,
+    marginTop: 6,
   },
 
-  // Meals Section (keeping all original meal card styles)
+  // Meals Section
   mealsSection: {
     paddingHorizontal: 20,
   },
@@ -1130,87 +972,477 @@ const styles = StyleSheet.create({
   progressDotComplete: {
     backgroundColor: COLORS.success,
   },
-  mealCardContainer: { marginBottom: 16 },
-  mealCard: { borderRadius: 20, overflow: 'hidden', backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
-  mealImageContainer: { height: 180, position: 'relative' },
-  mealImage: { width: '100%', height: '100%' },
-  mealImageGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 },
-  mealTypeBadge: { position: 'absolute', top: 16, left: 16, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
-  mealTypeBadgeEmoji: { fontSize: 16 },
-  mealTypeBadgeText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF', textShadowColor: 'rgba(0, 0, 0, 0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  completedBadge: { position: 'absolute', top: 16, right: 16, width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.success, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 4 },
-  completedBadgeText: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
-  mealNameOverlay: { position: 'absolute', bottom: 60, left: 16, right: 16 },
-  mealNameText: { fontSize: 20, fontWeight: '700', color: '#FFFFFF', lineHeight: 26, textShadowColor: 'rgba(0, 0, 0, 0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
-  macroGridOverlay: { position: 'absolute', bottom: 16, left: 16, right: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(0, 0, 0, 0.4)', borderRadius: 12, padding: 10, backdropFilter: 'blur(10px)' },
-  macroItemOverlay: { flex: 1, alignItems: 'center' },
-  macroItemDividerOverlay: { width: 1, height: 28, backgroundColor: 'rgba(255, 255, 255, 0.2)' },
-  macroValueOverlay: { fontSize: 15, fontWeight: '700', color: '#FFFFFF', marginBottom: 2, textShadowColor: 'rgba(0, 0, 0, 0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  macroLabelOverlay: { fontSize: 10, color: 'rgba(255, 255, 255, 0.8)', fontWeight: '600', textShadowColor: 'rgba(0, 0, 0, 0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  mealHeaderNoImage: { padding: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  mealHeaderNoImageTop: { marginBottom: 12 },
-  mealTypeBadgeNoImage: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, alignSelf: 'flex-start' },
-  mealNameNoImage: { fontSize: 18, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 12, lineHeight: 24 },
-  macroGridNoImage: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: COLORS.bgPrimary, borderRadius: 12, padding: 12 },
-  macroItem: { flex: 1, alignItems: 'center' },
-  macroItemDivider: { width: 1, height: 32, backgroundColor: COLORS.border },
-  macroValue: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 2 },
-  macroLabel: { fontSize: 11, color: COLORS.textTertiary, fontWeight: '600' },
-  loadingContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingVertical: 40 },
-  loadingText: { color: COLORS.textSecondary, fontSize: 14 },
-  emptyCard: { padding: 32, borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center' },
-  emptyCardIcon: { fontSize: 40, marginBottom: 12 },
-  emptyCardTitle: { fontSize: 17, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 6 },
-  emptyCardSubtitle: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center' },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
-  emptyIcon: { fontSize: 64, marginBottom: 16 },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 8 },
-  emptySubtitle: { fontSize: 15, color: COLORS.textSecondary, textAlign: 'center' },
-  mealGroupSeparator: { height: 0 },
-  mealsListFooter: { height: 32 },
-  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)' },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: COLORS.textPrimary },
-  modalCloseButton: { fontSize: 28, color: COLORS.textSecondary, fontWeight: '300' },
-  preferencesModalContent: { backgroundColor: COLORS.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 20, paddingHorizontal: 20, paddingBottom: 30, maxHeight: '85%' },
-  preferencesScroll: { maxHeight: 520 },
-  prefSection: { marginBottom: 24 },
-  prefSectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 12 },
-  prefSectionSubtitle: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 12 },
-  cuisineGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  cuisineChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  cuisineChipSelected: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
-  cuisineEmoji: { fontSize: 16 },
-  cuisineLabel: { fontSize: 13, color: COLORS.textSecondary, fontWeight: '600' },
-  cuisineLabelSelected: { color: COLORS.accent },
-  dietaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  dietaryChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  dietaryChipSelected: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
-  dietaryLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
-  dietaryLabelSelected: { color: COLORS.accent },
-  exclusionsList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  exclusionChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
-  exclusionText: { fontSize: 12, color: COLORS.textSecondary, fontWeight: '600' },
-  exclusionRemove: { width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(255,59,48,0.2)', alignItems: 'center', justifyContent: 'center' },
-  exclusionRemoveText: { fontSize: 14, color: '#FF3B30', fontWeight: '700', marginTop: -1 },
-  addExclusionButton: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.borderStrong, backgroundColor: COLORS.surface, alignItems: 'center' },
-  addExclusionText: { color: COLORS.textSecondary, fontWeight: '600', fontSize: 13 },
-  exclusionInputContainer: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.borderStrong, borderRadius: 12, padding: 12 },
-  exclusionInput: { color: COLORS.textPrimary, fontSize: 14, paddingVertical: 6 },
-  exclusionActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
-  exclusionButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: COLORS.border },
-  exclusionCancel: { backgroundColor: COLORS.surface },
-  exclusionConfirm: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
-  exclusionButtonText: { color: COLORS.textSecondary, fontWeight: '600' },
-  exclusionConfirmText: { color: COLORS.accent },
-  cookTimeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  cookTimeChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  cookTimeChipSelected: { backgroundColor: COLORS.accentDim, borderColor: COLORS.accent },
-  cookTimeLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
-  cookTimeLabelSelected: { color: COLORS.accent },
-  savePreferencesButton: { backgroundColor: COLORS.accent, borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 8 },
-  savePreferencesButtonText: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
+  mealCardContainer: { 
+    marginBottom: 16 
+  },
+  mealCard: { 
+    borderRadius: 20, 
+    overflow: 'hidden', 
+    backgroundColor: 'transparent', 
+    borderWidth: 0 
+  },
+  mealImageContainer: { 
+    height: 180, 
+    position: 'relative' 
+  },
+  mealImage: { 
+    width: '100%', 
+    height: '100%' 
+  },
+  mealImageGradient: { 
+    position: 'absolute', 
+    bottom: 0, 
+    left: 0, 
+    right: 0, 
+    height: 140 
+  },
+  mealTypeBadge: { 
+    position: 'absolute', 
+    top: 16, 
+    left: 16, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 6, 
+    paddingHorizontal: 12, 
+    paddingVertical: 8, 
+    borderRadius: 12, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.3, 
+    shadowRadius: 4, 
+    elevation: 4 
+  },
+  mealTypeBadgeEmoji: { 
+    fontSize: 16 
+  },
+  mealTypeBadgeText: { 
+    fontSize: 13, 
+    fontWeight: '700', 
+    color: '#FFFFFF', 
+    textShadowColor: 'rgba(0, 0, 0, 0.3)', 
+    textShadowOffset: { width: 0, height: 1 }, 
+    textShadowRadius: 2 
+  },
+  completedBadge: { 
+    position: 'absolute', 
+    top: 16, 
+    right: 16, 
+    width: 36, 
+    height: 36, 
+    borderRadius: 18, 
+    backgroundColor: COLORS.success, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.3, 
+    shadowRadius: 4, 
+    elevation: 4 
+  },
+  completedBadgeText: { 
+    fontSize: 20, 
+    fontWeight: '700', 
+    color: '#FFFFFF' 
+  },
+  mealNameOverlay: { 
+    position: 'absolute', 
+    bottom: 60, 
+    left: 16, 
+    right: 16 
+  },
+  mealNameText: { 
+    fontSize: 20, 
+    fontWeight: '700', 
+    color: '#FFFFFF', 
+    lineHeight: 26, 
+    textShadowColor: 'rgba(0, 0, 0, 0.5)', 
+    textShadowOffset: { width: 0, height: 1 }, 
+    textShadowRadius: 4 
+  },
+  macroGridOverlay: { 
+    position: 'absolute', 
+    bottom: 16, 
+    left: 16, 
+    right: 16, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    backgroundColor: 'rgba(0, 0, 0, 0.4)', 
+    borderRadius: 12, 
+    padding: 10, 
+    backdropFilter: 'blur(10px)' 
+  },
+  macroItemOverlay: { 
+    flex: 1, 
+    alignItems: 'center' 
+  },
+  macroItemDividerOverlay: { 
+    width: 1, 
+    height: 28, 
+    backgroundColor: 'rgba(255, 255, 255, 0.2)' 
+  },
+  macroValueOverlay: { 
+    fontSize: 15, 
+    fontWeight: '700', 
+    color: '#FFFFFF', 
+    marginBottom: 2, 
+    textShadowColor: 'rgba(0, 0, 0, 0.3)', 
+    textShadowOffset: { width: 0, height: 1 }, 
+    textShadowRadius: 2 
+  },
+  macroLabelOverlay: { 
+    fontSize: 10, 
+    color: 'rgba(255, 255, 255, 0.8)', 
+    fontWeight: '600', 
+    textShadowColor: 'rgba(0, 0, 0, 0.3)', 
+    textShadowOffset: { width: 0, height: 1 }, 
+    textShadowRadius: 2 
+  },
+  mealHeaderNoImage: { 
+    padding: 16, 
+    borderBottomWidth: 1, 
+    borderBottomColor: COLORS.border 
+  },
+  mealHeaderNoImageTop: { 
+    marginBottom: 12 
+  },
+  mealTypeBadgeNoImage: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 8, 
+    paddingHorizontal: 12, 
+    paddingVertical: 8, 
+    borderRadius: 12, 
+    alignSelf: 'flex-start' 
+  },
+  mealNameNoImage: { 
+    fontSize: 18, 
+    fontWeight: '700', 
+    color: COLORS.textPrimary, 
+    marginBottom: 12, 
+    lineHeight: 24 
+  },
+  macroGridNoImage: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    backgroundColor: COLORS.bgPrimary, 
+    borderRadius: 12, 
+    padding: 12 
+  },
+  macroItem: { 
+    flex: 1, 
+    alignItems: 'center' 
+  },
+  macroItemDivider: { 
+    width: 1, 
+    height: 32, 
+    backgroundColor: COLORS.border 
+  },
+  macroValue: { 
+    fontSize: 16, 
+    fontWeight: '700', 
+    color: COLORS.textPrimary, 
+    marginBottom: 2 
+  },
+  macroLabel: { 
+    fontSize: 11, 
+    color: COLORS.textTertiary, 
+    fontWeight: '600' 
+  },
+  loadingContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    gap: 12, 
+    paddingVertical: 40 
+  },
+  loadingText: { 
+    color: COLORS.textSecondary, 
+    fontSize: 14 
+  },
+  emptyCard: { 
+    padding: 32, 
+    borderRadius: 16, 
+    backgroundColor: COLORS.surface, 
+    borderWidth: 1, 
+    borderColor: COLORS.border, 
+    alignItems: 'center' 
+  },
+  emptyCardIcon: { 
+    fontSize: 40, 
+    marginBottom: 12 
+  },
+  emptyCardTitle: { 
+    fontSize: 17, 
+    fontWeight: '700', 
+    color: COLORS.textPrimary, 
+    marginBottom: 6 
+  },
+  emptyCardSubtitle: { 
+    fontSize: 13, 
+    color: COLORS.textSecondary, 
+    textAlign: 'center' 
+  },
+  emptyState: { 
+    flex: 1, 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    padding: 40 
+  },
+  emptyIcon: { 
+    fontSize: 64, 
+    marginBottom: 16 
+  },
+  emptyTitle: { 
+    fontSize: 22, 
+    fontWeight: '700', 
+    color: COLORS.textPrimary, 
+    marginBottom: 8 
+  },
+  emptySubtitle: { 
+    fontSize: 15, 
+    color: COLORS.textSecondary, 
+    textAlign: 'center' 
+  },
+  mealGroupSeparator: { 
+    height: 0 
+  },
+  mealsListFooter: { 
+    height: 32 
+  },
+  modalOverlay: { 
+    flex: 1, 
+    justifyContent: 'flex-end' 
+  },
+  modalBackdrop: { 
+    ...StyleSheet.absoluteFillObject, 
+    backgroundColor: 'rgba(0,0,0,0.7)' 
+  },
+  modalHeader: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    marginBottom: 20 
+  },
+  modalTitle: { 
+    fontSize: 20, 
+    fontWeight: '700', 
+    color: COLORS.textPrimary 
+  },
+  modalCloseButton: { 
+    fontSize: 28, 
+    color: COLORS.textSecondary, 
+    fontWeight: '300' 
+  },
+  preferencesModalContent: { 
+    backgroundColor: COLORS.card, 
+    borderTopLeftRadius: 24, 
+    borderTopRightRadius: 24, 
+    paddingTop: 20, 
+    paddingHorizontal: 20, 
+    paddingBottom: 30, 
+    maxHeight: '85%' 
+  },
+  preferencesScroll: { 
+    maxHeight: 520 
+  },
+  prefSection: { 
+    marginBottom: 24 
+  },
+  prefSectionTitle: { 
+    fontSize: 16, 
+    fontWeight: '700', 
+    color: COLORS.textPrimary, 
+    marginBottom: 12 
+  },
+  prefSectionSubtitle: { 
+    fontSize: 13, 
+    color: COLORS.textSecondary, 
+    marginBottom: 12 
+  },
+  cuisineGrid: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', 
+    gap: 10 
+  },
+  cuisineChip: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 8, 
+    paddingHorizontal: 12, 
+    paddingVertical: 10, 
+    borderRadius: 12, 
+    backgroundColor: COLORS.surface, 
+    borderWidth: 1, 
+    borderColor: COLORS.border 
+  },
+  cuisineChipSelected: { 
+    backgroundColor: COLORS.accentDim, 
+    borderColor: COLORS.accent 
+  },
+  cuisineEmoji: { 
+    fontSize: 16 
+  },
+  cuisineLabel: { 
+    fontSize: 13, 
+    color: COLORS.textSecondary, 
+    fontWeight: '600' 
+  },
+  cuisineLabelSelected: { 
+    color: COLORS.accent 
+  },
+  dietaryGrid: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', 
+    gap: 10 
+  },
+  dietaryChip: { 
+    paddingHorizontal: 12, 
+    paddingVertical: 8, 
+    borderRadius: 12, 
+    backgroundColor: COLORS.surface, 
+    borderWidth: 1, 
+    borderColor: COLORS.border 
+  },
+  dietaryChipSelected: { 
+    backgroundColor: COLORS.accentDim, 
+    borderColor: COLORS.accent 
+  },
+  dietaryLabel: { 
+    fontSize: 13, 
+    fontWeight: '600', 
+    color: COLORS.textSecondary 
+  },
+  dietaryLabelSelected: { 
+    color: COLORS.accent 
+  },
+  exclusionsList: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', 
+    gap: 8, 
+    marginBottom: 12 
+  },
+  exclusionChip: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 6, 
+    backgroundColor: COLORS.surface, 
+    borderWidth: 1, 
+    borderColor: COLORS.border, 
+    paddingHorizontal: 10, 
+    paddingVertical: 6, 
+    borderRadius: 12 
+  },
+  exclusionText: { 
+    fontSize: 12, 
+    color: COLORS.textSecondary, 
+    fontWeight: '600' 
+  },
+  exclusionRemove: { 
+    width: 18, 
+    height: 18, 
+    borderRadius: 9, 
+    backgroundColor: 'rgba(255,59,48,0.2)', 
+    alignItems: 'center', 
+    justifyContent: 'center' 
+  },
+  exclusionRemoveText: { 
+    fontSize: 14, 
+    color: '#FF3B30', 
+    fontWeight: '700', 
+    marginTop: -1 
+  },
+  addExclusionButton: { 
+    paddingVertical: 10, 
+    paddingHorizontal: 12, 
+    borderRadius: 12, 
+    borderWidth: 1, 
+    borderColor: COLORS.borderStrong, 
+    backgroundColor: COLORS.surface, 
+    alignItems: 'center' 
+  },
+  addExclusionText: { 
+    color: COLORS.textSecondary, 
+    fontWeight: '600', 
+    fontSize: 13 
+  },
+  exclusionInputContainer: { 
+    backgroundColor: COLORS.surface, 
+    borderWidth: 1, 
+    borderColor: COLORS.borderStrong, 
+    borderRadius: 12, 
+    padding: 12 
+  },
+  exclusionInput: { 
+    color: COLORS.textPrimary, 
+    fontSize: 14, 
+    paddingVertical: 6 
+  },
+  exclusionActions: { 
+    flexDirection: 'row', 
+    justifyContent: 'flex-end', 
+    gap: 10, 
+    marginTop: 10 
+  },
+  exclusionButton: { 
+    paddingHorizontal: 12, 
+    paddingVertical: 6, 
+    borderRadius: 8, 
+    borderWidth: 1, 
+    borderColor: COLORS.border 
+  },
+  exclusionCancel: { 
+    backgroundColor: COLORS.surface 
+  },
+  exclusionConfirm: { 
+    backgroundColor: COLORS.accentDim, 
+    borderColor: COLORS.accent 
+  },
+  exclusionButtonText: { 
+    color: COLORS.textSecondary, 
+    fontWeight: '600' 
+  },
+  exclusionConfirmText: { 
+    color: COLORS.accent 
+  },
+  cookTimeGrid: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', 
+    gap: 10 
+  },
+  cookTimeChip: { 
+    paddingHorizontal: 14, 
+    paddingVertical: 10, 
+    borderRadius: 12, 
+    backgroundColor: COLORS.surface, 
+    borderWidth: 1, 
+    borderColor: COLORS.border 
+  },
+  cookTimeChipSelected: { 
+    backgroundColor: COLORS.accentDim, 
+    borderColor: COLORS.accent 
+  },
+  cookTimeLabel: { 
+    fontSize: 13, 
+    fontWeight: '600', 
+    color: COLORS.textSecondary 
+  },
+  cookTimeLabelSelected: { 
+    color: COLORS.accent 
+  },
+  savePreferencesButton: { 
+    backgroundColor: COLORS.accent, 
+    borderRadius: 12, 
+    padding: 16, 
+    alignItems: 'center', 
+    marginTop: 8 
+  },
+  savePreferencesButtonText: { 
+    fontSize: 16, 
+    fontWeight: '700', 
+    color: COLORS.textPrimary 
+  },
 });
 
 export default MenuScreen;
