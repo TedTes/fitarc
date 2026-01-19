@@ -18,7 +18,7 @@ import {
   Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { MealPreferences, PhasePlan, User } from '../types/domain';
 import { formatLocalDateYMD } from '../utils/date';
 import { useMealPlans } from '../hooks/useMealPlans';
@@ -207,6 +207,7 @@ const getMealGradient = (mealType: string): [string, string] => {
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const { setFabAction } = useFabAction();
+  const isFocused = useIsFocused();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayKey = formatLocalDateYMD(today);
@@ -491,6 +492,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   }, [loadStoredFoods]);
 
   useEffect(() => {
+    if (!isFocused) return;
     if (!phase || !user?.id) return;
     if (isMealsLoading || isGeneratingMeals) return;
     const attemptKey = `${phase.id}:${todayKey}`;
@@ -527,6 +529,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   }, [
     buildMacroTargets,
     calorieGoal,
+    isFocused,
     isGeneratingMeals,
     isMealsLoading,
     mealGroups.length,
