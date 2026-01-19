@@ -375,11 +375,30 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const handleSavePreferences = async () => {
     try {
       await updateMealPreferences(user.id, mealPreferences);
+      const attemptKey = `${phase?.id}:${todayKey}:${preferencesKey}`;
+      mealGenerationAttemptedRef.current.delete(attemptKey);
+      setIsGeneratingMeals(true);
+      await generateMealsForDay({
+        user_id: user.id,
+        plan_id: phase!.id,
+        date: todayKey,
+        calorie_target: calorieGoal,
+        macro_targets: macroTargets,
+        meal_count: 3,
+        dietary_tags: mealPreferences.dietary_tags,
+        excluded_ingredients: mealPreferences.excluded_ingredients,
+        cuisine: mealPreferences.cuisine === 'mixed' ? '' : mealPreferences.cuisine,
+        max_ready_time_minutes: mealPreferences.max_ready_time_minutes,
+        force_regenerate: true,
+      });
+      await refetchMeals();
       setPreferencesModalVisible(false);
       Alert.alert('Preferences Saved', 'Your meal preferences have been updated.');
     } catch (err) {
       console.error('Failed to save meal preferences', err);
-      Alert.alert('Error', 'Unable to save meal preferences.');
+      Alert.alert('Try Again', 'We could not update your meals. Please try again.');
+    } finally {
+      setIsGeneratingMeals(false);
     }
   };
 
