@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { PhasePlan, User } from '../types/domain';
 import { generateWeekWorkouts, hasExistingWorkouts } from './workoutService';
+import { fetchUserProfile } from './userProfileService';
 
 type PhaseRow = {
   id: string;
@@ -123,7 +124,11 @@ export const createPhaseWithWorkouts = async (
   const totalDays = Math.max(phase.expectedWeeks, 1) * 7;
   
   try {
-    await generateWeekWorkouts(userId, phase.id, trainingSplit, startDate, totalDays);
+    const profile = await fetchUserProfile(userId);
+    await generateWeekWorkouts(userId, phase.id, trainingSplit, startDate, totalDays, {
+      eatingMode: profile?.eatingMode,
+      experienceLevel: profile?.experienceLevel,
+    });
     console.log('🎉 Phase created with workouts successfully');
   } catch (error) {
     console.error('⚠️ Phase created but workout generation failed:', error);

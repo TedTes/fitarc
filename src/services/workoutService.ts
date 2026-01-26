@@ -943,6 +943,47 @@ const buildMuscleIndex = (catalog: ExerciseCatalogEntry[]): MuscleIndex => {
   return index;
 };
 
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), max);
+
+const getEatingModeOffset = (eatingMode?: User['eatingMode']): number => {
+  switch (eatingMode) {
+    case 'mild_deficit':
+      return -1;
+    case 'lean_bulk':
+      return 1;
+    case 'recomp':
+    case 'maintenance':
+    default:
+      return 0;
+  }
+};
+
+const getExperienceOffset = (level?: User['experienceLevel']): number => {
+  switch (level) {
+    case 'beginner':
+      return -1;
+    case 'advanced':
+      return 1;
+    case 'intermediate':
+    default:
+      return 0;
+  }
+};
+
+const resolveTargetExercises = (
+  blueprint: DayBlueprint,
+  profile?: {
+    eatingMode?: User['eatingMode'];
+    experienceLevel?: User['experienceLevel'];
+  }
+): number => {
+  const base = blueprint.targetExercises ?? 5;
+  const offset =
+    getEatingModeOffset(profile?.eatingMode) + getExperienceOffset(profile?.experienceLevel);
+  return clampNumber(base + offset, 3, 8);
+};
+
 const selectFromBucket = (
   bucket: ExerciseCatalogEntry[],
   usedIds: Set<string>,
@@ -963,9 +1004,10 @@ const pickExercisesForBlueprint = (
   blueprint: DayBlueprint,
   muscleIndex: MuscleIndex,
   catalog: ExerciseCatalogEntry[],
-  daySeed: number
+  daySeed: number,
+  targetOverride?: number
 ): ExerciseCatalogEntry[] => {
-  const target = blueprint.targetExercises ?? 5;
+  const target = targetOverride ?? blueprint.targetExercises ?? 5;
   const selection: ExerciseCatalogEntry[] = [];
   const usedIds = new Set<string>();
   const catalogSorted = [...catalog].sort((a, b) => a.name.localeCompare(b.name));
@@ -1081,7 +1123,11 @@ export const generateWeekWorkouts = async (
   phaseId: string,
   trainingSplit: User['trainingSplit'],
   startDate: Date = new Date(),
-  totalDays = 7
+  totalDays = 7,
+  profile?: {
+    eatingMode?: User['eatingMode'];
+    experienceLevel?: User['experienceLevel'];
+  }
 ): Promise<void> => {
   try {
     console.log(`🏋️ Generating workouts for phase ${phaseId}, split: ${trainingSplit}`);
@@ -1117,11 +1163,13 @@ export const generateWeekWorkouts = async (
       const dateStr = formatLocalDateYMD(workoutDate);
 
       const blueprint = blueprints[dayOffset % blueprints.length];
+      const targetExercises = resolveTargetExercises(blueprint, profile);
       const exercises = pickExercisesForBlueprint(
         blueprint,
         muscleIndex,
         exerciseCatalog,
-        dayOffset
+        dayOffset,
+        targetExercises
       );
 
       if (!exercises.length) {
