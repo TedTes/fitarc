@@ -161,8 +161,17 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
     activePicker === 'age'
       ? 'Select age'
       : activePicker === 'height'
-        ? 'Select height'
+      ? 'Select height'
         : 'Select weight (kg)';
+  const readinessItems = [
+    { key: 'name', label: 'Name', complete: !!name.trim() },
+    { key: 'sex', label: 'Sex', complete: !!sex },
+    { key: 'age', label: 'Age', complete: age >= AGE_MIN && age <= AGE_MAX },
+    { key: 'height', label: 'Height', complete: heightCm >= HEIGHT_MIN && heightCm <= HEIGHT_MAX },
+    { key: 'experience', label: 'Experience level', complete: !!experienceLevel },
+    { key: 'split', label: 'Training split', complete: !!trainingSplit },
+    { key: 'eating', label: 'Eating mode', complete: !!eatingMode },
+  ];
 
   return (
     <View style={styles.container}>
@@ -174,6 +183,20 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({ onComple
           <View style={styles.header}>
             <Text style={styles.title}>Welcome to FitArc</Text>
             <Text style={styles.subtitle}>Let's set up your profile</Text>
+          </View>
+
+          <View style={styles.readinessCard}>
+            <Text style={styles.readinessTitle}>Plan Input Checklist</Text>
+            <View style={styles.readinessList}>
+              {readinessItems.map((item) => (
+                <View key={item.key} style={styles.readinessRow}>
+                  <Text style={item.complete ? styles.readinessDone : styles.readinessPending}>
+                    {item.complete ? '✓' : '○'}
+                  </Text>
+                  <Text style={styles.readinessLabel}>{item.label}</Text>
+                </View>
+              ))}
+            </View>
           </View>
 
           <View style={styles.formSection}>
@@ -421,6 +444,46 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: '#A0A3BD',
+  },
+  readinessCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 196, 66, 0.35)',
+    backgroundColor: 'rgba(255, 196, 66, 0.08)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 20,
+  },
+  readinessTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFC442',
+    marginBottom: 8,
+  },
+  readinessList: {
+    gap: 6,
+  },
+  readinessRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  readinessPending: {
+    width: 14,
+    color: '#8B93B0',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  readinessDone: {
+    width: 14,
+    color: '#00F5A0',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  readinessLabel: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   formSection: {
     marginBottom: 20,
