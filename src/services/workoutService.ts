@@ -580,6 +580,7 @@ export const updateSessionExercises = async ({
   sessionId: _sessionId,
   exercises,
 }: UpdateSessionExercisesInput): Promise<void> => {
+  const sessionId = _sessionId;
   for (let index = 0; index < exercises.length; index += 1) {
     const exercise = exercises[index];
     if (!exercise.id) continue;
@@ -589,6 +590,7 @@ export const updateSessionExercises = async ({
       .update({
         display_order: displayOrder,
         notes: exercise.reps ?? null,
+        complete: exercise.completed ?? false,
       })
       .eq('id', exercise.id);
     if (updateError) throw updateError;
@@ -630,6 +632,14 @@ export const updateSessionExercises = async ({
       if (insertSetsError) throw insertSetsError;
     }
   }
+
+  const isComplete =
+    exercises.length > 0 && exercises.every((exercise) => exercise.completed === true);
+  const { error: sessionCompleteError } = await supabase
+    .from('fitarc_workout_sessions')
+    .update({ complete: isComplete })
+    .eq('id', sessionId);
+  if (sessionCompleteError) throw sessionCompleteError;
 };
 
 export const deleteWorkoutSessionExercise = async (

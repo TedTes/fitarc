@@ -330,9 +330,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const today = new Date();
   const todayStr = formatLocalDateYMD(today);
-  const todaySession = resolvedSessions.find((session) => session.date === todayStr) || null;
+  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const selectedSession =
+    resolvedSessions.find((session) => session.date === selectedDate) || null;
 
-  const displayExercises = todaySession?.exercises ?? EMPTY_EXERCISES;
+  const displayExercises = selectedSession?.exercises ?? EMPTY_EXERCISES;
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (exercise.id) return exercise.id;
     if (exercise.exerciseId && exercise.displayOrder !== undefined && exercise.displayOrder !== null) {
@@ -361,7 +363,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       clearTimeout(orderUpdateTimeoutRef.current);
       orderUpdateTimeoutRef.current = null;
     }
-  }, [todaySession?.id]);
+  }, [selectedSession?.id]);
 
   useEffect(() => {
     if (!activeRestKey || restSecondsLeft <= 0) return;
@@ -440,6 +442,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     });
     return [...pending, ...completed];
   }, [displayExercises, isExerciseMarked, orderUpdateTrigger]);
+
+  const selectedSessionComplete = useMemo(() => {
+    if (!displayExercises.length) return false;
+    return displayExercises.every((exercise) => isExerciseMarked(exercise));
+  }, [displayExercises, isExerciseMarked]);
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
@@ -526,7 +533,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const marks: Record<string, { customStyles: { container: object; text: object } }> = {};
     const sessionDates = new Set(resolvedSessions.map((session) => session.date).filter(Boolean));
     phaseDates.forEach((dateKey) => {
-      const isComplete = (completedSessionsByDate.get(dateKey) || 0) > 0;
+      const serverComplete = (completedSessionsByDate.get(dateKey) || 0) > 0;
+      const isComplete =
+        dateKey === selectedDate && displayExercises.length
+          ? selectedSessionComplete
+          : serverComplete;
       const isToday = dateKey === todayStr;
       const hasPlannedWorkout = sessionDates.has(dateKey);
       marks[dateKey] = {
@@ -534,7 +545,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       };
     });
     return marks;
-  }, [calendarRange, completedSessionsByDate, phaseDates, resolvedSessions, todayStr]);
+  }, [
+    calendarRange,
+    completedSessionsByDate,
+    displayExercises.length,
+    phaseDates,
+    resolvedSessions,
+    selectedDate,
+    selectedSessionComplete,
+    todayStr,
+  ]);
 
   // Week view data
   const weekDates = useMemo(() => {
@@ -737,9 +757,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     await Promise.all(
       entries
         .filter(([, payload]) => payload.count % 2 === 1)
-        .map(([, payload]) => onToggleWorkoutExercise(todayStr, payload.name))
+        .map(([, payload]) => onToggleWorkoutExercise(selectedDate, payload.name))
     );
-  }, [onToggleWorkoutExercise, todayStr]);
+  }, [onToggleWorkoutExercise, selectedDate]);
 
   const handleToggleExercise = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (!canLogWorkouts) return;
@@ -793,7 +813,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   };
 
   const handleToggleExerciseAnimated = (exercise: WorkoutSessionEntry['exercises'][number]) => {
-    const key = `${todayStr}-${getExerciseKey(exercise)}`;
+    const key = `${selectedDate}-${getExerciseKey(exercise)}`;
     animateExerciseCompletion(key);
 
     Animated.sequence([
@@ -873,14 +893,25 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           const isComplete = (completedSessionsByDate.get(day.dateKey) || 0) > 0;
           const isToday = day.dateKey === todayStr;
           
+          const isSelected = day.dateKey === selectedDate;
+          const handleSelectDay = () => {
+            setSelectedDate(day.dateKey);
+            if (!resolvedSessions.find((session) => session.date === day.dateKey)) {
+              if (_onCreateSession) {
+                _onCreateSession(day.dateKey);
+              }
+            }
+          };
           return (
             <TouchableOpacity 
               key={day.dateKey} 
               style={[
                 styles.weekDay,
                 { width: weekDayWidth },
+                isSelected && styles.weekDaySelected,
                 isToday && styles.weekDayToday,
               ]}
+              onPress={handleSelectDay}
             >
               <Text style={[styles.weekDayName, isToday && styles.weekDayNameToday]}>
                 {day.dayName}
@@ -906,17 +937,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         })}
       </ScrollView>
       
-      <TouchableOpacity 
-        style={styles.expandCalendarButton}
-        onPress={() => {
-          runLayoutAnimation();
-          setCalendarExpanded((prev) => !prev);
-        }}
-      >
-        <Text style={styles.expandCalendarIcon}>
-          {calendarExpanded ? '▲' : '▼'}
-        </Text>
-      </TouchableOpacity>
+      {null}
     </View>
   );
 
@@ -987,7 +1008,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.verticalList}>
             {sortedWorkoutCards.map((exercise) => {
               const isMarked = isExerciseMarked(exercise);
-              const cardKey = `${todayStr}-${getExerciseKey(exercise)}`;
+              const cardKey = `${selectedDate}-${getExerciseKey(exercise)}`;
               const exerciseKey = getExerciseKey(exercise);
               const isExpanded = expandedExerciseKey === exerciseKey;
               const targetSets = Math.max(1, exercise.sets ?? 3);
@@ -1169,6 +1190,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             },
           ]}
         >
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => {
+              runLayoutAnimation();
+              setCalendarExpanded((prev) => !prev);
+            }}
+          >
           <LinearGradient
             colors={CARD_GRADIENT_DEFAULT}
             style={styles.calendarCard}
@@ -1219,6 +1247,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               )}
             </Animated.View>
           </LinearGradient>
+          </TouchableOpacity>
         </Animated.View>
 
         <ScrollView
@@ -1351,6 +1380,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(108, 99, 255, 0.1)',
     borderRadius: 12,
   },
+  weekDaySelected: {
+    backgroundColor: 'rgba(108, 99, 255, 0.18)',
+    borderRadius: 12,
+  },
   weekDayName: {
     fontSize: 11,
     color: '#8B93B0',
@@ -1399,23 +1432,6 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: '#00F5A0',
     marginTop: 6,
-  },
-  expandCalendarButton: {
-    position: 'absolute',
-    right: 0,
-    top: '50%',
-    transform: [{ translateY: -12 }],
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(108, 99, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  expandCalendarIcon: {
-    fontSize: 10,
-    color: '#6C63FF',
-    fontWeight: '700',
   },
   fullCalendarContainer: {
     overflow: 'hidden',

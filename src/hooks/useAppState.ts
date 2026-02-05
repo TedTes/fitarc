@@ -427,7 +427,7 @@ export const useAppState = () => {
 
       await updateSessionExercises({
         sessionId: session.id,
-        exercises: exercisesForUpdate,
+        exercises: exercisesForUpdate.length ? exercisesForUpdate : exercisesWithIds,
       });
 
       const updatedSession: WorkoutSessionEntry = {
@@ -435,9 +435,15 @@ export const useAppState = () => {
         exercises: exercisesWithIds,
       };
 
+      const latestSessions = await fetchWorkoutSessionEntries(
+        current.user.id,
+        current.currentPhase.id,
+        getAppTimeZone()
+      );
+
       updateState((prev) => ({
         ...prev,
-        workoutSessions: refreshedSessions,
+        workoutSessions: latestSessions,
         workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(updatedSession)),
         workoutDataVersion: nextWorkoutVersion(prev),
       }));
