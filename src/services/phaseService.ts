@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
-import { PhasePlan, User } from '../types/domain';
+import { EquipmentLevel, PhasePlan, PrimaryGoal, User } from '../types/domain';
 import { generateWeekWorkouts, hasExistingWorkouts } from './workoutService';
 import { fetchUserProfile } from './userProfileService';
 
@@ -103,7 +103,12 @@ export const createPhase = async (userId: string, input: CreatePhaseInput = {}) 
 export const createPhaseWithWorkouts = async (
   userId: string,
   trainingSplit: User['trainingSplit'],
-  input: CreatePhaseInput = {}
+  input: CreatePhaseInput = {},
+  options?: {
+    daysPerWeek?: 3 | 4 | 5 | 6;
+    equipmentLevel?: EquipmentLevel;
+    primaryGoal?: PrimaryGoal;
+  }
 ): Promise<PhasePlan> => {
   console.log('📋 Creating phase with auto-generated workouts...');
   
@@ -128,7 +133,7 @@ export const createPhaseWithWorkouts = async (
     await generateWeekWorkouts(userId, phase.id, trainingSplit, startDate, totalDays, {
       eatingMode: profile?.eatingMode,
       experienceLevel: profile?.experienceLevel,
-    });
+    }, undefined, options);
     console.log('🎉 Phase created with workouts successfully');
   } catch (error) {
     console.error('⚠️ Phase created but workout generation failed:', error);
