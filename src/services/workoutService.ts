@@ -3,6 +3,17 @@ import { User, WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry } fr
 import { mapSessionRow } from '../utils/workoutSessionMapper';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
+import {
+  type AdaptationMode,
+  EATING_MODE_OFFSETS,
+  EXPERIENCE_OFFSETS,
+  TARGET_EXERCISES_BOUNDS,
+  isCompoundPattern,
+  resolveScoringWeights,
+  resolveSlotPlan,
+  type ScoringWeights,
+  type SlotPlan,
+} from './planningRules';
 import { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
 export { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
 
@@ -946,31 +957,6 @@ const buildMuscleIndex = (catalog: ExerciseCatalogEntry[]): MuscleIndex => {
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
-const getEatingModeOffset = (eatingMode?: User['eatingMode']): number => {
-  switch (eatingMode) {
-    case 'mild_deficit':
-      return -1;
-    case 'lean_bulk':
-      return 1;
-    case 'recomp':
-    case 'maintenance':
-    default:
-      return 0;
-  }
-};
-
-const getExperienceOffset = (level?: User['experienceLevel']): number => {
-  switch (level) {
-    case 'beginner':
-      return -1;
-    case 'advanced':
-      return 1;
-    case 'intermediate':
-    default:
-      return 0;
-  }
-};
-
 const resolveTargetExercises = (
   blueprint: DayBlueprint,
   profile?: {
@@ -980,65 +966,261 @@ const resolveTargetExercises = (
 ): number => {
   const base = blueprint.targetExercises ?? 5;
   const offset =
-    getEatingModeOffset(profile?.eatingMode) + getExperienceOffset(profile?.experienceLevel);
-  return clampNumber(base + offset, 3, 8);
+    EATING_MODE_OFFSETS[profile?.eatingMode ?? 'maintenance'] +
+    EXPERIENCE_OFFSETS[profile?.experienceLevel ?? 'intermediate'];
+  return clampNumber(base + offset, TARGET_EXERCISES_BOUNDS.min, TARGET_EXERCISES_BOUNDS.max);
 };
 
-const selectFromBucket = (
-  bucket: ExerciseCatalogEntry[],
-  usedIds: Set<string>,
-  seed: number
-): ExerciseCatalogEntry | null => {
-  if (!bucket.length) return null;
-  for (let i = 0; i < bucket.length; i++) {
-    const candidate = bucket[(i + seed) % bucket.length];
-    if (!usedIds.has(candidate.id)) {
-      usedIds.add(candidate.id);
-      return candidate;
+type SessionSkeletonDay = {
+  date: string;
+  blueprint: DayBlueprint;
+  targetExercises: number;
+  slotPlan: SlotPlan;
+};
+
+type GenerationPreferences = {
+  daysPerWeek?: 3 | 4 | 5 | 6;
+  equipmentLevel?: 'bodyweight' | 'dumbbells' | 'full_gym';
+  primaryGoal?: 'build_muscle' | 'get_stronger' | 'lose_fat' | 'endurance' | 'general_fitness';
+};
+
+type SmartFillContext = {
+  blueprint: DayBlueprint;
+  slotPlan: SlotPlan;
+  scoringWeights: ScoringWeights;
+  usedInWeek: Set<string>;
+  previousDay: Set<string>;
+  daySeed: number;
+  preferences?: GenerationPreferences;
+};
+
+const buildWeekSkeleton = (
+  blueprints: DayBlueprint[],
+  startDate: Date,
+  totalDays: number,
+  profile?: {
+    eatingMode?: User['eatingMode'];
+    experienceLevel?: User['experienceLevel'];
+  },
+  targetExerciseOffset = 0,
+  daysPerWeek?: number,
+  preferences?: GenerationPreferences
+): SessionSkeletonDay[] => {
+  const skeleton: SessionSkeletonDay[] = [];
+  const shouldTrainOn = (date: Date) => {
+    if (!daysPerWeek || daysPerWeek >= 7) return true;
+    const day = date.getDay();
+    if (daysPerWeek === 6) return day !== 0;
+    if (daysPerWeek === 5) return day >= 1 && day <= 5;
+    if (daysPerWeek === 4) return day === 1 || day === 2 || day === 4 || day === 6;
+    return day === 1 || day === 3 || day === 5;
+  };
+  for (let dayOffset = 0; dayOffset < totalDays; dayOffset += 1) {
+    const workoutDate = new Date(startDate);
+    workoutDate.setDate(startDate.getDate() + dayOffset);
+    if (!shouldTrainOn(workoutDate)) {
+      continue;
     }
+    const date = formatLocalDateYMD(workoutDate);
+    const blueprint = blueprints[dayOffset % blueprints.length];
+    const targetExercises = clampNumber(
+      resolveTargetExercises(blueprint, profile) + targetExerciseOffset,
+      TARGET_EXERCISES_BOUNDS.min,
+      TARGET_EXERCISES_BOUNDS.max
+    );
+    const baseSlotPlan = resolveSlotPlan(targetExercises);
+    const slotPlan = { ...baseSlotPlan };
+    if (preferences?.primaryGoal === 'get_stronger') {
+      slotPlan.compound = Math.min(slotPlan.compound + 1, targetExercises - 1);
+      slotPlan.accessory = Math.max(1, targetExercises - slotPlan.compound);
+    }
+    if (preferences?.primaryGoal === 'endurance') {
+      slotPlan.compound = Math.max(1, slotPlan.compound - 1);
+      slotPlan.accessory = Math.max(1, targetExercises - slotPlan.compound);
+    }
+    skeleton.push({
+      date,
+      blueprint,
+      targetExercises,
+      slotPlan,
+    });
   }
-  return null;
+  return skeleton;
 };
 
-const pickExercisesForBlueprint = (
+const getExerciseMuscles = (exercise: ExerciseCatalogEntry): Set<string> =>
+  new Set(
+    [...exercise.primaryMuscles, ...exercise.secondaryMuscles]
+      .map((muscle) => normalizeMuscle(muscle))
+      .filter(Boolean)
+  );
+
+const countMuscleMatches = (
+  exercise: ExerciseCatalogEntry,
+  targetMuscles: string[] | undefined
+): number => {
+  if (!targetMuscles?.length) return 0;
+  const muscles = getExerciseMuscles(exercise);
+  return targetMuscles.reduce((count, muscle) => {
+    if (muscles.has(normalizeMuscle(muscle))) {
+      return count + 1;
+    }
+    return count;
+  }, 0);
+};
+
+const deterministicSeed = (value: string): number => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+};
+
+const buildCandidatePool = (
   blueprint: DayBlueprint,
   muscleIndex: MuscleIndex,
   catalog: ExerciseCatalogEntry[],
-  daySeed: number,
-  targetOverride?: number
+  equipmentLevel?: GenerationPreferences['equipmentLevel']
 ): ExerciseCatalogEntry[] => {
-  const target = targetOverride ?? blueprint.targetExercises ?? 5;
-  const selection: ExerciseCatalogEntry[] = [];
-  const usedIds = new Set<string>();
-  const catalogSorted = [...catalog].sort((a, b) => a.name.localeCompare(b.name));
-
-  const pickMuscles = (muscles?: string[]) => {
-    if (!muscles) return;
+  const allowsEquipment = (equipment?: string | null) => {
+    if (!equipmentLevel || equipmentLevel === 'full_gym') return true;
+    const value = (equipment || '').toLowerCase();
+    if (equipmentLevel === 'bodyweight') {
+      return !value || value.includes('bodyweight');
+    }
+    if (equipmentLevel === 'dumbbells') {
+      return !value || value.includes('bodyweight') || value.includes('dumbbell');
+    }
+    return true;
+  };
+  const pool: ExerciseCatalogEntry[] = [];
+  const seen = new Set<string>();
+  const addBucket = (muscles?: string[]) => {
+    if (!muscles?.length) return;
     muscles.forEach((muscle) => {
-      if (selection.length >= target) return;
-      const bucket = muscleIndex[normalizeMuscle(muscle)] || [];
-      const pick = selectFromBucket(bucket, usedIds, daySeed + selection.length);
-      if (pick) {
-        selection.push(pick);
-      }
+      const bucket = muscleIndex[normalizeMuscle(muscle)] ?? [];
+      bucket.forEach((exercise) => {
+        if (!allowsEquipment(exercise.equipment)) return;
+        if (seen.has(exercise.id)) return;
+        seen.add(exercise.id);
+        pool.push(exercise);
+      });
     });
   };
+  addBucket(blueprint.primaryMuscles);
+  addBucket(blueprint.accessoryMuscles);
+  addBucket(blueprint.secondaryFocus);
+  catalog.forEach((exercise) => {
+    if (!allowsEquipment(exercise.equipment)) return;
+    if (seen.has(exercise.id)) return;
+    seen.add(exercise.id);
+    pool.push(exercise);
+  });
+  return pool;
+};
 
-  pickMuscles(blueprint.primaryMuscles);
-  if (selection.length < target) {
-    pickMuscles(blueprint.accessoryMuscles);
+const scoreExercise = (
+  exercise: ExerciseCatalogEntry,
+  usedInSession: Set<string>,
+  movementPatterns: Set<string>,
+  context: SmartFillContext,
+  slotType: 'compound' | 'accessory'
+): number => {
+  if (usedInSession.has(exercise.id)) {
+    return Number.NEGATIVE_INFINITY;
   }
-  if (selection.length < target) {
-    pickMuscles(blueprint.secondaryFocus);
+  if (slotType === 'compound' && !isCompoundPattern(exercise.movementPattern)) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (slotType === 'accessory' && isCompoundPattern(exercise.movementPattern)) {
+    return -5;
   }
 
-  if (selection.length < target) {
-    for (let i = 0; i < catalogSorted.length && selection.length < target; i++) {
-      const candidate = catalogSorted[(i + daySeed) % catalogSorted.length];
-      if (!usedIds.has(candidate.id)) {
-        usedIds.add(candidate.id);
-        selection.push(candidate);
+  const primaryMatches = countMuscleMatches(exercise, context.blueprint.primaryMuscles);
+  const accessoryMatches = countMuscleMatches(exercise, context.blueprint.accessoryMuscles);
+  const movementKey = (exercise.movementPattern || '').toLowerCase();
+  const weights = context.scoringWeights;
+
+  let score = 0;
+  score += primaryMatches * weights.primaryMuscleMatch;
+  score += accessoryMatches * weights.accessoryMuscleMatch;
+  if (movementKey && !movementPatterns.has(movementKey)) {
+    score += weights.noMovementDuplication;
+  } else if (movementKey) {
+    score += weights.movementDuplicationPenalty;
+  }
+  score += context.usedInWeek.has(exercise.id)
+    ? weights.weekRepeatPenalty
+    : weights.weekNoveltyBonus;
+  if (context.previousDay.has(exercise.id)) {
+    score += weights.previousDayPenalty;
+  }
+  score +=
+    deterministicSeed(`${exercise.id}:${context.daySeed}`) *
+    weights.deterministicTiebreakScale;
+  return score;
+};
+
+const smartFillExercises = (
+  catalog: ExerciseCatalogEntry[],
+  muscleIndex: MuscleIndex,
+  context: SmartFillContext,
+  target: number
+): ExerciseCatalogEntry[] => {
+  if (target <= 0) return [];
+  const candidates = buildCandidatePool(
+    context.blueprint,
+    muscleIndex,
+    catalog,
+    context.preferences?.equipmentLevel
+  );
+  if (!candidates.length) return [];
+  const usedInSession = new Set<string>();
+  const movementPatterns = new Set<string>();
+  const selection: ExerciseCatalogEntry[] = [];
+
+  const pickBest = (slotType: 'compound' | 'accessory'): ExerciseCatalogEntry | null => {
+    let best: ExerciseCatalogEntry | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const candidate of candidates) {
+      const score = scoreExercise(candidate, usedInSession, movementPatterns, context, slotType);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
       }
+    }
+    return best;
+  };
+
+  const slotOrder: Array<'compound' | 'accessory'> = [
+    ...Array.from({ length: context.slotPlan.compound }, () => 'compound' as const),
+    ...Array.from({ length: context.slotPlan.accessory }, () => 'accessory' as const),
+  ];
+
+  for (let i = 0; i < slotOrder.length && selection.length < target; i += 1) {
+    const slotType = slotOrder[i];
+    let pick: ExerciseCatalogEntry | null = pickBest(slotType);
+    if (!pick) {
+      pick = pickBest('accessory');
+    }
+    if (!pick) break;
+    const selected = pick;
+    usedInSession.add(selected.id);
+    context.usedInWeek.add(selected.id);
+    if (selected.movementPattern) {
+      movementPatterns.add(selected.movementPattern.toLowerCase());
+    }
+    selection.push(selected);
+  }
+
+  if (selection.length < target) {
+    for (let i = 0; i < candidates.length && selection.length < target; i += 1) {
+      const candidate = candidates[(i + context.daySeed) % candidates.length];
+      if (usedInSession.has(candidate.id)) continue;
+      usedInSession.add(candidate.id);
+      context.usedInWeek.add(candidate.id);
+      selection.push(candidate);
     }
   }
 
@@ -1118,6 +1300,65 @@ const createWorkoutSessionInDB = async (
   }
 };
 
+type GenerationAdaptation = {
+  targetExerciseOffset: number;
+  scoringMode: AdaptationMode;
+  reasons: string[];
+};
+
+const analyzeRecentPhasePerformance = async (
+  userId: string,
+  planId: string,
+  timeZone: string
+): Promise<GenerationAdaptation> => {
+  const sessions = await fetchPhaseWorkoutSessions(userId, planId, 28, timeZone);
+  const todayKey = formatLocalDateYMD(new Date());
+  const completedSessions = sessions.filter((session) => {
+    if (session.date > todayKey) return false;
+    if (session.completed !== undefined) return !!session.completed;
+    if (!session.exercises.length) return false;
+    return session.exercises.every((exercise) => exercise.completed === true);
+  });
+
+  if (sessions.length < 4) {
+    return {
+      targetExerciseOffset: 0,
+      scoringMode: 'balanced',
+      reasons: ['insufficient_history'],
+    };
+  }
+
+  const totalExercises = sessions.reduce((sum, session) => sum + session.exercises.length, 0);
+  const completedExercises = sessions.reduce(
+    (sum, session) =>
+      sum + session.exercises.filter((exercise) => exercise.completed === true).length,
+    0
+  );
+  const sessionCompletionRate = completedSessions.length / sessions.length;
+  const exerciseCompletionRate =
+    totalExercises > 0 ? completedExercises / totalExercises : sessionCompletionRate;
+
+  if (sessionCompletionRate >= 0.75 && exerciseCompletionRate >= 0.85) {
+    return {
+      targetExerciseOffset: 1,
+      scoringMode: 'progressive',
+      reasons: ['high_completion_rate'],
+    };
+  }
+  if (sessionCompletionRate <= 0.55 || exerciseCompletionRate <= 0.65) {
+    return {
+      targetExerciseOffset: -1,
+      scoringMode: 'recovery',
+      reasons: ['low_completion_rate'],
+    };
+  }
+  return {
+    targetExerciseOffset: 0,
+    scoringMode: 'balanced',
+    reasons: ['stable_completion_rate'],
+  };
+};
+
 export const generateWeekWorkouts = async (
   userId: string,
   phaseId: string,
@@ -1127,7 +1368,9 @@ export const generateWeekWorkouts = async (
   profile?: {
     eatingMode?: User['eatingMode'];
     experienceLevel?: User['experienceLevel'];
-  }
+  },
+  adaptation?: GenerationAdaptation,
+  preferences?: GenerationPreferences
 ): Promise<void> => {
   try {
     console.log(`🏋️ Generating workouts for phase ${phaseId}, split: ${trainingSplit}`);
@@ -1156,34 +1399,63 @@ export const generateWeekWorkouts = async (
       title: string;
       splitDayId?: string | null;
     }> = [];
+    let resolvedAdaptation = adaptation;
+    if (!resolvedAdaptation) {
+      try {
+        resolvedAdaptation = await analyzeRecentPhasePerformance(
+          userId,
+          phaseId,
+          getAppTimeZone()
+        );
+      } catch (err) {
+        console.warn('Failed to analyze recent phase performance:', err);
+      }
+    }
+    if (!resolvedAdaptation) {
+      resolvedAdaptation = {
+        targetExerciseOffset: 0,
+        scoringMode: 'balanced',
+        reasons: ['default'],
+      };
+    }
+    console.log('🧭 Workout generation adaptation', resolvedAdaptation);
+    const scoringWeights = resolveScoringWeights(resolvedAdaptation.scoringMode);
+    const skeleton = buildWeekSkeleton(
+      blueprints,
+      startDate,
+      totalDays,
+      profile,
+      resolvedAdaptation.targetExerciseOffset,
+      preferences?.daysPerWeek,
+      preferences
+    );
+    const usedInWeek = new Set<string>();
+    let previousDaySelection = new Set<string>();
 
-    for (let dayOffset = 0; dayOffset < totalDays; dayOffset++) {
-      const workoutDate = new Date(startDate);
-      workoutDate.setDate(startDate.getDate() + dayOffset);
-      const dateStr = formatLocalDateYMD(workoutDate);
-
-      const blueprint = blueprints[dayOffset % blueprints.length];
-      const targetExercises = resolveTargetExercises(blueprint, profile);
-      const exercises = pickExercisesForBlueprint(
-        blueprint,
-        muscleIndex,
-        exerciseCatalog,
-        dayOffset,
-        targetExercises
-      );
+    skeleton.forEach((day, dayOffset) => {
+      const exercises = smartFillExercises(exerciseCatalog, muscleIndex, {
+        blueprint: day.blueprint,
+        slotPlan: day.slotPlan,
+        scoringWeights,
+        usedInWeek,
+        previousDay: previousDaySelection,
+        daySeed: dayOffset,
+        preferences,
+      }, day.targetExercises);
 
       if (!exercises.length) {
-        console.warn(`⚠️ No exercises found for blueprint ${blueprint.title}`);
-        continue;
+        console.warn(`⚠️ No exercises found for blueprint ${day.blueprint.title}`);
+        return;
       }
 
       sessionsToCreate.push({
-        date: dateStr,
+        date: day.date,
         exercises,
-        title: blueprint.title,
-        splitDayId: blueprint.splitDayId ?? null,
+        title: day.blueprint.title,
+        splitDayId: day.blueprint.splitDayId ?? null,
       });
-    }
+      previousDaySelection = new Set(exercises.map((exercise) => exercise.id));
+    });
 
     if (sessionsToCreate.length === 0) {
       console.warn('⚠️ No sessions to create');
@@ -1231,4 +1503,57 @@ export const hasExistingWorkouts = async (
   }
 
   return (data?.length ?? 0) > 0;
+};
+
+export const hasWorkoutsInRange = async (
+  userId: string,
+  phaseId: string,
+  startDate: Date,
+  endDate: Date
+): Promise<boolean> => {
+  const startKey = formatLocalDateYMD(startDate);
+  const endKey = formatLocalDateYMD(endDate);
+
+  const { data, error } = await supabase
+    .from('fitarc_workout_sessions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('plan_id', phaseId)
+    .gte('performed_at', startKey)
+    .lt('performed_at', endKey)
+    .limit(1);
+
+  if (error) {
+    console.error('Error checking workouts in range:', error);
+    return false;
+  }
+
+  return (data?.length ?? 0) > 0;
+};
+
+export const ensureRollingWeekWorkouts = async (
+  userId: string,
+  phaseId: string,
+  trainingSplit: User['trainingSplit'],
+  referenceDate: Date = new Date(),
+  profile?: {
+    eatingMode?: User['eatingMode'];
+    experienceLevel?: User['experienceLevel'];
+  }
+): Promise<void> => {
+  const startDate = new Date(referenceDate);
+  const endDate = new Date(referenceDate);
+  endDate.setDate(endDate.getDate() + 7);
+
+  const hasWorkouts = await hasWorkoutsInRange(userId, phaseId, startDate, endDate);
+  if (hasWorkouts) return;
+
+  let adaptation: GenerationAdaptation | undefined;
+  try {
+    adaptation = await analyzeRecentPhasePerformance(userId, phaseId, getAppTimeZone());
+  } catch (error) {
+    console.warn('Failed to adapt generation from recent performance:', error);
+  }
+
+  await generateWeekWorkouts(userId, phaseId, trainingSplit, startDate, 7, profile, adaptation);
 };

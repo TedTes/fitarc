@@ -8,6 +8,20 @@ export type TrainingSplit =
   | 'custom';
 
 export type EatingMode = 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
+export type PrimaryGoal =
+  | 'build_muscle'
+  | 'get_stronger'
+  | 'lose_fat'
+  | 'endurance'
+  | 'general_fitness';
+export type EquipmentLevel = 'bodyweight' | 'dumbbells' | 'full_gym';
+
+export type PlanPreferences = {
+  primaryGoal?: PrimaryGoal;
+  daysPerWeek?: 3 | 4 | 5 | 6;
+  equipmentLevel?: EquipmentLevel;
+  injuries?: string[];
+};
 
 export type MuscleGroup = string;
 
@@ -89,6 +103,7 @@ export type User = {
   avatarPath?: string;
   trackingPreferences?: TrackingPreferences;
   mealPreferences?: MealPreferences;
+  planPreferences?: PlanPreferences;
   createdAt: string;
 };
 
