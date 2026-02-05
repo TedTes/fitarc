@@ -133,7 +133,11 @@ const getGreetingMessage = () => {
   return 'Good evening';
 };
 
-const getCalendarDateStyles = (isComplete: boolean, isToday: boolean) => {
+const getCalendarDateStyles = (
+  isComplete: boolean,
+  isToday: boolean,
+  hasPlannedWorkout: boolean
+) => {
   let backgroundColor: string;
   let borderColor: string = 'transparent';
   let shadowOpacity: number = 0;
@@ -144,6 +148,8 @@ const getCalendarDateStyles = (isComplete: boolean, isToday: boolean) => {
   } else if (isToday) {
     backgroundColor = 'rgba(108, 99, 255, 0.3)';
     borderColor = COLORS.accent;
+  } else if (hasPlannedWorkout) {
+    backgroundColor = 'rgba(255,255,255,0.2)';
   } else {
     backgroundColor = COLORS.overlay;
   }
@@ -291,6 +297,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [exercisePickerNonce, setExercisePickerNonce] = useState(0);
   const [orderUpdateTrigger, setOrderUpdateTrigger] = useState(0);
   const [calendarExpanded, setCalendarExpanded] = useState(false);
+  const [calendarCardWidth, setCalendarCardWidth] = useState(
+    Dimensions.get('window').width - 40
+  );
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orderUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -515,15 +524,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const calendarMarkedDates = useMemo(() => {
     if (!calendarRange) return {};
     const marks: Record<string, { customStyles: { container: object; text: object } }> = {};
+    const sessionDates = new Set(resolvedSessions.map((session) => session.date).filter(Boolean));
     phaseDates.forEach((dateKey) => {
       const isComplete = (completedSessionsByDate.get(dateKey) || 0) > 0;
       const isToday = dateKey === todayStr;
+      const hasPlannedWorkout = sessionDates.has(dateKey);
       marks[dateKey] = {
-        customStyles: getCalendarDateStyles(isComplete, isToday),
+        customStyles: getCalendarDateStyles(isComplete, isToday, hasPlannedWorkout),
       };
     });
     return marks;
-  }, [calendarRange, completedSessionsByDate, phaseDates, todayStr]);
+  }, [calendarRange, completedSessionsByDate, phaseDates, resolvedSessions, todayStr]);
 
   // Week view data
   const weekDates = useMemo(() => {
@@ -550,24 +561,36 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const shouldCreatePlan = !hasActivePlan && !!onStartPhase;
   const missingPlanInputs = useMemo(() => getMissingPlanInputs(user), [user]);
   const planContextText = useMemo(() => {
-    const goal = user?.planPreferences?.primaryGoal;
+    const goalRaw = user?.planPreferences?.primaryGoal ?? resolvedPhase?.goalType;
     const days = user?.planPreferences?.daysPerWeek;
-    if (!goal && !days) return null;
+    if (!goalRaw && !days) return null;
+    const goal = goalRaw ? String(goalRaw).toLowerCase() : null;
     const goalLabel =
-      goal === 'build_muscle'
-        ? 'Build Muscle'
-        : goal === 'get_stronger'
-          ? 'Get Stronger'
-          : goal === 'lose_fat'
-            ? 'Lose Fat'
+      goal === 'build_muscle' || goal === 'hypertrophy' || goal === 'muscle'
+        ? 'Hypertrophy'
+        : goal === 'get_stronger' || goal === 'strength'
+          ? 'Strength'
+          : goal === 'lose_fat' || goal === 'fat_loss' || goal === 'cut'
+            ? 'Fat Loss'
             : goal === 'endurance'
               ? 'Endurance'
-              : goal === 'general_fitness'
-                ? 'General Fitness'
+              : goal === 'general_fitness' || goal === 'general' || goal === 'maintenance'
+                ? 'Maintenance'
                 : null;
     if (goalLabel && days) return `${goalLabel} • ${days} days/week`;
     return goalLabel ?? (days ? `${days} days/week` : null);
-  }, [user?.planPreferences?.daysPerWeek, user?.planPreferences?.primaryGoal]);
+  }, [resolvedPhase?.goalType, user?.planPreferences?.daysPerWeek, user?.planPreferences?.primaryGoal]);
+
+  const sessionMetaLine = useMemo(() => {
+    if (!displayExercises.length && !planContextText) return null;
+    const estimatedMinutes = displayExercises.length
+      ? Math.max(20, displayExercises.length * 8)
+      : null;
+    if (!planContextText) {
+      return estimatedMinutes ? `~${estimatedMinutes} min` : null;
+    }
+    return estimatedMinutes ? `${planContextText} · ~${estimatedMinutes} min` : planContextText;
+  }, [displayExercises.length, planContextText]);
 
   // FAB Action configuration
   const getFabActionConfig = useCallback(() => {
@@ -650,15 +673,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   // Calendar expand/collapse animation
   useEffect(() => {
-    const animation = Animated.spring(calendarExpandAnim, {
+    const animation = Animated.timing(calendarExpandAnim, {
       toValue: calendarExpanded ? 1 : 0,
-      tension: 80,
-      friction: 10,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     });
-    
+
     animation.start(({ finished }) => {
-      // Only unmount after animation completes
       if (finished && !calendarExpanded) {
         setShouldMountCalendar(false);
       }
@@ -838,6 +860,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     };
   }, [flushPendingToggles]);
 
+  const weekDayWidth = Math.max(44, Math.floor((calendarCardWidth - 32) / 7));
+
   const renderWeekView = () => (
     <View style={styles.weekViewContainer}>
       <ScrollView 
@@ -854,6 +878,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               key={day.dateKey} 
               style={[
                 styles.weekDay,
+                { width: weekDayWidth },
                 isToday && styles.weekDayToday,
               ]}
             >
@@ -917,12 +942,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </Text>
           </View>
         ) : null}
-        {hasActivePlan && planContextText ? (
-          <View style={styles.planContextCard}>
-            <Text style={styles.planContextTitle}>Current Plan Focus</Text>
-            <Text style={styles.planContextText}>{planContextText}</Text>
-          </View>
-        ) : null}
+        {hasActivePlan && planContextText ? null : null}
 
         {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
           <View style={styles.emptyCard}>
@@ -1087,9 +1107,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     );
   };
 
+  const handleContentScrollBegin = useCallback(() => {
+    if (!calendarExpanded) return;
+    runLayoutAnimation();
+    setCalendarExpanded(false);
+  }, [calendarExpanded]);
+
+  const expandedCalendarHeight = Math.min(
+    320,
+    Math.max(190, Math.round(calendarCardWidth * 0.5) - 10)
+  );
   const calendarHeight = calendarExpandAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 220],
+    outputRange: [0, expandedCalendarHeight],
   });
 
   return (
@@ -1115,6 +1145,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
             <Text style={styles.userName}>{displayName}</Text>
+            {sessionMetaLine ? (
+              <Text style={styles.sessionMetaLine}>{sessionMetaLine}</Text>
+            ) : null}
           </View>
           {onProfilePress && (
             <TouchableOpacity style={styles.avatarButton} onPress={onProfilePress}>
@@ -1136,8 +1169,31 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             },
           ]}
         >
-          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.calendarCard}>
+          <LinearGradient
+            colors={CARD_GRADIENT_DEFAULT}
+            style={styles.calendarCard}
+            onLayout={(event) => {
+              const nextWidth = event.nativeEvent.layout.width;
+              if (nextWidth && nextWidth !== calendarCardWidth) {
+                setCalendarCardWidth(nextWidth);
+              }
+            }}
+          >
             {renderWeekView()}
+            <View style={styles.calendarLegendRow}>
+              <View style={styles.calendarLegendItem}>
+                <View style={[styles.calendarLegendDot, styles.calendarLegendDotComplete]} />
+                <Text style={styles.calendarLegendText}>Completed</Text>
+              </View>
+              <View style={styles.calendarLegendItem}>
+                <View style={[styles.calendarLegendDot, styles.calendarLegendDotToday]} />
+                <Text style={styles.calendarLegendText}>Today</Text>
+              </View>
+              <View style={styles.calendarLegendItem}>
+                <View style={[styles.calendarLegendDot, styles.calendarLegendDotPlanned]} />
+                <Text style={styles.calendarLegendText}>Planned</Text>
+              </View>
+            </View>
             
             <Animated.View
               style={[
@@ -1145,6 +1201,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 calendarExpanded && styles.fullCalendarContainerExpanded,
                 { height: calendarHeight, opacity: calendarExpandAnim },
               ]}
+              pointerEvents={calendarExpanded ? 'auto' : 'none'}
             >
               {shouldMountCalendar && calendarRange && (
                 <Calendar
@@ -1157,7 +1214,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   hideExtraDays={false}
                   showSixWeeks
                   theme={getCalendarTheme()}
-                  style={styles.fullCalendar}
+                  style={[styles.fullCalendar, { height: expandedCalendarHeight }]}
                 />
               )}
             </Animated.View>
@@ -1169,6 +1226,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           contentContainerStyle={styles.contentScrollContent}
           showsVerticalScrollIndicator={false}
           bounces={true}
+          onScrollBeginDrag={handleContentScrollBegin}
         >
           {renderWorkoutsSection()}
         </ScrollView>
@@ -1206,6 +1264,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  sessionMetaLine: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#8B93B0',
+    fontWeight: '500',
+  },
   avatarButton: {
     width: 70,
     height: 70,
@@ -1238,17 +1302,49 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(108, 99, 255, 0.15)',
     overflow: 'hidden',
   },
+  calendarLegendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  calendarLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  calendarLegendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  calendarLegendDotComplete: {
+    backgroundColor: COLORS.success,
+  },
+  calendarLegendDotToday: {
+    backgroundColor: 'rgba(108, 99, 255, 0.7)',
+  },
+  calendarLegendDotPlanned: {
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  calendarLegendText: {
+    fontSize: 10,
+    color: '#8B93B0',
+    fontWeight: '600',
+  },
   weekViewContainer: {
     position: 'relative',
   },
   weekScrollContent: {
-    paddingVertical: 8,
+    paddingVertical: 4,
     gap: 8,
+    paddingHorizontal: 0,
   },
   weekDay: {
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 4,
     minWidth: 60,
   },
   weekDayToday: {
@@ -1267,9 +1363,9 @@ const styles = StyleSheet.create({
     color: '#6C63FF',
   },
   weekDayNumber: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
@@ -1287,7 +1383,7 @@ const styles = StyleSheet.create({
     borderColor: '#6C63FF',
   },
   weekDayNumberText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
   },
@@ -1329,7 +1425,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   fullCalendar: {
-    marginTop: 8,
+    marginTop: 0,
   },
   contentScrollView: {
     flex: 1,
