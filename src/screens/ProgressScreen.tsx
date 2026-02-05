@@ -9,7 +9,6 @@ import {
   Pressable,
   Animated,
   Easing,
-  LayoutAnimation,
   Platform,
   UIManager,
   ActivityIndicator,
@@ -42,6 +41,7 @@ import {
   MuscleGroupOption,
   ExerciseOption,
 } from '../services/progressService';
+import { runLayoutAnimation } from '../utils/layoutAnimation';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -328,7 +328,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   }, []);
 
   const handleOpenTrackingModal = useCallback(async () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    runLayoutAnimation();
     setTrackingDraft(createTrackingDraft(user.trackingPreferences));
     setTrackingCategory('muscles');
     setTrackingTab('selected');
@@ -370,7 +370,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       const key = toTrackingKey(label);
       if (!key) return;
 
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      runLayoutAnimation();
       setTrackingDraft((prev) => {
         const next = createTrackingDraft(prev);
         const bucket = next[trackingCategory] ?? {};
@@ -384,7 +384,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const handleRemoveTrackingItem = useCallback(
     (key: string) => {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      runLayoutAnimation();
       setTrackingDraft((prev) => {
         const next = createTrackingDraft(prev);
         const bucket = { ...(next[trackingCategory] ?? {}) };
@@ -663,23 +663,23 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const planBaseline = Math.max(maxWeeklyAvg * planWeeks, maxWindowSets, 1);
 
   const toggleVolumeExpand = () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    runLayoutAnimation();
     setShowAllVolume((prev) => !prev);
   };
 
   const toggleStrengthExpand = () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    runLayoutAnimation();
     setShowAllStrength((prev) => !prev);
   };
 
   const toggleMovementExpand = () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    runLayoutAnimation();
     setShowAllMovement((prev) => !prev);
   };
 
   const collapseAllExpanded = useCallback(() => {
     if (!showAllVolume && !showAllStrength && !showAllMovement) return;
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    runLayoutAnimation();
     setShowAllVolume(false);
     setShowAllStrength(false);
     setShowAllMovement(false);
@@ -1093,7 +1093,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                           key={category.id}
                           style={[styles.dropdownItem, isActive && styles.dropdownItemActive]}
                           onPress={() => {
-                            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                            runLayoutAnimation();
                             setTrackingCategory(category.id);
                             setTrackingTab('selected');
                             setShowCategoryMenu(false);

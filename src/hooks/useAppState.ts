@@ -25,6 +25,7 @@ import {
   addExerciseToSession,
   updateSessionExercises,
   deleteWorkoutSessionExercise,
+  ensureRollingWeekWorkouts,
 } from '../services/workoutService';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
@@ -174,6 +175,23 @@ export const useAppState = () => {
   const loadWorkoutSessionsFromSupabase = useCallback(
     async (userId: string, planId?: string) => {
       try {
+        const current = stateRef.current;
+        if (planId && current?.currentPhase && current?.user) {
+          try {
+            await ensureRollingWeekWorkouts(
+              userId,
+              planId,
+              current.user.trainingSplit,
+              new Date(),
+              {
+                eatingMode: current.user.eatingMode,
+                experienceLevel: current.user.experienceLevel,
+              }
+            );
+          } catch (err) {
+            console.warn('Failed to ensure rolling workouts:', err);
+          }
+        }
         const remoteSessions = await fetchWorkoutSessionEntries(
           userId,
           planId,

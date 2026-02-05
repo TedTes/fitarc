@@ -1,4 +1,8 @@
 export { ProfileSetupScreen } from './ProfileSetupScreen';
+export { WelcomeScreen } from './WelcomeScreen';
+export { MainFocusScreen } from './MainFocusScreen';
+export { QuickPlanSetupScreen } from './QuickPlanSetupScreen';
+export { FirstWorkoutPreviewScreen } from './FirstWorkoutPreviewScreen';
 export { CurrentPhysiqueSelectionScreen } from './CurrentPhysiqueSelectionScreen';
 export { TargetPhysiqueSelectionScreen } from './TargetPhysiqueSelectionScreen';
 export { PhotoCaptureScreen } from './PhotoCaptureScreen';

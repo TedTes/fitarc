@@ -6,8 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
-  Modal,
-  Pressable,
   Dimensions,
   Animated,
   Easing,
@@ -17,6 +15,7 @@ import {
   User,
   PhasePlan,
   WorkoutSessionEntry,
+  WorkoutSessionExercise,
   MuscleGroup,
 } from '../types/domain';
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
@@ -26,8 +25,10 @@ import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import { Calendar } from 'react-native-calendars';
 import { getBodyPartLabel } from '../utils';
 import { addDays, formatLocalDateYMD, parseYMDToDate } from '../utils/date';
-
-
+import { type AdaptationMode } from '../services/planningRules';
+import { PLAN_INPUT_LABELS, getMissingPlanInputs } from '../utils/planReadiness';
+import { runLayoutAnimation } from '../utils/layoutAnimation';
+import { PlansScreen } from './PlansScreen';
 
 // Constants
 const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)'] as const;
@@ -170,6 +171,77 @@ const getCalendarDateStyles = (isComplete: boolean, isToday: boolean) => {
   };
 };
 
+type AdaptationInsight = {
+  mode: AdaptationMode;
+  sessionRate: number;
+  exerciseRate: number;
+  trackedSessions: number;
+};
+
+const deriveAdaptationInsight = (
+  sessions: WorkoutSessionEntry[],
+  todayKey: string
+): AdaptationInsight | null => {
+  const recent = sessions.filter((session) => {
+    if (!session.date) return false;
+    if (session.date >= todayKey) return false;
+    const now = parseYMDToDate(todayKey).getTime();
+    const sessionTs = parseYMDToDate(session.date).getTime();
+    return now - sessionTs <= 27 * 86400000;
+  });
+  if (recent.length < 6) return null;
+
+  const completedSessions = recent.filter((session) => {
+    if (session.completed !== undefined) return !!session.completed;
+    if (!session.exercises.length) return false;
+    return session.exercises.every((exercise) => exercise.completed === true);
+  });
+  const trackedSessions = recent.filter((session) => {
+    if (session.completed) return true;
+    return session.exercises.some((exercise) => exercise.completed === true);
+  }).length;
+  if (trackedSessions < 3) return null;
+
+  const totalExercises = recent.reduce((sum, session) => sum + session.exercises.length, 0);
+  const completedExercises = recent.reduce(
+    (sum, session) =>
+      sum + session.exercises.filter((exercise) => exercise.completed === true).length,
+    0
+  );
+  const sessionRate = completedSessions.length / recent.length;
+  const exerciseRate = totalExercises > 0 ? completedExercises / totalExercises : sessionRate;
+
+  if (sessionRate >= 0.75 && exerciseRate >= 0.85) {
+    return { mode: 'progressive', sessionRate, exerciseRate, trackedSessions };
+  }
+  if (sessionRate <= 0.45 && exerciseRate <= 0.6) {
+    return { mode: 'recovery', sessionRate, exerciseRate, trackedSessions };
+  }
+  return { mode: 'balanced', sessionRate, exerciseRate, trackedSessions };
+};
+
+const getAdaptationCopy = (insight: AdaptationInsight) => {
+  const completionText = `${Math.round(insight.sessionRate * 100)}% sessions, ${Math.round(
+    insight.exerciseRate * 100
+  )}% exercises completed`;
+  if (insight.mode === 'progressive') {
+    return {
+      title: 'Progressive Week',
+      text: `${completionText}. Great adherence detected; volume may increase slightly.`,
+    };
+  }
+  if (insight.mode === 'recovery') {
+    return {
+      title: 'Recovery Week',
+      text: `${completionText}. Lower adherence detected; volume may scale down to improve consistency.`,
+    };
+  }
+  return {
+    title: 'Balanced Week',
+    text: `${completionText}. Steady adherence detected; volume is kept stable.`,
+  };
+};
+
 type DashboardScreenProps = {
   user: User;
   phase: PhasePlan | null;
@@ -178,7 +250,13 @@ type DashboardScreenProps = {
   onStartPhase?: () => void;
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
   onCreateSession?: (date: string) => void;
+  onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
+  onDeleteSession?: (date: string) => void;
+  onAddExercise?: (sessionId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
+  onDeleteExercise?: (sessionId: string, sessionExerciseId: string) => Promise<void>;
 };
+
+const EMPTY_EXERCISES: WorkoutSessionEntry['exercises'] = [];
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   user,
@@ -188,6 +266,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onStartPhase,
   onToggleWorkoutExercise,
   onCreateSession: _onCreateSession,
+  onSaveCustomSession,
+  onDeleteSession,
+  onAddExercise,
+  onDeleteExercise,
 }) => {
   const { setFabAction } = useFabAction();
   const { headerStyle, contentStyle } = useScreenAnimation();
@@ -200,8 +282,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [localCompletionOverrides, setLocalCompletionOverrides] = useState<Record<string, boolean>>(
     {}
   );
+  const [workoutSetProgress, setWorkoutSetProgress] = useState<
+    Record<string, { completedSets: number; rpe: number | null }>
+  >({});
+  const [expandedExerciseKey, setExpandedExerciseKey] = useState<string | null>(null);
+  const [activeRestKey, setActiveRestKey] = useState<string | null>(null);
+  const [restSecondsLeft, setRestSecondsLeft] = useState(0);
+  const [exercisePickerNonce, setExercisePickerNonce] = useState(0);
   const [orderUpdateTrigger, setOrderUpdateTrigger] = useState(0);
-  const [workoutLogVisible, setWorkoutLogVisible] = useState(false);
+  const [calendarExpanded, setCalendarExpanded] = useState(false);
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orderUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -212,12 +301,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const exerciseCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
   const createButtonPulse = useRef(new Animated.Value(1)).current;
+  const calendarExpandAnim = useRef(new Animated.Value(0)).current;
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
   
+  // Track if calendar should be mounted (for smooth animation)
+  const [shouldMountCalendar, setShouldMountCalendar] = useState(false);
+  
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const hasActivePlan = resolvedPhase?.status === 'active';
-  const activePhaseId = hasActivePlan ? resolvedPhase?.id ?? null : null;
   const resolvedSessions = useMemo(() => {
     const fallbackSessions = phaseSessions.length
       ? phaseSessions
@@ -231,7 +323,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const todayStr = formatLocalDateYMD(today);
   const todaySession = resolvedSessions.find((session) => session.date === todayStr) || null;
 
-  const displayExercises = todaySession?.exercises ?? [];
+  const displayExercises = todaySession?.exercises ?? EMPTY_EXERCISES;
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (exercise.id) return exercise.id;
     if (exercise.exerciseId && exercise.displayOrder !== undefined && exercise.displayOrder !== null) {
@@ -262,6 +354,20 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
   }, [todaySession?.id]);
 
+  useEffect(() => {
+    if (!activeRestKey || restSecondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      setRestSecondsLeft((prev) => {
+        if (prev <= 1) {
+          setActiveRestKey(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [activeRestKey, restSecondsLeft]);
+
   const isExerciseMarked = useCallback(
     (exercise: WorkoutSessionEntry['exercises'][number]) => {
       const key = getExerciseKey(exercise);
@@ -270,6 +376,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     },
     [localCompletionOverrides]
   );
+
+  useEffect(() => {
+    const next: Record<string, { completedSets: number; rpe: number | null }> = {};
+    displayExercises.forEach((exercise) => {
+      const key = getExerciseKey(exercise);
+      const targetSets = Math.max(1, exercise.sets ?? 3);
+      next[key] = {
+        completedSets: isExerciseMarked(exercise) ? targetSets : 0,
+        rpe: null,
+      };
+    });
+    setWorkoutSetProgress(next);
+    setExpandedExerciseKey(null);
+    setActiveRestKey(null);
+    setRestSecondsLeft(0);
+  }, [displayExercises, isExerciseMarked]);
 
   useEffect(() => {
     const nextKeys = displayExercises.map((exercise) => getExerciseKey(exercise));
@@ -403,9 +525,49 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return marks;
   }, [calendarRange, completedSessionsByDate, phaseDates, todayStr]);
 
+  // Week view data
+  const weekDates = useMemo(() => {
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay());
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = addDays(startOfWeek, i);
+      return {
+        date,
+        dateKey: formatLocalDateYMD(date),
+        dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()],
+        dayNumber: date.getDate(),
+      };
+    });
+  }, [today]);
+
   const canLogWorkouts = hasActivePlan && !!onToggleWorkoutExercise;
+  const adaptationInsight = useMemo(
+    () => deriveAdaptationInsight(resolvedSessions, todayStr),
+    [resolvedSessions, todayStr]
+  );
+  const adaptationCopy = adaptationInsight ? getAdaptationCopy(adaptationInsight) : null;
 
   const shouldCreatePlan = !hasActivePlan && !!onStartPhase;
+  const missingPlanInputs = useMemo(() => getMissingPlanInputs(user), [user]);
+  const planContextText = useMemo(() => {
+    const goal = user?.planPreferences?.primaryGoal;
+    const days = user?.planPreferences?.daysPerWeek;
+    if (!goal && !days) return null;
+    const goalLabel =
+      goal === 'build_muscle'
+        ? 'Build Muscle'
+        : goal === 'get_stronger'
+          ? 'Get Stronger'
+          : goal === 'lose_fat'
+            ? 'Lose Fat'
+            : goal === 'endurance'
+              ? 'Endurance'
+              : goal === 'general_fitness'
+                ? 'General Fitness'
+                : null;
+    if (goalLabel && days) return `${goalLabel} • ${days} days/week`;
+    return goalLabel ?? (days ? `${days} days/week` : null);
+  }, [user?.planPreferences?.daysPerWeek, user?.planPreferences?.primaryGoal]);
 
   // FAB Action configuration
   const getFabActionConfig = useCallback(() => {
@@ -428,7 +590,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         ...baseConfig,
         label: 'Workout',
         icon: '+',
-        onPress: () => setWorkoutLogVisible(true),
+        onPress: () => setExercisePickerNonce((prev) => prev + 1),
       };
     }
     return null;
@@ -436,6 +598,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     shouldCreatePlan,
     onStartPhase,
     hasActivePlan,
+    sortedWorkoutCards,
   ]);
 
   useEffect(() => {
@@ -484,6 +647,35 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       }),
     ]).start();
   }, []);
+
+  // Calendar expand/collapse animation
+  useEffect(() => {
+    const animation = Animated.spring(calendarExpandAnim, {
+      toValue: calendarExpanded ? 1 : 0,
+      tension: 80,
+      friction: 10,
+      useNativeDriver: false,
+    });
+    
+    animation.start(({ finished }) => {
+      // Only unmount after animation completes
+      if (finished && !calendarExpanded) {
+        setShouldMountCalendar(false);
+      }
+    });
+
+    return () => {
+      animation.stop();
+    };
+  }, [calendarExpanded, calendarExpandAnim]);
+
+  useEffect(() => {
+    if (calendarExpanded) {
+      // Mount immediately when expanding
+      setShouldMountCalendar(true);
+    }
+    // Note: unmounting is handled in animation completion callback above
+  }, [calendarExpanded]);
 
   // Create button pulse animation
   useEffect(() => {
@@ -598,6 +790,44 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     handleToggleExercise(exercise);
   };
 
+  const updateExerciseSets = (exerciseKey: string, targetSets: number, delta: 1 | -1) => {
+    setWorkoutSetProgress((prev) => {
+      const current = prev[exerciseKey] ?? { completedSets: 0, rpe: null };
+      const completedSets = Math.max(0, Math.min(targetSets, current.completedSets + delta));
+      return {
+        ...prev,
+        [exerciseKey]: { ...current, completedSets },
+      };
+    });
+  };
+
+  const updateExerciseRpe = (exerciseKey: string, delta: 0.5 | -0.5) => {
+    setWorkoutSetProgress((prev) => {
+      const current = prev[exerciseKey] ?? { completedSets: 0, rpe: null };
+      const base = current.rpe ?? 7;
+      const next = Math.max(1, Math.min(10, base + delta));
+      return {
+        ...prev,
+        [exerciseKey]: { ...current, rpe: next },
+      };
+    });
+  };
+
+  const startRestTimerFor = (exerciseKey: string, seconds = 90) => {
+    setActiveRestKey(exerciseKey);
+    setRestSecondsLeft(seconds);
+  };
+
+  const formatRest = (seconds: number) => {
+    const mm = Math.floor(seconds / 60)
+      .toString()
+      .padStart(2, '0');
+    const ss = Math.floor(seconds % 60)
+      .toString()
+      .padStart(2, '0');
+    return `${mm}:${ss}`;
+  };
+
   useEffect(() => {
     return () => {
       void flushPendingToggles();
@@ -608,10 +838,92 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     };
   }, [flushPendingToggles]);
 
+  const renderWeekView = () => (
+    <View style={styles.weekViewContainer}>
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.weekScrollContent}
+      >
+        {weekDates.map((day) => {
+          const isComplete = (completedSessionsByDate.get(day.dateKey) || 0) > 0;
+          const isToday = day.dateKey === todayStr;
+          
+          return (
+            <TouchableOpacity 
+              key={day.dateKey} 
+              style={[
+                styles.weekDay,
+                isToday && styles.weekDayToday,
+              ]}
+            >
+              <Text style={[styles.weekDayName, isToday && styles.weekDayNameToday]}>
+                {day.dayName}
+              </Text>
+              <View style={[
+                styles.weekDayNumber,
+                isComplete && styles.weekDayNumberComplete,
+                isToday && !isComplete && styles.weekDayNumberToday,
+              ]}>
+                <Text style={[
+                  styles.weekDayNumberText,
+                  isComplete && styles.weekDayNumberTextComplete,
+                  isToday && !isComplete && styles.weekDayNumberTextToday,
+                ]}>
+                  {day.dayNumber}
+                </Text>
+              </View>
+              {isComplete && (
+                <View style={styles.weekDayIndicator} />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+      
+      <TouchableOpacity 
+        style={styles.expandCalendarButton}
+        onPress={() => {
+          runLayoutAnimation();
+          setCalendarExpanded((prev) => !prev);
+        }}
+      >
+        <Text style={styles.expandCalendarIcon}>
+          {calendarExpanded ? '▲' : '▼'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+
 
   const renderWorkoutsSection = () => {
     return (
       <View style={styles.section}>
+        {hasActivePlan && adaptationCopy ? (
+          <View style={styles.adaptationCard}>
+            <Text style={styles.adaptationTitle}>{adaptationCopy.title}</Text>
+            <Text style={styles.adaptationText}>{adaptationCopy.text}</Text>
+          </View>
+        ) : null}
+        {!hasActivePlan && missingPlanInputs.length > 0 ? (
+          <View style={styles.checklistCard}>
+            <Text style={styles.checklistTitle}>Missing inputs for plan generation</Text>
+            <Text style={styles.checklistSubtitle}>
+              Complete these profile fields to generate a personalized plan:
+            </Text>
+            <Text style={styles.checklistItems}>
+              {missingPlanInputs.map((key) => `• ${PLAN_INPUT_LABELS[key]}`).join('\n')}
+            </Text>
+          </View>
+        ) : null}
+        {hasActivePlan && planContextText ? (
+          <View style={styles.planContextCard}>
+            <Text style={styles.planContextTitle}>Current Plan Focus</Text>
+            <Text style={styles.planContextText}>{planContextText}</Text>
+          </View>
+        ) : null}
+
         {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>🎯</Text>
@@ -631,6 +943,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </Animated.View>
             )}
           </View>
+        ) : hasActivePlan ? (
+          <PlansScreen
+            user={user}
+            phase={phase}
+            workoutSessions={workoutSessions}
+            onSaveCustomSession={onSaveCustomSession}
+            onDeleteSession={onDeleteSession}
+            onAddExercise={onAddExercise}
+            onDeleteExercise={onDeleteExercise}
+            embedded
+            openExercisePickerSignal={exercisePickerNonce}
+          />
         ) : !hasSyncedWorkout ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>📭</Text>
@@ -644,6 +968,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             {sortedWorkoutCards.map((exercise) => {
               const isMarked = isExerciseMarked(exercise);
               const cardKey = `${todayStr}-${getExerciseKey(exercise)}`;
+              const exerciseKey = getExerciseKey(exercise);
+              const isExpanded = expandedExerciseKey === exerciseKey;
+              const targetSets = Math.max(1, exercise.sets ?? 3);
               const scaleAnim = getExerciseCardAnimation(cardKey);
               
               return (
@@ -655,8 +982,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 >
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    disabled={!canLogWorkouts}
-                    onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise)}
+                    onPress={() => setExpandedExerciseKey((prev) => (prev === exerciseKey ? null : exerciseKey))}
                   >
                     <LinearGradient
                       colors={CARD_GRADIENT_DEFAULT}
@@ -673,11 +999,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                                 transform: [{ scale: checkboxPulseAnim }],
                               }}
                             >
-                              <View
-                                style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                              <TouchableOpacity
+                                disabled={!canLogWorkouts}
+                                onPress={() =>
+                                  canLogWorkouts && handleToggleExerciseAnimated(exercise)
+                                }
                               >
-                                {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
-                              </View>
+                                <View
+                                  style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                                >
+                                  {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
+                                </View>
+                              </TouchableOpacity>
                             </Animated.View>
                             <View style={styles.exerciseHeaderText}>
                               <Text style={styles.exerciseName}>{exercise.name}</Text>
@@ -687,6 +1020,58 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                               <Text style={styles.exerciseMetaLine}>
                                 {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
                               </Text>
+                              {isExpanded ? (
+                                <View style={styles.workoutControlRow}>
+                                  <View style={styles.stepper}>
+                                    <TouchableOpacity
+                                      style={styles.stepperButton}
+                                      onPress={() =>
+                                        updateExerciseSets(exerciseKey, targetSets, -1)
+                                      }
+                                    >
+                                      <Text style={styles.stepperButtonText}>−</Text>
+                                    </TouchableOpacity>
+                                    <Text style={styles.stepperValue}>
+                                      {`${workoutSetProgress[exerciseKey]?.completedSets ?? 0}/${targetSets} sets`}
+                                    </Text>
+                                    <TouchableOpacity
+                                      style={styles.stepperButton}
+                                      onPress={() =>
+                                        updateExerciseSets(exerciseKey, targetSets, 1)
+                                      }
+                                    >
+                                      <Text style={styles.stepperButtonText}>+</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                  <View style={styles.stepper}>
+                                    <TouchableOpacity
+                                      style={styles.stepperButton}
+                                      onPress={() => updateExerciseRpe(exerciseKey, -0.5)}
+                                    >
+                                      <Text style={styles.stepperButtonText}>−</Text>
+                                    </TouchableOpacity>
+                                    <Text style={styles.stepperValue}>
+                                      {`RPE ${workoutSetProgress[exerciseKey]?.rpe?.toFixed(1) ?? '—'}`}
+                                    </Text>
+                                    <TouchableOpacity
+                                      style={styles.stepperButton}
+                                      onPress={() => updateExerciseRpe(exerciseKey, 0.5)}
+                                    >
+                                      <Text style={styles.stepperButtonText}>+</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                  <TouchableOpacity
+                                    style={styles.restButton}
+                                    onPress={() => startRestTimerFor(exerciseKey)}
+                                  >
+                                    <Text style={styles.restButtonText}>
+                                      {activeRestKey === exerciseKey && restSecondsLeft > 0
+                                        ? `Rest ${formatRest(restSecondsLeft)}`
+                                        : 'Start Rest Timer'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                </View>
+                              ) : null}
                             </View>
                           </View>
                         </View>
@@ -696,12 +1081,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 </Animated.View>
               );
             })}
-
           </View>
         )}
       </View>
     );
   };
+
+  const calendarHeight = calendarExpandAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 220],
+  });
 
   return (
     <View style={styles.container}>
@@ -726,20 +1115,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <View style={styles.headerLeft}>
             <Text style={styles.greeting}>{greetingMessage},</Text>
             <Text style={styles.userName}>{displayName}</Text>
-            <View style={styles.calendarLegend}>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, styles.legendDoneDot]} />
-                <Text style={styles.legendLabel}>Done</Text>
-              </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, styles.legendTodayDot]} />
-                <Text style={styles.legendLabel}>Today</Text>
-              </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, styles.legendUpcomingDot]} />
-                <Text style={styles.legendLabel}>Upcoming</Text>
-              </View>
-            </View>
           </View>
           {onProfilePress && (
             <TouchableOpacity style={styles.avatarButton} onPress={onProfilePress}>
@@ -752,22 +1127,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           )}
         </Animated.View>
 
-        <Animated.ScrollView
-          style={[styles.scrollView, contentStyle]}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          scrollEnabled={false}
-          bounces={true}
-        >
         <Animated.View
-          style={{
-            opacity: headerFadeAnim,
-            transform: [{ translateY: activityCardSlideAnim }],
-          }}
+          style={[
+            styles.calendarSection,
+            {
+              opacity: headerFadeAnim,
+              transform: [{ translateY: activityCardSlideAnim }],
+            },
+          ]}
         >
-          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.activityCard}>
-            <View style={styles.activityCalendarWrapper}>
-              {calendarRange ? (
+          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.calendarCard}>
+            {renderWeekView()}
+            
+            <Animated.View
+              style={[
+                styles.fullCalendarContainer,
+                calendarExpanded && styles.fullCalendarContainerExpanded,
+                { height: calendarHeight, opacity: calendarExpandAnim },
+              ]}
+            >
+              {shouldMountCalendar && calendarRange && (
                 <Calendar
                   current={calendarRange.currentKey}
                   minDate={calendarRange.startKey}
@@ -778,17 +1157,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   hideExtraDays={false}
                   showSixWeeks
                   theme={getCalendarTheme()}
-                  style={styles.activityCalendar}
+                  style={styles.fullCalendar}
                 />
-              ) : (
-                <Text style={styles.activityCalendarEmptyText}>
-                  No phase dates available.
-                </Text>
               )}
-            </View>
+            </Animated.View>
           </LinearGradient>
         </Animated.View>
-        </Animated.ScrollView>
 
         <ScrollView
           style={styles.contentScrollView}
@@ -798,40 +1172,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         >
           {renderWorkoutsSection()}
         </ScrollView>
-
       </LinearGradient>
-
-      <Modal
-        visible={workoutLogVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setWorkoutLogVisible(false)}
-      >
-        <View style={styles.workoutModalOverlay}>
-          <Pressable
-            style={styles.workoutModalBackdrop}
-            onPress={() => setWorkoutLogVisible(false)}
-          />
-          <View style={styles.workoutModalCard}>
-            <View style={styles.workoutModalHeader}>
-              <Text style={styles.workoutModalTitle}>Today&apos;s Workout</Text>
-              <TouchableOpacity onPress={() => setWorkoutLogVisible(false)}>
-                <Text style={styles.workoutModalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {sortedWorkoutCards.map((exercise) => (
-                <View key={`${todayStr}-modal-${getExerciseKey(exercise)}`} style={styles.workoutModalRow}>
-                  <Text style={styles.workoutModalName}>{exercise.name}</Text>
-                  <Text style={styles.workoutModalMeta}>
-                    {formatBodyPartList(exercise.bodyParts)} · {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
-                  </Text>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 };
@@ -850,7 +1191,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     paddingHorizontal: 20,
     paddingTop: 60,
-    paddingBottom: 12,
+    paddingBottom: 16,
   },
   headerLeft: {
     flex: 1,
@@ -864,37 +1205,6 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 8,
-  },
-  calendarLegend: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginTop: 6,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  legendDoneDot: {
-    backgroundColor: '#00F5A0',
-  },
-  legendTodayDot: {
-    backgroundColor: '#6C63FF',
-  },
-  legendUpcomingDot: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  legendLabel: {
-    fontSize: 12,
-    color: '#8B93B0',
-    fontWeight: '500',
   },
   avatarButton: {
     width: 70,
@@ -917,13 +1227,109 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 35,
   },
-  scrollView: {
-    flex: 0,
-    maxHeight: ACTIVITY_SECTION_HEIGHT,
-  },
-  scrollContent: {
+  calendarSection: {
     paddingHorizontal: 20,
-    paddingBottom: 8,
+    marginBottom: 16,
+  },
+  calendarCard: {
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.15)',
+    overflow: 'hidden',
+  },
+  weekViewContainer: {
+    position: 'relative',
+  },
+  weekScrollContent: {
+    paddingVertical: 8,
+    gap: 8,
+  },
+  weekDay: {
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minWidth: 60,
+  },
+  weekDayToday: {
+    backgroundColor: 'rgba(108, 99, 255, 0.1)',
+    borderRadius: 12,
+  },
+  weekDayName: {
+    fontSize: 11,
+    color: '#8B93B0',
+    fontWeight: '600',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  weekDayNameToday: {
+    color: '#6C63FF',
+  },
+  weekDayNumber: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  weekDayNumberComplete: {
+    backgroundColor: '#00F5A0',
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  weekDayNumberToday: {
+    backgroundColor: 'rgba(108, 99, 255, 0.3)',
+    borderWidth: 2,
+    borderColor: '#6C63FF',
+  },
+  weekDayNumberText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  weekDayNumberTextComplete: {
+    color: '#0A0E27',
+  },
+  weekDayNumberTextToday: {
+    color: '#6C63FF',
+  },
+  weekDayIndicator: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#00F5A0',
+    marginTop: 6,
+  },
+  expandCalendarButton: {
+    position: 'absolute',
+    right: 0,
+    top: '50%',
+    transform: [{ translateY: -12 }],
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  expandCalendarIcon: {
+    fontSize: 10,
+    color: '#6C63FF',
+    fontWeight: '700',
+  },
+  fullCalendarContainer: {
+    overflow: 'hidden',
+    marginTop: 0,
+  },
+  fullCalendarContainerExpanded: {
+    marginTop: 8,
+  },
+  fullCalendar: {
+    marginTop: 8,
   },
   contentScrollView: {
     flex: 1,
@@ -933,86 +1339,72 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 160,
   },
-  activityCard: {
-    borderRadius: 20,
-    padding: 0, 
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.15)',
-    marginBottom: 0,
-  },
-  activityCalendarWrapper: {
-    marginTop: 0,
-    position: 'relative',
-    minHeight: 220,
-  },
-  activityCalendarLayer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-  },
-  activityCalendar: {
-    alignSelf: 'stretch',
-    height: 220, // Allow room for 6 weeks
-    paddingBottom: 0,
-  },
-  activityCalendarEmptyText: {
-    color: '#8B93B0',
-    textAlign: 'center',
-    fontSize: 12,
-    paddingVertical: 12,
-  },
-  verticalTabBar: {
-    position: 'absolute',
-    right: 20,
-    bottom: 160, // Above FAB (typically at 100)
-    backgroundColor: 'rgba(30, 35, 64, 0.95)',
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.25)',
-    padding: 8,
-    gap: 8,
-    flexDirection: 'column',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 12,
-    zIndex: 50,
-  },
-  verticalTab: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(108, 99, 255, 0.05)',
-  },
-  verticalTabActive: {
-    backgroundColor: 'rgba(108, 99, 255, 0.25)',
-    borderWidth: 2,
-    borderColor: 'rgba(108, 99, 255, 0.5)',
-    shadowColor: '#6C63FF',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  verticalTabIcon: {
-    fontSize: 24,
-    opacity: 0.6,
-  },
-  verticalTabIconActive: {
-    opacity: 1,
-  },
-  verticalTabDivider: {
-    height: 1,
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    marginVertical: 4,
-  },
-
   section: {
     gap: 16,
+  },
+  adaptationCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 160, 0.25)',
+    backgroundColor: 'rgba(0, 245, 160, 0.08)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  adaptationTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#00F5A0',
+    marginBottom: 4,
+    letterSpacing: 0.2,
+  },
+  adaptationText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#C7CCE6',
+  },
+  checklistCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 196, 66, 0.35)',
+    backgroundColor: 'rgba(255, 196, 66, 0.09)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  checklistTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFC442',
+    marginBottom: 4,
+  },
+  checklistSubtitle: {
+    fontSize: 12,
+    color: '#C7CCE6',
+    marginBottom: 6,
+    lineHeight: 17,
+  },
+  checklistItems: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    lineHeight: 18,
+  },
+  planContextCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+    backgroundColor: 'rgba(108, 99, 255, 0.12)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  planContextTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#C7CCE6',
+    marginBottom: 4,
+  },
+  planContextText: {
+    fontSize: 12,
+    color: '#FFFFFF',
+    lineHeight: 17,
   },
   emptyCard: {
     borderRadius: 20,
@@ -1060,7 +1452,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   exerciseCard: {
-    borderRadius: 4,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.2)',
@@ -1131,121 +1523,52 @@ const styles = StyleSheet.create({
     color: '#A0A3BD',
     marginBottom: 4,
   },
-  mealCard: {
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
+  workoutControlRow: {
+    marginTop: 8,
+    gap: 8,
   },
-  mealCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
-  },
-  mealInfo: {
-    flex: 1,
-  },
-  mealName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  mealMeta: {
-    fontSize: 12,
-    color: '#8B93B0',
-    lineHeight: 16,
-  },
-  mealEntry: {
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  mealEntryLast: {
-    paddingBottom: 4,
-  },
-  mealEntryName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 4,
-    lineHeight: 20,
-  },
-  mealEntryMacros: {
-    fontSize: 12,
-    color: '#8B93B0',
-    lineHeight: 16,
-  },
-  mealGroupToggle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mealGroupToggleActive: {
-    borderColor: '#00F5A0',
-    backgroundColor: 'rgba(0, 245, 160, 0.12)',
-  },
-  mealGroupToggleText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  mealGroupToggleTextActive: {
-    color: '#00F5A0',
-  },
-  workoutModalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  workoutModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(6, 8, 20, 0.7)',
-  },
-  workoutModalCard: {
-    backgroundColor: '#101427',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: '70%',
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
-  },
-  workoutModalHeader: {
+  stepper: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
-  workoutModalTitle: {
-    fontSize: 18,
+  stepperButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+  },
+  stepperButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
-  workoutModalClose: {
-    fontSize: 24,
-    color: '#8B93B0',
-  },
-  workoutModalRow: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  workoutModalName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 6,
-  },
-  workoutModalMeta: {
+  stepperValue: {
+    color: '#C7CCE6',
     fontSize: 12,
-    color: '#8B93B0',
+    fontWeight: '600',
+  },
+  restButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 160, 0.35)',
+    backgroundColor: 'rgba(0, 245, 160, 0.12)',
+  },
+  restButtonText: {
+    color: '#00F5A0',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

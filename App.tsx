@@ -19,6 +19,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAppState } from './src/hooks';
 import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import { 
+  WelcomeScreen,
+  MainFocusScreen,
+  QuickPlanSetupScreen,
+  FirstWorkoutPreviewScreen,
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
@@ -29,8 +33,10 @@ import {
   ProfileSetupScreen,
   AuthNavigator,
 } from './src/screens';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
+  PlanPreferences,
+  PrimaryGoal,
   PhotoCheckin,
   TrackingPreferences,
   User,
@@ -40,6 +46,7 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile, updateTrackingPreferences, getSignedAvatarUrl } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/dashboardService';
 import { formatLocalDateYMD } from './src/utils/date';
+import { hasRequiredPlanInputs } from './src/utils/planReadiness';
 import { 
   createPhaseWithWorkouts,
   completePhase as completeRemotePhase 
@@ -75,7 +82,37 @@ const linking = {
   },
 };
 
-type OnboardingStep = 'profile' | 'current_physique' | 'target_physique' | 'complete';
+type OnboardingStep =
+  | 'profile'
+  | 'main_focus'
+  | 'quick_plan'
+  | 'current_physique'
+  | 'target_physique'
+  | 'preview'
+  | 'complete';
+
+const mapDaysPerWeekToSplit = (daysPerWeek: number): User['trainingSplit'] => {
+  if (daysPerWeek >= 6) return 'upper_lower';
+  if (daysPerWeek >= 5) return 'push_pull_legs';
+  if (daysPerWeek >= 4) return 'upper_lower';
+  return 'full_body';
+};
+
+const mapGoalToPhaseGoalType = (goal?: PrimaryGoal): string => {
+  switch (goal) {
+    case 'build_muscle':
+      return 'hypertrophy';
+    case 'get_stronger':
+      return 'strength';
+    case 'lose_fat':
+      return 'fat_loss';
+    case 'endurance':
+      return 'endurance';
+    case 'general_fitness':
+    default:
+      return 'general';
+  }
+};
 
 const TabPlaceholder: React.FC<{ title: string; subtitle: string }> = ({ title, subtitle }) => (
   <View style={styles.container}>
@@ -335,6 +372,10 @@ function AppContent() {
     loadWorkoutSessionsFromSupabase,
     hydrateFromRemote,
     loadMealPlansFromSupabase,
+    saveCustomWorkoutSession,
+    addWorkoutExercise,
+    deleteWorkoutExercise,
+    deleteWorkoutSession,
   } = useAppState();
   
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
@@ -343,6 +384,7 @@ function AppContent() {
   const [isProfileVisible, setProfileVisible] = useState(false);
   const [isCreatingPlan, setIsCreatingPlan] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
+  const [showWelcome, setShowWelcome] = useState(true);
   const { getFabAction, setFabAction } = useFabAction();
   const tabFabPop = useRef(new Animated.Value(0)).current;
   const showPlanTabs = Boolean(state?.user);
@@ -394,8 +436,23 @@ function AppContent() {
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>('complete');
   const [tempProfileData, setTempProfileData] = useState<any>(null);
   const [tempCurrentLevel, setTempCurrentLevel] = useState<number | null>(null);
+  const [tempPlanPreferences, setTempPlanPreferences] = useState<PlanPreferences | null>(null);
+  const [tempPrimaryGoal, setTempPrimaryGoal] = useState<PrimaryGoal>('general_fitness');
   const [startPlanConfirmVisible, setStartPlanConfirmVisible] = useState(false);
   const previousPhaseIdRef = useRef<string | null>(null);
+
+  const previewSession = useMemo(() => {
+    if (!state?.currentPhase) return null;
+    const phaseId = state.currentPhase.id;
+    const sessions = state.workoutSessions.filter((session) => session.phasePlanId === phaseId);
+    if (!sessions.length) return null;
+    const todayKey = formatLocalDateYMD(new Date());
+    const upcoming = sessions
+      .filter((session) => session.date >= todayKey)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (upcoming.length) return upcoming[0];
+    return [...sessions].sort((a, b) => a.date.localeCompare(b.date))[0];
+  }, [state?.currentPhase, state?.workoutSessions]);
 
   const closeProfileSheet = () => {
     setProfileVisible(false);
@@ -528,6 +585,61 @@ function AppContent() {
     setOnboardingStep('target_physique');
   };
 
+  const handleQuickPlanComplete = useCallback(
+    async (input: {
+      daysPerWeek: 3 | 4 | 5 | 6;
+      equipmentLevel: 'bodyweight' | 'dumbbells' | 'full_gym';
+      injuries: string[];
+    }) => {
+      if (!state?.user) return;
+      const inferredSplit = mapDaysPerWeekToSplit(input.daysPerWeek);
+      const nextPreferences: PlanPreferences = {
+        primaryGoal: tempPrimaryGoal,
+        daysPerWeek: input.daysPerWeek,
+        equipmentLevel: input.equipmentLevel,
+        injuries: input.injuries,
+      };
+      const nextUser: User = {
+        ...state.user,
+        trainingSplit: inferredSplit,
+        planPreferences: nextPreferences,
+      };
+      setTempPlanPreferences(nextPreferences);
+      await updateUser(nextUser);
+      try {
+        await saveUserProfile(nextUser);
+      } catch (err) {
+        console.error('Failed to persist quick plan setup', err);
+      }
+      setOnboardingStep('current_physique');
+    },
+    [state?.user, tempPrimaryGoal, updateUser]
+  );
+
+  const handleQuickPlanSkip = useCallback(() => {
+    if (state?.user?.planPreferences) {
+      setTempPlanPreferences(state.user.planPreferences);
+    } else {
+      setTempPlanPreferences({
+        primaryGoal: tempPrimaryGoal,
+        daysPerWeek: 4,
+        equipmentLevel: 'full_gym',
+        injuries: [],
+      });
+    }
+    setOnboardingStep('current_physique');
+  }, [state?.user, tempPrimaryGoal]);
+
+  const handleMainFocusSelect = useCallback((goal: PrimaryGoal) => {
+    setTempPrimaryGoal(goal);
+    setOnboardingStep('quick_plan');
+  }, []);
+
+  const handleMainFocusSkip = useCallback(() => {
+    setTempPrimaryGoal('general_fitness');
+    setOnboardingStep('quick_plan');
+  }, []);
+
   const handleProfileSave = async (profile: User) => {
     await updateUser(profile);
     try {
@@ -539,6 +651,14 @@ function AppContent() {
 
   const handleStartNewArc = async (targetLevelId: number, goalType?: string) => {
     if (!authUser || !state?.user) return;
+    if (!hasRequiredPlanInputs(state.user)) {
+      Alert.alert(
+        'Profile required',
+        'Please complete your profile inputs first to generate a personalized plan.'
+      );
+      setOnboardingStep('profile');
+      return;
+    }
     const currentLevel = tempCurrentLevel ?? state.user.currentPhysiqueLevel ?? 1;
 
     setIsCreatingPlan(true);
@@ -550,15 +670,26 @@ function AppContent() {
         await completeRemotePhase(state.currentPhase.id);
       }
       
+      const selectedGoal =
+        goalType ??
+        mapGoalToPhaseGoalType(tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal);
       const remotePhase = await createPhaseWithWorkouts(
         authUser.id,
         state.user.trainingSplit,
         {
           name: `Arc ${new Date().getFullYear()}`,
-          goalType: goalType ?? 'general',
+          goalType: selectedGoal,
           startDate: formatLocalDateYMD(new Date()),
           currentLevelId: currentLevel,
           targetLevelId,
+        },
+        {
+          daysPerWeek:
+            tempPlanPreferences?.daysPerWeek ?? state.user.planPreferences?.daysPerWeek,
+          equipmentLevel:
+            tempPlanPreferences?.equipmentLevel ?? state.user.planPreferences?.equipmentLevel,
+          primaryGoal:
+            tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal,
         }
       );
 
@@ -576,7 +707,7 @@ function AppContent() {
       
       console.log('✅ Sessions loaded successfully');
       
-      setOnboardingStep('complete');
+      setOnboardingStep('preview');
       setPhotoCaptureVisible(false);
     } catch (error) {
       console.error('❌ Failed to create plan:', error);
@@ -587,8 +718,23 @@ function AppContent() {
   };
 
   const handleTargetPhysiqueSelect = async (targetLevelId: number) => {
-    await handleStartNewArc(targetLevelId);
+    const goalType = mapGoalToPhaseGoalType(tempPlanPreferences?.primaryGoal);
+    await handleStartNewArc(targetLevelId, goalType);
   };
+
+  const handleFinishPreview = useCallback(() => {
+    setOnboardingStep('complete');
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Home');
+    }
+  }, [navigationRef]);
+
+  const handleViewWeekFromPreview = useCallback(() => {
+    setOnboardingStep('complete');
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Progress');
+    }
+  }, [navigationRef]);
 
   const handleProfileSetupComplete = async (profileData: {
     name: string;
@@ -631,7 +777,7 @@ function AppContent() {
 
     updateUser(newUser);
     setTempProfileData(profileData);
-    setOnboardingStep('current_physique');
+    setOnboardingStep('main_focus');
   };
 
   useEffect(() => {
@@ -653,6 +799,10 @@ function AppContent() {
 
         if (remoteProfile) {
           await updateUser(remoteProfile);
+          if (!hasRequiredPlanInputs(remoteProfile)) {
+            setOnboardingStep('profile');
+            return;
+          }
           
           const homeData = await fetchHomeData(authUser.id);
           if (cancelled) return;
@@ -703,6 +853,19 @@ function AppContent() {
     if (!isAuthenticated || !bootstrapComplete) return;
     if (!state?.user || state.currentPhase) return;
     if (onboardingStep !== 'complete') return;
+    if (!hasRequiredPlanInputs(state.user)) {
+      setOnboardingStep('profile');
+      return;
+    }
+    setTempPlanPreferences(
+      state.user.planPreferences ?? {
+        primaryGoal: 'general_fitness',
+        daysPerWeek: 4,
+        equipmentLevel: 'full_gym',
+        injuries: [],
+      }
+    );
+    setTempPrimaryGoal(state.user.planPreferences?.primaryGoal ?? 'general_fitness');
     setTempProfileData({
       sex: state.user.sex,
       age: state.user.age,
@@ -712,7 +875,7 @@ function AppContent() {
       eatingMode: state.user.eatingMode,
     });
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
-    setOnboardingStep('current_physique');
+    setOnboardingStep('main_focus');
   }, [bootstrapComplete, isAuthenticated, onboardingStep, state?.currentPhase, state?.user]);
 
   const handleStartPhaseFromDashboard = useCallback(() => {
@@ -720,6 +883,14 @@ function AppContent() {
     
     if (!state?.user) {
       console.log('❌ No user found, showing profile setup');
+      setOnboardingStep('profile');
+      return;
+    }
+    if (!hasRequiredPlanInputs(state.user)) {
+      Alert.alert(
+        'Profile incomplete',
+        'Complete your profile details first so we can generate your plan correctly.'
+      );
       setOnboardingStep('profile');
       return;
     }
@@ -734,11 +905,18 @@ function AppContent() {
       trainingSplit: state.user.trainingSplit,
       eatingMode: state.user.eatingMode,
     });
+    setTempPlanPreferences(
+      state.user.planPreferences ?? {
+        primaryGoal: 'general_fitness',
+        daysPerWeek: 4,
+        equipmentLevel: 'full_gym',
+        injuries: [],
+      }
+    );
+    setTempPrimaryGoal(state.user.planPreferences?.primaryGoal ?? 'general_fitness');
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
-    
-    setOnboardingStep('current_physique');
-    
-    console.log('✅ Onboarding step set to: current_physique');
+    setOnboardingStep('main_focus');
+    console.log('✅ Onboarding step set to: main_focus');
   }, [state?.user]);
 
   useEffect(() => {
@@ -844,6 +1022,14 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
+    if (showWelcome) {
+      return (
+        <View style={styles.container}>
+          <WelcomeScreen onGetStarted={() => setShowWelcome(false)} />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
     return (
       <View style={styles.container}>
         <AuthNavigator />
@@ -864,14 +1050,39 @@ function AppContent() {
 
   const shouldShowOnboarding =
     onboardingStep === 'profile' ||
+    onboardingStep === 'main_focus' ||
+    onboardingStep === 'quick_plan' ||
     onboardingStep === 'current_physique' ||
-    onboardingStep === 'target_physique';
+    onboardingStep === 'target_physique' ||
+    onboardingStep === 'preview';
 
   if (shouldShowOnboarding) {
     if (onboardingStep === 'profile' || !state?.user) {
       return (
         <View style={styles.container}>
           <ProfileSetupScreen onComplete={handleProfileSetupComplete} />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
+
+    if (onboardingStep === 'main_focus') {
+      return (
+        <View style={styles.container}>
+          <MainFocusScreen onSelect={handleMainFocusSelect} onSkip={handleMainFocusSkip} />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
+
+    if (onboardingStep === 'quick_plan' && state?.user) {
+      return (
+        <View style={styles.container}>
+          <QuickPlanSetupScreen
+            primaryGoal={tempPrimaryGoal}
+            onComplete={handleQuickPlanComplete}
+            onSkip={handleQuickPlanSkip}
+          />
           <StatusBar style="light" />
         </View>
       );
@@ -888,7 +1099,7 @@ function AppContent() {
             onCancel={
               canCancel
                 ? () => setOnboardingStep('complete')
-                : () => setOnboardingStep('profile')
+                : () => setOnboardingStep('quick_plan')
             }
           />
           <StatusBar style="light" />
@@ -897,7 +1108,6 @@ function AppContent() {
     }
 
     if (onboardingStep === 'target_physique' && tempCurrentLevel && tempProfileData) {
-      const canCancel = Boolean(state?.currentPhase);
       return (
         <View style={styles.container}>
           <TargetPhysiqueSelectionScreen 
@@ -905,6 +1115,19 @@ function AppContent() {
             currentLevelId={tempCurrentLevel}
             onSelectTarget={handleTargetPhysiqueSelect}
             onCancel={() => setOnboardingStep('current_physique')}
+          />
+          <StatusBar style="light" />
+        </View>
+      );
+    }
+
+    if (onboardingStep === 'preview') {
+      return (
+        <View style={styles.container}>
+          <FirstWorkoutPreviewScreen
+            session={previewSession}
+            onStartWorkout={handleFinishPreview}
+            onViewFullWeek={handleViewWeekFromPreview}
           />
           <StatusBar style="light" />
         </View>
@@ -956,6 +1179,10 @@ function AppContent() {
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
                   onCreateSession={createWorkoutSession}
+                  onSaveCustomSession={saveCustomWorkoutSession}
+                  onDeleteSession={deleteWorkoutSession}
+                  onAddExercise={addWorkoutExercise}
+                  onDeleteExercise={deleteWorkoutExercise}
                 />
               ) : (
                 <TabPlaceholder
@@ -967,7 +1194,7 @@ function AppContent() {
           </Tab.Screen>
           <Tab.Screen name="Menu">
             {() =>
-              state?.user && state.currentPhase ? (
+              state?.user ? (
                 <MenuScreen
                   user={state.user}
                   phase={state.currentPhase}
