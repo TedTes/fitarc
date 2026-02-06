@@ -12,9 +12,7 @@ import {
   AppState,
   Animated,
   Easing,
-  LayoutAnimation,
-  Platform,
-  UIManager,
+  PanResponder,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
@@ -34,10 +32,8 @@ import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
 import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
 import { fetchWorkoutCompletionMap } from '../services/workoutService';
+import { runLayoutAnimation } from '../utils/layoutAnimation';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 type PlansScreenProps = {
   user: User;
@@ -47,6 +43,9 @@ type PlansScreenProps = {
   onDeleteSession?: (date: string) => void;
   onAddExercise?: (sessionId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
   onDeleteExercise?: (sessionId: string, sessionExerciseId: string) => Promise<void>;
+  embedded?: boolean;
+  openExercisePickerSignal?: number;
+  selectedDateOverride?: string;
 };
 
 const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
@@ -66,6 +65,7 @@ const COLORS = {
   success: '#00F5A0',
 };
 const MAX_LIBRARY_ITEMS = 30;
+const REP_PRESETS = ['5-8', '8-12', '12-15'] as const;
 
 const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = ['All', 'chest', 'back', 'shoulders', 'arms', 'legs', 'core'];
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
@@ -141,6 +141,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onDeleteSession,
   onAddExercise,
   onDeleteExercise,
+  embedded = false,
+  openExercisePickerSignal,
+  selectedDateOverride,
 }) => {
   const { setFabAction } = useFabAction();
   const navigation = useNavigation<any>();
@@ -156,13 +159,32 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [exerciseSearch, setExerciseSearch] = useState('');
   const [muscleFilter, setMuscleFilter] = useState<(typeof MUSCLE_FILTERS)[number]>('All');
   const [completionMap, setCompletionMap] = useState<Record<string, boolean>>({});
+  const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastExercisePickerSignalRef = useRef<number | undefined>(openExercisePickerSignal);
   // Animation values
   const weekStripSlide = useRef(new Animated.Value(-100)).current;
   const fabRotation = useRef(new Animated.Value(0)).current;
   const fabScale = useRef(new Animated.Value(0)).current;
   const exerciseCardsAnim = useRef<Map<string, Animated.Value>>(new Map()).current;
+  const swipeCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const modalSlideAnim = useRef(new Animated.Value(300)).current;
+
+  useEffect(() => {
+    if (!selectedDateOverride) return;
+    setSelectedDate(selectedDateOverride);
+  }, [selectedDateOverride]);
+
+  useEffect(() => {
+    if (openExercisePickerSignal === undefined) return;
+    if (lastExercisePickerSignalRef.current === openExercisePickerSignal) return;
+    lastExercisePickerSignalRef.current = openExercisePickerSignal;
+    if (!onAddExercise && !onSaveCustomSession) return;
+    if (selectedDateOverride && selectedDateOverride !== selectedDate) {
+      setSelectedDate(selectedDateOverride);
+    }
+    setExerciseModalVisible(true);
+  }, [openExercisePickerSignal, onAddExercise, onSaveCustomSession, selectedDateOverride, selectedDate]);
 
   const handleOpenExerciseModal = useCallback(() => {
     setExerciseModalVisible(true);
@@ -216,11 +238,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   // Build week plans from database sessions only
   const weekPlans = useMemo(() => {
     if (!phase) return [];
-    const anchor = new Date();
+    const anchor = selectedDate ? parseLocalDateFromYMD(selectedDate) : new Date();
     anchor.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(anchor);
+    startOfWeek.setDate(anchor.getDate() - anchor.getDay());
     return Array.from({ length: 7 }).map((_, idx) => {
-      const date = new Date(anchor);
-      date.setDate(anchor.getDate() + idx);
+      const date = new Date(startOfWeek);
+      date.setDate(startOfWeek.getDate() + idx);
       const dateStr = formatLocalDateYMD(date);
       const session =
         resolvedSessions.find((entry) => entry.phasePlanId === phase.id && entry.date === dateStr) || null;
@@ -229,7 +253,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         session,
       };
     });
-  }, [resolvedSessions, phase?.id]);
+  }, [resolvedSessions, phase?.id, selectedDate]);
 
   const selectedPlan =
     weekPlans.find((plan) => plan.dateStr === selectedDate) || weekPlans[0];
@@ -270,7 +294,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
  // Sync editing exercises when selected plan changes or sessions update
   useEffect(() => {
     if (!selectedPlan) {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      runLayoutAnimation();
       setEditingExercises([]);
       setIsDirty(false);
       lastSyncedKeyRef.current = null;
@@ -284,7 +308,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
     // Load exercises from the database session if it exists
     if (selectedPlan.session && selectedPlan.session.exercises.length > 0) {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      runLayoutAnimation();
       setEditingExercises(createSessionExercises(selectedPlan.session.exercises));
       setIsDirty(false);
       lastSyncedKeyRef.current = planSyncKey;
@@ -299,13 +323,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       lastSyncedKeyRef.current = planSyncKey;
       return;
     }
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      runLayoutAnimation();
     setEditingExercises([]);
     setIsDirty(false);
     lastSyncedKeyRef.current = planSyncKey;
   }, [planSyncKey, selectedPlan]);
 
-  useEffect(() => {
+  const refreshCompletionMap = useCallback(() => {
     if (!user.id || !weekStart || !weekEnd) return;
     let isActive = true;
     fetchWorkoutCompletionMap(user.id, weekStart, weekEnd)
@@ -324,6 +348,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       isActive = false;
     };
   }, [user.id, weekStart, weekEnd]);
+
+  useEffect(() => {
+    return refreshCompletionMap();
+  }, [refreshCompletionMap]);
 
   // Animate week strip entrance
   useEffect(() => {
@@ -400,8 +428,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     if (!totalExercises) return 'No workout scheduled';
     if (isFuture) return 'Scheduled workout';
     if (completionMap[selectedPlan.dateStr]) return null;
-    return `${completedCount}/${totalExercises} exercises`;
-  }, [selectedPlan, editingExercises, completionMap, todayKey]);
+    return embedded ? null : `${completedCount}/${totalExercises} exercises`;
+  }, [selectedPlan, editingExercises, completionMap, todayKey, embedded]);
+  const showDayHeader = Boolean(selectedDayMeta) && !embedded;
 
   const saveCurrentSession = useCallback(
     async (plan: typeof selectedPlan, exercises: WorkoutSessionExercise[]) => {
@@ -444,7 +473,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const handleSelectDateAnimated = async (dateStr: string) => {
     await flushAutosave();
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    runLayoutAnimation();
+    setEditingExerciseIndex(null);
     setSelectedDate(dateStr);
   };
 
@@ -454,6 +484,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       exerciseCardsAnim.set(key, anim);
     }
     return exerciseCardsAnim.get(key)!;
+  };
+
+  const getSwipeAnimation = (key: string) => {
+    if (!swipeCardAnims.has(key)) {
+      swipeCardAnims.set(key, new Animated.Value(0));
+    }
+    return swipeCardAnims.get(key)!;
   };
 
   const animateExerciseAction = (key: string) => {
@@ -475,11 +512,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   };
 
   const handleAddExercise = async (entry: ExerciseCatalogEntry) => {
-    if (!selectedPlan) return;
+    const targetDate = selectedDateOverride ?? selectedDate;
+    const targetPlan = weekPlans.find((plan) => plan.dateStr === targetDate) ?? selectedPlan;
+    if (!targetPlan) return;
 
     // Animate modal close first
     setExerciseModalVisible(false);
-    localEditsDateRef.current = selectedPlan.dateStr;
+    localEditsDateRef.current = targetPlan.dateStr;
     
     const isDuplicate = editingExercisesRef.current.some(
       (exercise) =>
@@ -496,18 +535,25 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     const next = [...editingExercisesRef.current, newExercise];
 
     // Trigger layout animation for smooth insertion
-    LayoutAnimation.configureNext({
+    runLayoutAnimation({
       duration: 300,
       create: {
-        type: LayoutAnimation.Types.spring,
-        property: LayoutAnimation.Properties.opacity,
+        type: 'spring',
+        property: 'opacity',
         springDamping: 0.7,
       },
     });
 
-    const canPersistImmediately = Boolean(selectedPlan.session?.id && onAddExercise);
+    const canPersistImmediately = Boolean(targetPlan.session?.id && onAddExercise);
     editingExercisesRef.current = next;
     setEditingExercises(next);
+    if (targetPlan) {
+      const allComplete = next.length > 0 && next.every((ex) => ex.completed === true);
+      setCompletionMap((prevMap) => ({
+        ...prevMap,
+        [targetPlan.dateStr]: allComplete,
+      }));
+    }
     if (!canPersistImmediately) {
       setIsDirty(true);
     }
@@ -524,8 +570,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }).start();
 
     try {
-      if (selectedPlan.session?.id && onAddExercise) {
-        const sessionExerciseId = await onAddExercise(selectedPlan.session.id, newExercise);
+      if (targetPlan.session?.id && onAddExercise) {
+        const sessionExerciseId = await onAddExercise(targetPlan.session.id, newExercise);
         if (sessionExerciseId) {
           setEditingExercises((prev) => {
             if (!prev.length) return prev;
@@ -537,6 +583,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           });
         }
         setIsDirty(false);
+        await enqueueSave(targetPlan, editingExercisesRef.current);
+        refreshCompletionMap();
       }
     } catch (err) {
       if (err instanceof Error && err.message === 'duplicate_exercise') {
@@ -548,6 +596,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   };
 
   const handleRemoveExercise = async (index: number) => {
+    setEditingExerciseIndex((prev) => (prev === index ? null : prev));
     const exercise = editingExercisesRef.current[index];
     const cardKey = `${exercise.name}-${index}`;
     const cardAnim = getExerciseAnimation(cardKey);
@@ -569,10 +618,17 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: true,
     }).start(() => {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      runLayoutAnimation();
       setEditingExercises((prev) => {
         const next = prev.filter((_, idx) => idx !== index);
         editingExercisesRef.current = next;
+        if (selectedPlan) {
+          const allComplete = next.length > 0 && next.every((ex) => ex.completed === true);
+          setCompletionMap((prevMap) => ({
+            ...prevMap,
+            [selectedPlan.dateStr]: allComplete,
+          }));
+        }
         return next;
       });
       if (shouldPersistLocally) {
@@ -592,6 +648,38 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         isDeletingRef.current = false;
       }
     }
+  };
+
+  const handleToggleExerciseCompleted = (index: number) => {
+    setEditingExercises((prev) => {
+      const next = [...prev];
+      const current = next[index];
+      if (!current) return prev;
+      next[index] = { ...current, completed: !current.completed };
+      editingExercisesRef.current = next;
+      if (selectedPlan) {
+        const allComplete = next.length > 0 && next.every((exercise) => exercise.completed === true);
+        setCompletionMap((prevMap) => ({
+          ...prevMap,
+          [selectedPlan.dateStr]: allComplete,
+        }));
+      }
+      return next;
+    });
+    if (selectedPlan) {
+      localEditsDateRef.current = selectedPlan.dateStr;
+    }
+    setIsDirty(true);
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current);
+    }
+    autosaveTimeoutRef.current = setTimeout(() => {
+      if (selectedPlan) {
+        void enqueueSave(selectedPlan, editingExercisesRef.current);
+        setIsDirty(false);
+        refreshCompletionMap();
+      }
+    }, 200);
   };
 
  
@@ -726,6 +814,76 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           {editingExercises.map((exercise, idx) => {
             const cardKey = `${exercise.name}-${idx}`;
             const scaleAnim = getExerciseAnimation(cardKey);
+            const setsValue = exercise.sets ?? 4;
+            const repsValue = exercise.reps ?? '8-12';
+            const localKey = exercise.id ?? cardKey;
+            const isCompleted = Boolean(exercise.completed);
+            const swipeAnim = getSwipeAnimation(localKey);
+            const swipeHintOpacity = swipeAnim.interpolate({
+              inputRange: [0, 12, 90],
+              outputRange: [0, 0.25, 1],
+              extrapolate: 'clamp',
+            });
+            const maxSwipeLeft = -120;
+            const maxSwipeRight = 90;
+            const panResponder = PanResponder.create({
+              onMoveShouldSetPanResponder: (_, gesture) =>
+                Math.abs(gesture.dx) > 2 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+              onMoveShouldSetPanResponderCapture: (_, gesture) =>
+                Math.abs(gesture.dx) > 2 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+              onPanResponderTerminationRequest: () => false,
+              onPanResponderMove: (_, gesture) => {
+                const nextX = Math.max(maxSwipeLeft, Math.min(maxSwipeRight, gesture.dx));
+                swipeAnim.setValue(nextX);
+              },
+              onPanResponderRelease: (_, gesture) => {
+                const shouldDelete = gesture.dx < -80;
+                const shouldToggleComplete = gesture.dx > 60;
+                if (shouldDelete) {
+                  Animated.spring(swipeAnim, {
+                    toValue: maxSwipeLeft,
+                    tension: 180,
+                    friction: 18,
+                    useNativeDriver: true,
+                  }).start(() => {
+                    animateExerciseAction(cardKey);
+                    handleRemoveExercise(idx);
+                  });
+                  return;
+                }
+                if (shouldToggleComplete) {
+                  Animated.spring(swipeAnim, {
+                    toValue: maxSwipeRight,
+                    tension: 180,
+                    friction: 18,
+                    useNativeDriver: true,
+                  }).start(() => {
+                    handleToggleExerciseCompleted(idx);
+                    Animated.spring(swipeAnim, {
+                      toValue: 0,
+                      tension: 180,
+                      friction: 18,
+                      useNativeDriver: true,
+                    }).start();
+                  });
+                  return;
+                }
+                Animated.spring(swipeAnim, {
+                  toValue: 0,
+                  tension: 180,
+                  friction: 18,
+                  useNativeDriver: true,
+                }).start();
+              },
+              onPanResponderTerminate: () => {
+                Animated.spring(swipeAnim, {
+                  toValue: 0,
+                  tension: 180,
+                  friction: 18,
+                  useNativeDriver: true,
+                }).start();
+              },
+            });
 
             return (
               <Animated.View
@@ -734,60 +892,70 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                   transform: [{ scale: scaleAnim }],
                 }}
               >
-                <View style={styles.exerciseCard}>
-                  <View style={styles.exerciseHeaderRow}>
-                    <View style={styles.exerciseHeaderInfo}>
-                      <Text style={styles.exerciseName}>{exercise.name}</Text>
-                      <Text style={styles.exerciseBodyParts}>
-                        {formatBodyPartList(exercise.bodyParts)}
-                      </Text>
-                    </View>
-                    <View style={styles.exerciseHeaderActions}>
-                      {exercise.completed && (
-                        <View style={styles.planCompleteBadge}>
-                          <Text style={styles.planCompleteBadgeText}>✓</Text>
+                <View style={styles.swipeContainer}>
+                  <Animated.View
+                    style={[styles.swipeCompleteHint, { opacity: swipeHintOpacity }]}
+                    pointerEvents="none"
+                  >
+                    <Text style={styles.swipeCompleteText}>
+                      {isCompleted ? 'Undo' : 'Complete'}
+                    </Text>
+                  </Animated.View>
+                  <Animated.View
+                    style={{ transform: [{ translateX: swipeAnim }] }}
+                    {...panResponder.panHandlers}
+                  >
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        setEditingExerciseIndex((prev) => (prev === idx ? null : idx))
+                      }
+                    >
+                      <View style={styles.exerciseCard}>
+                        <View style={styles.exerciseHeaderRow}>
+                          <View style={styles.exerciseHeaderInfo}>
+                            <Text style={styles.exerciseName}>
+                              {exercise.name}
+                            </Text>
+                            <Text style={styles.exerciseBodyParts}>
+                              {formatBodyPartList(exercise.bodyParts)}
+                            </Text>
+                          </View>
+                          <View style={styles.exerciseHeaderActions}>
+                            <TouchableOpacity
+                              style={[
+                                styles.completeRadio,
+                                exercise.completed && styles.completeRadioChecked,
+                              ]}
+                              onPress={() => handleToggleExerciseCompleted(idx)}
+                            >
+                              {exercise.completed && <Text style={styles.completeRadioCheck}>✓</Text>}
+                            </TouchableOpacity>
+                          </View>
                         </View>
-                      )}
-                      {!exercise.completed && (
-                        <TouchableOpacity
-                          style={[styles.iconButton, styles.iconButtonDanger]}
-                          onPress={() => {
-                            animateExerciseAction(cardKey);
-                            handleRemoveExercise(idx);
-                          }}
-                        >
-                          <Text style={styles.iconButtonText}>×</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                  <View style={styles.exerciseInputs}>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputLabel}>Sets</Text>
-                      <TextInput
-                        style={[
-                          styles.inputField,
-                          exercise.completed && styles.inputFieldDisabled,
-                        ]}
-                        keyboardType="number-pad"
-                        value={String(exercise.sets ?? '')}
-                        onChangeText={(value) => handleChangeSets(idx, value)}
-                        editable={!exercise.completed}
-                      />
-                    </View>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputLabel}>Reps</Text>
-                      <TextInput
-                        style={[
-                          styles.inputField,
-                          exercise.completed && styles.inputFieldDisabled,
-                        ]}
-                        value={exercise.reps}
-                        onChangeText={(value) => handleChangeReps(idx, value)}
-                        editable={!exercise.completed}
-                      />
-                    </View>
-                  </View>
+                        <View style={styles.exercisePills}>
+                          <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={() => setEditingExerciseIndex(idx)}
+                          >
+                            <View style={styles.pill}>
+                              <Text style={styles.pillLabel}>Sets</Text>
+                              <Text style={styles.pillValue}>{setsValue || '—'}</Text>
+                            </View>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={() => setEditingExerciseIndex(idx)}
+                          >
+                            <View style={styles.pill}>
+                              <Text style={styles.pillLabel}>Reps</Text>
+                              <Text style={styles.pillValue}>{repsValue}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  </Animated.View>
                 </View>
               </Animated.View>
             );
@@ -799,71 +967,95 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   return (
 
-    <View style={styles.container}>
-      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+    <View style={[styles.container, embedded && styles.containerEmbedded]}>
+      <LinearGradient
+        colors={embedded ? (['transparent', 'transparent', 'transparent'] as const) : SCREEN_GRADIENT}
+        style={styles.gradient}
+      >
         <ScrollView
           stickyHeaderIndices={[0]}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            embedded && styles.scrollContentEmbedded,
+          ]}
           showsVerticalScrollIndicator={false}
         >
-          <Animated.View style={[styles.stickyHeader, headerStyle]}>
-            <View style={styles.headerTop}>
-              <Text style={styles.headerTitle}>Workouts</Text>
-              <View style={styles.phaseChip}>
-                <Text style={styles.phaseChipText}>{phaseChipText}</Text>
+          <Animated.View
+            style={[
+              styles.stickyHeader,
+              embedded && styles.stickyHeaderEmbedded,
+              headerStyle,
+            ]}
+          >
+            {!embedded ? (
+              <View style={styles.headerTop}>
+                <Text style={styles.headerTitle}>Workouts</Text>
+                <View style={styles.phaseChip}>
+                  <Text style={styles.phaseChipText}>{phaseChipText}</Text>
+                </View>
               </View>
-            </View>
-            <Animated.View
-              style={{
-                transform: [{ translateX: weekStripSlide }],
-              }}
-            >
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.weekStrip}
+            ) : null}
+            {!embedded ? (
+              <Animated.View
+                style={{
+                  transform: [{ translateX: weekStripSlide }],
+                }}
               >
-                {weekPlans.map((plan) => {
-                  const { weekday } = formatDateLabel(plan.dateStr);
-                  const isActive = plan.dateStr === selectedDate;
-                  const hasWorkout = plan.session && plan.session.exercises.length > 0;
-                  const isFutureDay = plan.dateStr > todayKey;
-                  const isCompletedDay = !isFutureDay && Boolean(completionMap[plan.dateStr]);
-                  return (
-                    <TouchableOpacity
-                      key={plan.dateStr}
-                      style={[
-                        styles.dayChip,
-                        isActive && styles.dayChipActive,
-                        isCompletedDay && styles.dayChipCompleted,
-                      ]}
-                      onPress={() => handleSelectDateAnimated(plan.dateStr)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>
-                        {weekday}
-                      </Text>
-                      <View
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.weekStrip}
+                >
+                  {weekPlans.map((plan) => {
+                    const { weekday } = formatDateLabel(plan.dateStr);
+                    const isActive = plan.dateStr === selectedDate;
+                    const hasWorkout = plan.session && plan.session.exercises.length > 0;
+                    const isFutureDay = plan.dateStr > todayKey;
+                    const isCompletedDay = !isFutureDay && Boolean(completionMap[plan.dateStr]);
+                    return (
+                      <TouchableOpacity
+                        key={plan.dateStr}
                         style={[
-                          styles.dayDot,
-                          hasWorkout && styles.dayDotVisible,
-                          isCompletedDay && styles.dayDotComplete,
+                          styles.dayChip,
+                          isActive && styles.dayChipActive,
+                          isCompletedDay && styles.dayChipCompleted,
                         ]}
-                      />
-                      {isCompletedDay && <Text style={styles.dayCheckMark}>✓</Text>}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </Animated.View>
+                        onPress={() => handleSelectDateAnimated(plan.dateStr)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>
+                          {weekday}
+                        </Text>
+                        <View
+                          style={[
+                            styles.dayDot,
+                            hasWorkout && styles.dayDotVisible,
+                            isCompletedDay && styles.dayDotComplete,
+                          ]}
+                        />
+                        {isCompletedDay && <Text style={styles.dayCheckMark}>✓</Text>}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </Animated.View>
+            ) : null}
           </Animated.View>
 
-          <Animated.View style={[styles.content, contentStyle]}>
-            <View style={styles.dayHeader}>
-              <View style={styles.dayInfo}>
-                {selectedDayMeta ? <Text style={styles.dayMeta}>{selectedDayMeta}</Text> : null}
+          <Animated.View
+            style={[
+              styles.content,
+              embedded && styles.contentEmbedded,
+              contentStyle,
+            ]}
+          >
+            {showDayHeader ? (
+              <View style={styles.dayHeader}>
+                <View style={styles.dayInfo}>
+                  <Text style={styles.dayMeta}>{selectedDayMeta}</Text>
+                </View>
               </View>
-            </View>
+            ) : null}
             {renderSession()}
           </Animated.View>
         </ScrollView>
@@ -949,6 +1141,107 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </Animated.View>
         </View>
       </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={editingExerciseIndex !== null}
+        onRequestClose={() => setEditingExerciseIndex(null)}
+      >
+        <View style={styles.modalOverlayCenter}>
+          <Pressable
+            style={styles.modalBackdropPress}
+            onPress={() => setEditingExerciseIndex(null)}
+          />
+          <View style={styles.editCenterCard}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Edit</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setEditingExerciseIndex(null)}
+              >
+                <Text style={styles.closeButtonText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            {editingExerciseIndex !== null ? (
+              <>
+                <Text style={styles.editExerciseName}>
+                  {editingExercises[editingExerciseIndex]?.name ?? 'Exercise'}
+                </Text>
+                <View style={styles.editRow}>
+                  <Text style={styles.editLabel}>Sets</Text>
+                  <View style={styles.stepperSm}>
+                    <TouchableOpacity
+                      style={styles.stepperButtonSm}
+                      onPress={() =>
+                        handleChangeSets(
+                          editingExerciseIndex,
+                          String(
+                            Math.max(1, (editingExercises[editingExerciseIndex]?.sets ?? 4) - 1)
+                          )
+                        )
+                      }
+                    >
+                      <Text style={styles.stepperButtonTextSm}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.stepperValueSm}>
+                      {editingExercises[editingExerciseIndex]?.sets ?? 4}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.stepperButtonSm}
+                      onPress={() =>
+                        handleChangeSets(
+                          editingExerciseIndex,
+                          String((editingExercises[editingExerciseIndex]?.sets ?? 4) + 1)
+                        )
+                      }
+                    >
+                      <Text style={styles.stepperButtonTextSm}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.editRowSpacer} />
+                <View style={styles.editRow}>
+                  <Text style={styles.editLabel}>Reps</Text>
+                  <View style={styles.presetRow}>
+                    {REP_PRESETS.map((preset) => {
+                      const repsValue =
+                        editingExercises[editingExerciseIndex]?.reps ?? '8-12';
+                      const isActive = repsValue === preset;
+                      return (
+                        <TouchableOpacity
+                          key={preset}
+                          style={[
+                            styles.presetChip,
+                            isActive && styles.presetChipActive,
+                          ]}
+                          onPress={() => handleChangeReps(editingExerciseIndex, preset)}
+                        >
+                          <Text
+                            style={[
+                              styles.presetText,
+                              isActive && styles.presetTextActive,
+                            ]}
+                          >
+                            {preset}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.editDoneButton}
+                  onPress={() => setEditingExerciseIndex(null)}
+                >
+                  <Text style={styles.editDoneText}>Done</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -957,6 +1250,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.bgPrimary,
+  },
+  containerEmbedded: {
+    backgroundColor: 'transparent',
   },
   gradient: {
     flex: 1,
@@ -970,6 +1266,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 80,
   },
+  scrollContentEmbedded: {
+    paddingHorizontal: 0,
+  },
   stickyHeader: {
     paddingTop: 60,
     paddingBottom: 16,
@@ -977,6 +1276,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bgPrimary,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
+  },
+  stickyHeaderEmbedded: {
+    paddingTop: 0,
+    paddingBottom: 10,
+    backgroundColor: 'transparent',
+    borderBottomWidth: 0,
+    paddingHorizontal: 0,
   },
   headerTop: {
     flexDirection: 'row',
@@ -988,6 +1294,12 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '700',
     color: COLORS.textPrimary,
+  },
+  headerSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
   },
   phaseChip: {
     paddingHorizontal: 12,
@@ -1057,6 +1369,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 1,
   },
+  contentEmbedded: {
+    paddingHorizontal: 0,
+  },
   dayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1089,6 +1404,146 @@ const styles = StyleSheet.create({
     padding: 18,
     gap: 12,
   },
+  swipeContainer: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 12,
+  },
+  swipeCompleteHint: {
+    position: 'absolute',
+    left: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+  },
+  swipeCompleteText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#00F5A0',
+  },
+  exercisePills: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: COLORS.elevated,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  pillLabel: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  pillValue: {
+    fontSize: 13,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  editCenterCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 24,
+    width: '88%',
+    maxWidth: 380,
+  },
+  editExerciseName: {
+    fontSize: 16,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  editRowSpacer: {
+    height: 16,
+  },
+  editLabel: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  stepperSm: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: COLORS.elevated,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  stepperButtonSm: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surface,
+  },
+  stepperButtonTextSm: {
+    fontSize: 16,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  stepperValueSm: {
+    minWidth: 24,
+    textAlign: 'center',
+    fontSize: 13,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  presetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  presetChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  presetChipActive: {
+    backgroundColor: COLORS.accentDim,
+    borderColor: COLORS.accent,
+  },
+  presetText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  presetTextActive: {
+    color: COLORS.textPrimary,
+  },
+  editDoneButton: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: COLORS.accent,
+    marginTop: 16,
+  },
+  editDoneText: {
+    fontSize: 12,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
   exerciseHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1114,17 +1569,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  planCompleteBadge: {
+  completeRadio: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.success,
-    backgroundColor: 'rgba(0, 245, 160, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'transparent',
   },
-  planCompleteBadgeText: {
+  completeRadioChecked: {
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    borderColor: 'rgba(0, 245, 160, 0.6)',
+  },
+  completeRadioCheck: {
     color: COLORS.success,
     fontSize: 14,
     fontWeight: '700',
@@ -1212,6 +1671,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
+  },
+  modalOverlayCenter: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalBackdropPress: {
     ...StyleSheet.absoluteFillObject,
