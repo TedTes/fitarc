@@ -824,6 +824,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               outputRange: [0, 0.25, 1],
               extrapolate: 'clamp',
             });
+            const deleteHintOpacity = swipeAnim.interpolate({
+              inputRange: [-120, -12, 0],
+              outputRange: [1, 0.25, 0],
+              extrapolate: 'clamp',
+            });
             const maxSwipeLeft = -120;
             const maxSwipeRight = 90;
             const panResponder = PanResponder.create({
@@ -900,6 +905,12 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                     <Text style={styles.swipeCompleteText}>
                       {isCompleted ? 'Undo' : 'Complete'}
                     </Text>
+                  </Animated.View>
+                  <Animated.View
+                    style={[styles.swipeDeleteHint, { opacity: deleteHintOpacity }]}
+                    pointerEvents="none"
+                  >
+                    <Text style={styles.swipeDeleteText}>Delete</Text>
                   </Animated.View>
                   <Animated.View
                     style={{ transform: [{ translateX: swipeAnim }] }}
@@ -1416,10 +1427,22 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
   },
+  swipeDeleteHint: {
+    position: 'absolute',
+    right: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+  },
   swipeCompleteText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#00F5A0',
+  },
+  swipeDeleteText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FF8B8B',
   },
   exercisePills: {
     flexDirection: 'row',

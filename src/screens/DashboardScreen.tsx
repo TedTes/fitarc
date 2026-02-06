@@ -447,6 +447,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!displayExercises.length) return false;
     return displayExercises.every((exercise) => isExerciseMarked(exercise));
   }, [displayExercises, isExerciseMarked]);
+  const completedExerciseCount = useMemo(
+    () => displayExercises.filter((exercise) => isExerciseMarked(exercise)).length,
+    [displayExercises, isExerciseMarked]
+  );
+  const progressPercent = useMemo(() => {
+    if (!displayExercises.length) return 0;
+    return Math.round((completedExerciseCount / displayExercises.length) * 100);
+  }, [completedExerciseCount, displayExercises.length]);
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
@@ -570,6 +578,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       };
     });
   }, [today]);
+
+  const visibleWeekDates = useMemo(() => weekDates, [weekDates]);
 
   const canLogWorkouts = hasActivePlan && !!onToggleWorkoutExercise;
   const adaptationInsight = useMemo(
@@ -880,7 +890,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     };
   }, [flushPendingToggles]);
 
-  const weekDayWidth = Math.max(44, Math.floor((calendarCardWidth - 32) / 7));
+  const weekDayWidth = Math.max(48, Math.floor((calendarCardWidth - 48) / 7) + 2);
 
   const renderWeekView = () => (
     <View style={styles.weekViewContainer}>
@@ -889,18 +899,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.weekScrollContent}
       >
-        {weekDates.map((day) => {
+        {visibleWeekDates.map((day) => {
           const isComplete = (completedSessionsByDate.get(day.dateKey) || 0) > 0;
           const isToday = day.dateKey === todayStr;
           
           const isSelected = day.dateKey === selectedDate;
           const handleSelectDay = () => {
-            setSelectedDate(day.dateKey);
-            if (!resolvedSessions.find((session) => session.date === day.dateKey)) {
-              if (_onCreateSession) {
-                _onCreateSession(day.dateKey);
-              }
-            }
+            handleSelectDate(day.dateKey);
           };
           return (
             <TouchableOpacity 
@@ -965,6 +970,25 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         ) : null}
         {hasActivePlan && planContextText ? null : null}
 
+        {displayExercises.length > 0 && (
+          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.sessionProgressCard}>
+            <View style={styles.progressHeader}>
+              <Text style={styles.progressTitle}>
+                Progress exercises ({completedExerciseCount}/{displayExercises.length})
+              </Text>
+              <Text style={styles.progressPercentage}>{progressPercent}%</Text>
+            </View>
+            <View style={styles.progressBarContainer}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  { width: `${(completedExerciseCount / displayExercises.length) * 100}%` },
+                ]}
+              />
+            </View>
+          </LinearGradient>
+        )}
+
         {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>🎯</Text>
@@ -995,6 +1019,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             onDeleteExercise={onDeleteExercise}
             embedded
             openExercisePickerSignal={exercisePickerNonce}
+            selectedDateOverride={selectedDate}
           />
         ) : !hasSyncedWorkout ? (
           <View style={styles.emptyCard}>
@@ -1134,6 +1159,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     setCalendarExpanded(false);
   }, [calendarExpanded]);
 
+  const handleSelectDate = useCallback(
+    (dateKey: string) => {
+      setSelectedDate(dateKey);
+      if (!resolvedSessions.find((session) => session.date === dateKey)) {
+        if (_onCreateSession) {
+          _onCreateSession(dateKey);
+        }
+      }
+      if (calendarExpanded) {
+        runLayoutAnimation();
+        setCalendarExpanded(false);
+      }
+    },
+    [calendarExpanded, resolvedSessions, _onCreateSession]
+  );
+
   const expandedCalendarHeight = Math.min(
     320,
     Math.max(190, Math.round(calendarCardWidth * 0.5) - 10)
@@ -1193,8 +1234,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={() => {
+              if (calendarExpanded) return;
               runLayoutAnimation();
-              setCalendarExpanded((prev) => !prev);
+              setCalendarExpanded(true);
             }}
           >
           <LinearGradient
@@ -1208,7 +1250,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             }}
           >
             {renderWeekView()}
-            <View style={styles.calendarLegendRow}>
+            <View
+              style={[
+                styles.calendarLegendRow,
+                { paddingHorizontal: Math.max(0, (weekDayWidth - 8) / 2) },
+              ]}
+            >
               <View style={styles.calendarLegendItem}>
                 <View style={[styles.calendarLegendDot, styles.calendarLegendDotComplete]} />
                 <Text style={styles.calendarLegendText}>Completed</Text>
@@ -1242,6 +1289,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   hideExtraDays={false}
                   showSixWeeks
                   theme={getCalendarTheme()}
+                  onDayPress={(day) => handleSelectDate(day.dateString)}
                   style={[styles.fullCalendar, { height: expandedCalendarHeight }]}
                 />
               )}
@@ -1367,14 +1415,13 @@ const styles = StyleSheet.create({
   },
   weekScrollContent: {
     paddingVertical: 4,
-    gap: 8,
-    paddingHorizontal: 0,
+    gap: 0,
+    paddingHorizontal: 8,
   },
   weekDay: {
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 0,
     paddingVertical: 4,
-    minWidth: 60,
   },
   weekDayToday: {
     backgroundColor: 'rgba(108, 99, 255, 0.1)',
@@ -1451,8 +1498,39 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 160,
   },
-  section: {
-    gap: 16,
+
+  sessionProgressCard: {
+    borderRadius: 16,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.2)',
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  progressTitle: {
+    fontSize: 13,
+    color: '#C7CCE6',
+    fontWeight: '700',
+  },
+  progressPercentage: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  progressBarContainer: {
+    height: 6,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 4,
+    backgroundColor: '#6C63FF',
   },
   adaptationCard: {
     borderRadius: 14,
@@ -1561,7 +1639,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   verticalList: {
-    gap: 16,
+    gap: 12,
   },
   exerciseCard: {
     borderRadius: 14,
