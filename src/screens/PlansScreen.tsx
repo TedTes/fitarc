@@ -598,7 +598,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const handleRemoveExercise = async (index: number) => {
     setEditingExerciseIndex((prev) => (prev === index ? null : prev));
     const exercise = editingExercisesRef.current[index];
-    const cardKey = `${exercise.name}-${index}`;
+    const cardKey = exercise.id ?? exercise.exerciseId ?? `${exercise.name}-${index}`;
     const cardAnim = getExerciseAnimation(cardKey);
     const needsRemoteDelete = Boolean(selectedPlan?.session?.id && exercise?.id && onDeleteExercise);
     const shouldPersistLocally = !selectedPlan?.session?.id;
@@ -812,7 +812,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       <View style={styles.workoutCard}>
         <View style={styles.exerciseList}>
           {editingExercises.map((exercise, idx) => {
-            const cardKey = `${exercise.name}-${idx}`;
+            const cardKey =
+              exercise.id ?? exercise.exerciseId ?? `${exercise.name}-${idx}`;
             const scaleAnim = getExerciseAnimation(cardKey);
             const setsValue = exercise.sets ?? 4;
             const repsValue = exercise.reps ?? '8-12';
