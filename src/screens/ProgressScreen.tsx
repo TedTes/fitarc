@@ -1,51 +1,56 @@
-import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Modal,
-  Pressable,
-  Animated,
-  Easing,
-  Platform,
-  UIManager,
-  ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useFocusEffect } from '@react-navigation/native';
-import { useFabAction } from '../contexts/FabActionContext';
-import { useScreenAnimation } from '../hooks/useScreenAnimation';
-import { ExpandableCard } from './ExpandableCard';
 import {
-  PhasePlan,
-  User,
-  TrackingPreferences,
-  WorkoutSessionEntry,
-  WorkoutLog,
-  StrengthSnapshot,
-} from '../types/domain';
-import { useProgressData } from '../hooks/useProgressData';
-import {
-  buildStrengthTrends,
-  buildWeeklyVolumeSummary,
-  buildMovementBalanceSummary,
-  StrengthTrendView,
-} from '../utils/performanceSelectors';
-import { fetchExerciseDefaults, ExerciseDefault } from '../services/workoutService';
-import {
-  fetchMuscleGroups,
-  fetchExercises,
-  deriveMovementPatterns,
-  MuscleGroupOption,
-  ExerciseOption,
-} from '../services/progressService';
-import { runLayoutAnimation } from '../utils/layoutAnimation';
+  VictoryAxis,
+  VictoryBar,
+  VictoryChart,
+  VictoryGroup,
+  VictoryLine,
+} from 'victory-native';
+import { PhasePlan, User, WorkoutLog, WorkoutSessionEntry, StrengthSnapshot, TrackingPreferences } from '../types/domain';
+import { parseYMDToDate } from '../utils/date';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const COLORS = {
+  bgPrimary: '#0A0E27',
+  bgSecondary: '#151932',
+  bgTertiary: '#1E2340',
+  surface: '#10142A',
+  card: 'rgba(21, 25, 50, 0.92)',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#C7CCE6',
+  textMuted: 'rgba(199, 204, 230, 0.6)',
+  accent: '#6C63FF',
+  accentSoft: 'rgba(108, 99, 255, 0.18)',
+  success: '#00F5A0',
+  pink: '#EC4899',
+  orange: '#FFA726',
+  border: 'rgba(108, 99, 255, 0.25)',
+  borderSoft: 'rgba(199, 204, 230, 0.08)',
+} as const;
+
+const VIEW_TABS = [
+  { id: 'overview', label: 'Overview', icon: '📊' },
+  { id: 'strength', label: 'Strength', icon: '💪' },
+  { id: 'body', label: 'Body', icon: '📏' },
+  { id: 'nutrition', label: 'Nutrition', icon: '🍽️' },
+] as const;
+
+const TIME_RANGES = [
+  { id: 'week', label: 'Week' },
+  { id: 'month', label: 'Month' },
+  { id: 'plan', label: 'Plan' },
+] as const;
 
 type ProgressScreenProps = {
   user: User;
@@ -58,1873 +63,790 @@ type ProgressScreenProps = {
   onUpdateTrackingPreferences?: (preferences: TrackingPreferences) => Promise<void> | void;
 };
 
-const COLORS = {
-  bgPrimary: '#0A0E27',
-  bgSecondary: '#151932',
-  bgTertiary: '#1E2340',
-  surface: '#10142A',
-  card: '#151932',
-  textPrimary: '#FFFFFF',
-  textSecondary: '#A0A3BD',
-  textTertiary: '#8B93B0',
-  textMuted: '#6E7191',
-  accent: '#6C63FF',
-  accentDim: 'rgba(108,99,255,0.15)',
-  accentGlow: 'rgba(108,99,255,0.3)',
-  success: '#00F5A0',
-  successDim: 'rgba(0,245,160,0.15)',
-  border: 'rgba(255,255,255,0.06)',
-  borderStrong: 'rgba(255,255,255,0.12)',
+const formatShortDate = (date: Date | null) => {
+  if (!date) return '—';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[date.getMonth()]} ${date.getDate()}`;
 };
 
-// Movement pattern color mapping
-const MOVEMENT_COLORS: Record<string, string> = {
-  'h_push': '#6C63FF',      // Horizontal Push - Purple
-  'h_pull': '#00D4FF',      // Horizontal Pull - Cyan
-  'v_push': '#B794F6',      // Vertical Push - Light Purple
-  'v_pull': '#4ECDC4',      // Vertical Pull - Teal
-  'squat': '#FFB800',       // Squat - Gold
-  'hinge': '#00F5A0',       // Hinge - Green
-  'carry': '#FF6B9D',       // Carry - Pink
-  'rotation': '#FF8C42',    // Rotation - Orange
+const getWeekNumber = (date: Date) => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 };
 
-const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
+const buildStrengthSeries = (snapshots: StrengthSnapshot[]) => {
+  if (!snapshots.length) {
+    return [
+      { week: 'W1', squat: 185, bench: 155, deadlift: 225, press: 95 },
+      { week: 'W2', squat: 195, bench: 160, deadlift: 235, press: 100 },
+      { week: 'W3', squat: 205, bench: 165, deadlift: 245, press: 105 },
+      { week: 'W4', squat: 215, bench: 170, deadlift: 255, press: 110 },
+    ];
+  }
 
-type MetricType = 'volume' | 'strength' | 'movement' | 'records';
+  const today = new Date();
+  const weeks: { key: string; start: Date }[] = [];
+  for (let i = 3; i >= 0; i -= 1) {
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - today.getDay() - i * 7);
+    weekStart.setHours(0, 0, 0, 0);
+    const key = `W${getWeekNumber(weekStart)}`;
+    weeks.push({ key, start: weekStart });
+  }
 
-const TRACKING_CATEGORIES = [
-  { id: 'muscles', label: 'Training Volume' },
-  { id: 'lifts', label: 'Strength Training' },
-  { id: 'movements', label: 'Movement Balance' },
-] as const;
+  const series = weeks.map((week) => {
+    const end = new Date(week.start);
+    end.setDate(end.getDate() + 7);
+    const bucket = snapshots.filter((snap) => {
+      const snapDate = new Date(snap.date);
+      return snapDate >= week.start && snapDate < end;
+    });
 
-type TrackingCategory = (typeof TRACKING_CATEGORIES)[number]['id'];
+    const maxFor = (lift: string) => {
+      const values = bucket
+        .filter((snap) => snap.lift === lift)
+        .map((snap) => snap.weight ?? 0);
+      return values.length ? Math.max(...values) : 0;
+    };
 
-const createTrackingDraft = (prefs?: TrackingPreferences): TrackingPreferences => ({
-  lifts: { ...(prefs?.lifts ?? {}) },
-  movements: { ...(prefs?.movements ?? {}) },
-  muscles: { ...(prefs?.muscles ?? {}) },
-});
+    return {
+      week: week.key,
+      squat: maxFor('squat'),
+      bench: maxFor('bench_press'),
+      deadlift: maxFor('deadlift'),
+      press: maxFor('overhead_press'),
+    };
+  });
 
-const toTrackingKey = (value: string) =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-
-// Mini sparkline component for trend visualization
-const MiniSparkline: React.FC<{ values: number[]; color: string; height?: number }> = ({ 
-  values, 
-  color, 
-  height = 20 
-}) => {
-  if (values.length < 2) return null;
-  
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const range = max - min || 1;
-  
-  const points = values.map((val, i) => {
-    const x = (i / (values.length - 1)) * 40;
-    const y = height - ((val - min) / range) * height;
-    return `${x},${y}`;
-  }).join(' ');
-  
-  return (
-    <View style={{ width: 40, height, overflow: 'visible' }}>
-      <svg width="40" height={height} style={{ position: 'absolute' }}>
-        <polyline
-          points={points}
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </View>
-  );
+  return series;
 };
 
-// Trend arrow component
-const TrendArrow: React.FC<{ direction: 'up' | 'down' | 'flat'; small?: boolean }> = ({ 
-  direction, 
-  small = false 
-}) => {
-  const arrows = {
-    up: '↗',
-    down: '↘',
-    flat: '→',
-  };
-  
-  const colors = {
-    up: COLORS.success,
-    down: '#FF6B6B',
-    flat: COLORS.textTertiary,
-  };
-  
-  return (
-    <Text style={{ 
-      fontSize: small ? 12 : 14, 
-      color: colors[direction],
-      fontWeight: '700'
-    }}>
-      {arrows[direction]}
-    </Text>
-  );
+const buildVolumeRows = (workoutLogs: WorkoutLog[]) => {
+  if (!workoutLogs.length) {
+    return [
+      { muscle: 'Chest', sets: 42, color: COLORS.accent },
+      { muscle: 'Back', sets: 48, color: COLORS.success },
+      { muscle: 'Legs', sets: 52, color: COLORS.orange },
+      { muscle: 'Shoulders', sets: 36, color: COLORS.pink },
+      { muscle: 'Arms', sets: 38, color: '#8B7FFF' },
+    ];
+  }
+
+  const totals = new Map<string, number>();
+  workoutLogs.forEach((log) => {
+    Object.entries(log.muscleVolume || {}).forEach(([key, value]) => {
+      totals.set(key, (totals.get(key) ?? 0) + (value ?? 0));
+    });
+  });
+
+  const colors = [COLORS.accent, COLORS.success, COLORS.orange, COLORS.pink, '#8B7FFF'];
+  return Array.from(totals.entries())
+    .map(([muscle, sets], index) => ({
+      muscle: muscle.charAt(0).toUpperCase() + muscle.slice(1),
+      sets: Math.round(sets),
+      color: colors[index % colors.length],
+    }))
+    .sort((a, b) => b.sets - a.sets)
+    .slice(0, 5);
 };
 
-const AnimatedListItem: React.FC<{
-  children: React.ReactNode;
-  index: number;
-  visible: boolean;
-  delay?: number;
-}> = ({ children, index, visible, delay = 50 }) => {
-  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
-
-  useEffect(() => {
-    if (visible) {
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 200,
-        delay: index * delay,
-        useNativeDriver: true,
-        easing: Easing.out(Easing.ease),
-      }).start();
-    } else {
-      opacity.setValue(0);
-    }
-  }, [visible, index, delay, opacity]);
-
-  return <Animated.View style={{ opacity }}>{children}</Animated.View>;
-};
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   user,
   phase,
-  workoutDataVersion,
-  onUpdateTrackingPreferences,
+  workoutSessions,
+  workoutLogs,
+  strengthSnapshots,
 }) => {
-  const { setFabAction } = useFabAction();
-  const { headerStyle, contentStyle } = useScreenAnimation({
-    headerDuration: 140,
-    contentDuration: 140,
-  });
-  const { data, isLoading, refresh } = useProgressData(
-    user.id,
-    phase.id,
-    undefined,
-    workoutDataVersion
-  );
+  const [activeView, setActiveView] = useState<typeof VIEW_TABS[number]['id']>('overview');
+  const [timeRange, setTimeRange] = useState<typeof TIME_RANGES[number]['id']>('month');
 
-  // Animation refs
-  const headerFadeAnim = useRef(new Animated.Value(0)).current;
-  const headerSlideAnim = useRef(new Animated.Value(-20)).current;
-  const cardSlideAnim = useRef(new Animated.Value(30)).current;
-  const cardFadeAnim = useRef(new Animated.Value(0)).current;
-  const scrollY = useRef(new Animated.Value(0)).current;
+  const planProgress = useMemo(() => {
+    const sessions = workoutSessions.filter((s) => s.phasePlanId === phase.id);
+    const completed = sessions.filter((session) => {
+      if (!session.exercises?.length) return false;
+      return session.exercises.every((ex) => ex.completed === true);
+    }).length;
+    const total = sessions.length;
 
-  const [activeMetrics] = useState<MetricType[]>(['volume', 'strength', 'movement']);
-  const [showAllVolume, setShowAllVolume] = useState(false);
-  const [showAllStrength, setShowAllStrength] = useState(false);
-  const [showAllMovement, setShowAllMovement] = useState(false);
-  const [trackingModalVisible, setTrackingModalVisible] = useState(false);
-  const [trackingDraft, setTrackingDraft] = useState<TrackingPreferences>(() =>
-    createTrackingDraft(user.trackingPreferences)
-  );
+    const startDate = phase.startDate ? parseYMDToDate(phase.startDate) : null;
+    const endDate = phase.expectedEndDate ? parseYMDToDate(phase.expectedEndDate) : null;
+    const totalWeeks = Math.max(phase.expectedWeeks ?? 8, 1);
+    const currentWeek = startDate
+      ? Math.min(
+          totalWeeks,
+          Math.max(1, Math.floor((Date.now() - startDate.getTime()) / 604800000) + 1)
+        )
+      : Math.min(4, totalWeeks);
 
-  // Dropdown (category) + tabs (selected/available)
-  const [trackingCategory, setTrackingCategory] = useState<TrackingCategory>('muscles');
-  const [trackingTab, setTrackingTab] = useState<'selected' | 'available'>('selected');
-  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
-
-  // DB-backed options state
-  const [muscleOptions, setMuscleOptions] = useState<MuscleGroupOption[]>([]);
-  const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
-  const [movementOptions, setMovementOptions] = useState<string[]>([]);
-  const [exerciseDefaults, setExerciseDefaults] = useState<ExerciseDefault[]>([]);
-  const [loadingOptions, setLoadingOptions] = useState(false);
-
-  // Header entrance animation
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(headerFadeAnim, {
-        toValue: 1,
-        duration: 200,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(headerSlideAnim, {
-        toValue: 0,
-        duration: 200,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [headerFadeAnim, headerSlideAnim]);
-
-  // Card entrance animation
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(cardFadeAnim, {
-        toValue: 1,
-        duration: 240,
-        delay: 120,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }),
-      Animated.timing(cardSlideAnim, {
-        toValue: 0,
-        duration: 240,
-        delay: 120,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [cardFadeAnim, cardSlideAnim]);
-
-  useFocusEffect(
-    useCallback(() => {
-      refresh();
-    }, [refresh])
-  );
-
-  useEffect(() => {
-    let isMounted = true;
-    const loadDefaults = async () => {
-      try {
-        const [defaults, exercises] = await Promise.all([
-          fetchExerciseDefaults(user.id),
-          fetchExercises(),
-        ]);
-        if (!isMounted) return;
-        setExerciseDefaults(defaults);
-        if (exerciseOptions.length === 0) {
-          setExerciseOptions(exercises);
-        }
-      } catch (error) {
-        console.error('Failed to load exercise defaults:', error);
-      }
-    };
-    loadDefaults();
-    return () => {
-      isMounted = false;
-    };
-  }, [user.id, exerciseOptions.length]);
-
-  const loadTrackingOptions = useCallback(async () => {
-    setLoadingOptions(true);
-    try {
-      const [muscles, exercises] = await Promise.all([fetchMuscleGroups(), fetchExercises()]);
-      setMuscleOptions(muscles);
-      setExerciseOptions(exercises);
-      setMovementOptions(deriveMovementPatterns(exercises));
-    } catch (error) {
-      console.error('Failed to load tracking options:', error);
-    } finally {
-      setLoadingOptions(false);
-    }
-  }, []);
-
-  const handleOpenTrackingModal = useCallback(async () => {
-    runLayoutAnimation();
-    setTrackingDraft(createTrackingDraft(user.trackingPreferences));
-    setTrackingCategory('muscles');
-    setTrackingTab('selected');
-    setShowCategoryMenu(false);
-    setTrackingModalVisible(true);
-    await loadTrackingOptions();
-  }, [user.trackingPreferences, loadTrackingOptions]);
-
-  const handleCloseTrackingModal = useCallback(() => {
-    setShowCategoryMenu(false);
-    setTrackingModalVisible(false);
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      setShowAllVolume(false);
-      setShowAllStrength(false);
-      setShowAllMovement(false);
-      setFabAction('Progress', {
-        label: 'Metrics',
-        icon: '+',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
-        onPress: handleOpenTrackingModal,
-      });
-
-      return () => {
-        setShowAllVolume(false);
-        setShowAllStrength(false);
-        setShowAllMovement(false);
-        setFabAction('Progress', null);
-      };
-    }, [handleOpenTrackingModal, setFabAction])
-  );
-
-  const handleAddTrackingItem = useCallback(
-    (label: string) => {
-      const key = toTrackingKey(label);
-      if (!key) return;
-
-      runLayoutAnimation();
-      setTrackingDraft((prev) => {
-        const next = createTrackingDraft(prev);
-        const bucket = next[trackingCategory] ?? {};
-        if (bucket[key]) return prev;
-        next[trackingCategory] = { ...bucket, [key]: label };
-        return next;
-      });
-    },
-    [trackingCategory]
-  );
-
-  const handleRemoveTrackingItem = useCallback(
-    (key: string) => {
-      runLayoutAnimation();
-      setTrackingDraft((prev) => {
-        const next = createTrackingDraft(prev);
-        const bucket = { ...(next[trackingCategory] ?? {}) };
-        if (!bucket[key]) return prev;
-        delete bucket[key];
-        next[trackingCategory] = bucket;
-        return next;
-      });
-    },
-    [trackingCategory]
-  );
-
-  const handleSaveTracking = useCallback(async () => {
-    if (!onUpdateTrackingPreferences) {
-      handleCloseTrackingModal();
-      return;
-    }
-    try {
-      await onUpdateTrackingPreferences(trackingDraft);
-      handleCloseTrackingModal();
-    } catch (error) {
-      console.error('Failed to save tracking preferences', error);
-    }
-  }, [handleCloseTrackingModal, onUpdateTrackingPreferences, trackingDraft]);
-
-  const labelMaps = useMemo(
-    () => ({
-      lifts: user.trackingPreferences?.lifts,
-      movements: user.trackingPreferences?.movements,
-      muscles: user.trackingPreferences?.muscles,
-    }),
-    [user.trackingPreferences]
-  );
-
-  const resolvedPhase = data?.phase ?? phase;
-  const resolvedPhaseId = resolvedPhase.id;
-
-  const mergedSessions = useMemo(() => data?.sessions || [], [data?.sessions]);
-  const mergedWorkoutLogs = useMemo(() => data?.workoutLogs || [], [data?.workoutLogs]);
-  const mergedSnapshots = useMemo(() => data?.strengthSnapshots || [], [data?.strengthSnapshots]);
-
-  const sessions = useMemo(
-    () => mergedSessions.filter((session) => session.phasePlanId === resolvedPhaseId),
-    [mergedSessions, resolvedPhaseId]
-  );
-  const workoutLogs = useMemo(
-    () => mergedWorkoutLogs.filter((log) => log.phasePlanId === resolvedPhaseId),
-    [mergedWorkoutLogs, resolvedPhaseId]
-  );
-  const strengthSnapshots = useMemo(
-    () => mergedSnapshots.filter((snap) => snap.phasePlanId === resolvedPhaseId),
-    [mergedSnapshots, resolvedPhaseId]
-  );
-
-  const completedDaysCount = useMemo(() => {
-    const completedDays = new Set<string>();
-    workoutLogs.forEach((log) => {
-      const hasCompletedWork =
-        Object.values(log.muscleVolume).some((value) => value > 0) ||
-        Object.values(log.movementPatterns).some((value) => value > 0) ||
-        (log.totalSets ?? 0) > 0;
-      if (hasCompletedWork && log.date) {
-        completedDays.add(log.date);
-      }
-    });
-    return completedDays.size;
-  }, [workoutLogs]);
-
-  const completedDaysLabel =
-    completedDaysCount > 0 ? `Last ${completedDaysCount} days` : 'No completed days yet';
-
-  const strengthTrendsRaw = buildStrengthTrends(strengthSnapshots, labelMaps);
-
-  const preferredWeightsByKey = useMemo(() => {
-    const exerciseKeyById = new Map(
-      exerciseOptions.map((exercise) => [exercise.id, toTrackingKey(exercise.name)])
-    );
-    const result = new Map<string, number>();
-    exerciseDefaults.forEach((def) => {
-      if (!def.exerciseId || !def.defaultWeight || def.defaultWeight <= 0) return;
-      const key = exerciseKeyById.get(def.exerciseId);
-      if (!key) return;
-      if (!result.has(key)) {
-        result.set(key, def.defaultWeight);
-      }
-    });
-    return result;
-  }, [exerciseDefaults, exerciseOptions]);
-
-  const hasStrengthSnapshots = strengthSnapshots.length > 0;
-
-  const strengthTrends = useMemo(() => {
-    if (!hasStrengthSnapshots) return [];
-
-    const existingKeys = new Set(strengthTrendsRaw.map((trend) => toTrackingKey(trend.lift)));
-    const selected = Object.entries(user.trackingPreferences?.lifts ?? {});
-
-    const filled = strengthTrendsRaw.map((trend) => {
-      if (trend.weights.length > 0) return trend;
-      const key = toTrackingKey(trend.lift);
-      const weight = preferredWeightsByKey.get(key);
-      if (!weight) return trend;
-      return {
-        ...trend,
-        weights: [weight],
-        deltaLbs: 0,
-        deltaPercent: 0,
-      };
-    });
-
-    const fallback = selected.reduce<StrengthTrendView[]>((acc, [key, label]) => {
-      const normalizedKey = key || toTrackingKey(label);
-      if (existingKeys.has(normalizedKey)) return acc;
-      const weight = preferredWeightsByKey.get(normalizedKey) ?? 0;
-      acc.push({
-        key: normalizedKey as any,
-        lift: label,
-        weights: [weight],
-        deltaLbs: 0,
-        deltaPercent: 0,
-      });
-      return acc;
-    }, []);
-
-    return [...filled, ...fallback];
-  }, [hasStrengthSnapshots, strengthTrendsRaw, preferredWeightsByKey, user.trackingPreferences?.lifts]);
-
-  const weeklyVolume = buildWeeklyVolumeSummary(workoutLogs, labelMaps);
-  const movementBalance = buildMovementBalanceSummary(workoutLogs, labelMaps);
-
-  // Calculate volume trends (mock data for now - you'd track historical volume)
-  const volumeTrends = useMemo(() => {
-    const trends = new Map<string, number[]>();
-    weeklyVolume.forEach((entry) => {
-      // Mock historical data - in production, you'd track this over time
-      const mockHistory = [
-        entry.sets * 0.7,
-        entry.sets * 0.8,
-        entry.sets * 0.9,
-        entry.sets,
-      ];
-      trends.set(entry.key, mockHistory);
-    });
-    return trends;
-  }, [weeklyVolume]);
-
-  const selectedMuscles = Object.entries(user.trackingPreferences?.muscles ?? {}).map(
-    ([key, label]) => ({ key, group: label, sets: 0 })
-  );
-  const volumeEntries = weeklyVolume.length > 0 ? weeklyVolume : selectedMuscles.slice(0, 3);
-
-  const selectedMovements = Object.entries(user.trackingPreferences?.movements ?? {}).map(
-    ([key, label]) => ({ key, name: label, sessions: 0 })
-  );
-  const movementEntries = movementBalance.length > 0 ? movementBalance : selectedMovements.slice(0, 3);
-
-  const selectedLifts = Object.entries(user.trackingPreferences?.lifts ?? {}).map(
-    ([key, label]) => ({ key, lift: label })
-  );
-  const strengthTrendEntries =
-    strengthTrends.length > 0
-      ? strengthTrends
-      : selectedLifts.slice(0, 3).map((lift) => ({
-          key: lift.key as any,
-          lift: lift.lift,
-          weights: [0],
-          deltaLbs: 0,
-          deltaPercent: 0,
-        }));
-
-  const sortedStrengthTrendEntries = useMemo(() => {
-    const sorted = [...strengthTrendEntries];
-    sorted.sort((a, b) => {
-      const aWeight = a.weights[a.weights.length - 1] || 0;
-      const bWeight = b.weights[b.weights.length - 1] || 0;
-      const aHasData = aWeight > 0 ? 1 : 0;
-      const bHasData = bWeight > 0 ? 1 : 0;
-      if (aHasData !== bHasData) return bHasData - aHasData;
-      return bWeight - aWeight;
-    });
-    return sorted;
-  }, [strengthTrendEntries]);
-
-  const bestLiftRows = strengthTrends
-    .map((trend) => ({
-      lift: trend.lift,
-      current: trend.weights[trend.weights.length - 1] || 0,
-      delta: trend.deltaLbs,
-    }))
-    .filter((row) => row.current > 0)
-    .sort((a, b) => b.current - a.current)
-    .slice(0, 3);
-
-  const showSyncNotice = isLoading && sessions.length === 0;
-
-  const recordRows =
-    bestLiftRows.length > 0
-      ? bestLiftRows
-      : strengthTrendEntries.map((trend) => ({
-          lift: trend.lift,
-          current: trend.weights[trend.weights.length - 1] || 0,
-          delta: 0,
-        }));
-
-  // Calculate summary metrics
-  const summaryMetrics = useMemo(() => {
-    const totalVolume = volumeEntries.reduce((sum, entry) => sum + entry.sets, 0);
-    const prCount = bestLiftRows.filter(row => row.delta > 0).length;
-    
-    // Calculate push:pull ratio
-    const pushPatterns = ['h_push', 'v_push'];
-    const pullPatterns = ['h_pull', 'v_pull'];
-    const pushSets = movementEntries
-      .filter(m => pushPatterns.includes(toTrackingKey(m.name)))
-      .reduce((sum, m) => sum + m.sessions, 0);
-    const pullSets = movementEntries
-      .filter(m => pullPatterns.includes(toTrackingKey(m.name)))
-      .reduce((sum, m) => sum + m.sessions, 0);
-    const pushPullRatio = pullSets > 0 ? (pullSets / Math.max(pushSets, 1)).toFixed(1) : '0.0';
-    
     return {
-      totalVolume,
-      prCount,
-      pushPullRatio,
+      name: phase.name ?? 'Training Plan',
+      startDate: formatShortDate(startDate),
+      endDate: formatShortDate(endDate),
+      currentWeek,
+      totalWeeks,
+      completionRate: total ? Math.round((completed / total) * 100) : 0,
+      totalWorkouts: total,
+      completedWorkouts: completed,
     };
-  }, [volumeEntries, bestLiftRows, movementEntries]);
+  }, [phase, workoutSessions]);
 
-  const getHeatColor = (intensity: number) => {
-    if (intensity >= 0.8) return COLORS.success;
-    if (intensity >= 0.5) return COLORS.accent;
-    if (intensity >= 0.3) return '#4B5385';
-    return '#4A527F';
-  };
+  const strengthData = useMemo(() => buildStrengthSeries(strengthSnapshots), [strengthSnapshots]);
+  const volumeData = useMemo(() => buildVolumeRows(workoutLogs), [workoutLogs]);
 
-  const getMovementColor = (movementKey: string): string => {
-    return MOVEMENT_COLORS[movementKey] || COLORS.accent;
-  };
+  const bodyMetrics = [
+    { date: 'W1', weight: 182, bodyFat: 18.2 },
+    { date: 'W2', weight: 181, bodyFat: 17.8 },
+    { date: 'W3', weight: 180.5, bodyFat: 17.5 },
+    { date: 'W4', weight: 179.8, bodyFat: 17.2 },
+  ];
 
-  // Map exercises to movement patterns (simplified - you'd want a proper mapping service)
-  const getExerciseMovementPattern = (exerciseName: string): string => {
-    const name = exerciseName.toLowerCase();
-    if (name.includes('bench') || name.includes('push up') || name.includes('dip')) return 'h_push';
-    if (name.includes('row') || name.includes('pull')) return 'h_pull';
-    if (name.includes('press') && name.includes('shoulder')) return 'v_push';
-    if (name.includes('pull up') || name.includes('chin')) return 'v_pull';
-    if (name.includes('squat')) return 'squat';
-    if (name.includes('deadlift') || name.includes('hinge')) return 'hinge';
-    return 'h_push'; // default
-  };
+  const nutritionData = [
+    { day: 'Mon', calories: 95, protein: 98, carbs: 92, fats: 88 },
+    { day: 'Tue', calories: 102, protein: 105, carbs: 98, fats: 95 },
+    { day: 'Wed', calories: 88, protein: 92, carbs: 85, fats: 90 },
+    { day: 'Thu', calories: 98, protein: 100, carbs: 96, fats: 92 },
+    { day: 'Fri', calories: 105, protein: 108, carbs: 102, fats: 98 },
+    { day: 'Sat', calories: 92, protein: 95, carbs: 88, fats: 85 },
+    { day: 'Sun', calories: 100, protein: 102, carbs: 98, fats: 95 },
+  ];
 
-  const maxVolumeRows = 3;
-  const volumeHasData = volumeEntries.length > 0;
-  const strengthHasData = sortedStrengthTrendEntries.length > 0;
-  const movementHasData = movementEntries.length > 0;
-  const recordsHasData = recordRows.length > 0;
+  const totalSets = volumeData.reduce((sum, item) => sum + item.sets, 0);
+  const avgWorkoutMinutes = Math.max(30, Math.round((totalSets / Math.max(planProgress.totalWorkouts, 1)) * 3));
 
-  const hasAnyMetricData = volumeHasData || strengthHasData || movementHasData || recordsHasData;
-
-  const visibleVolume = showAllVolume ? volumeEntries : volumeEntries.slice(0, maxVolumeRows);
-
-  const maxStrengthRows = 3;
-  const visibleStrength = showAllStrength
-    ? sortedStrengthTrendEntries
-    : sortedStrengthTrendEntries.slice(0, maxStrengthRows);
-
-  const maxMovementRows = 4;
-  const visibleMovements = showAllMovement
-    ? movementEntries
-    : movementEntries.slice(0, maxMovementRows);
-
-  const planWeeks = Math.max(resolvedPhase?.expectedWeeks ?? 8, 1);
-  const volumeWindowWeeks = 4;
-
-  const maxWindowSets = Math.max(...volumeEntries.map((entry) => entry.sets), 0);
-  const maxWeeklyAvg = maxWindowSets / volumeWindowWeeks;
-  const planBaseline = Math.max(maxWeeklyAvg * planWeeks, maxWindowSets, 1);
-
-  const toggleVolumeExpand = () => {
-    runLayoutAnimation();
-    setShowAllVolume((prev) => !prev);
-  };
-
-  const toggleStrengthExpand = () => {
-    runLayoutAnimation();
-    setShowAllStrength((prev) => !prev);
-  };
-
-  const toggleMovementExpand = () => {
-    runLayoutAnimation();
-    setShowAllMovement((prev) => !prev);
-  };
-
-  const collapseAllExpanded = useCallback(() => {
-    if (!showAllVolume && !showAllStrength && !showAllMovement) return;
-    runLayoutAnimation();
-    setShowAllVolume(false);
-    setShowAllStrength(false);
-    setShowAllMovement(false);
-  }, [showAllMovement, showAllStrength, showAllVolume]);
-
-  // Get available options based on category
-  const getAvailableOptions = useCallback((): string[] => {
-    const selectedKeys = new Set(Object.keys(trackingDraft[trackingCategory] ?? {}));
-
-    switch (trackingCategory) {
-      case 'muscles':
-        return muscleOptions
-          .map((m) => m.name)
-          .filter((name) => !selectedKeys.has(toTrackingKey(name)));
-      case 'lifts':
-        return exerciseOptions
-          .map((e) => e.name)
-          .filter((name) => !selectedKeys.has(toTrackingKey(name)));
-      case 'movements':
-        return movementOptions.filter((pattern) => !selectedKeys.has(toTrackingKey(pattern)));
-      default:
-        return [];
-    }
-  }, [trackingCategory, trackingDraft, muscleOptions, exerciseOptions, movementOptions]);
-
-  const renderSummaryCard = () => {
-    if (!hasAnyMetricData) return null;
-
-    return (
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{summaryMetrics.totalVolume}</Text>
-            <Text style={styles.summaryLabel}>Total Sets</Text>
-          </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{summaryMetrics.pushPullRatio}:1</Text>
-            <Text style={styles.summaryLabel}>Pull:Push</Text>
-          </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{summaryMetrics.prCount}</Text>
-            <Text style={styles.summaryLabel}>New PRs</Text>
-          </View>
-        </View>
-      </View>
-    );
-  };
-
-  const renderVolumeCard = () => {
-    if (!activeMetrics.includes('volume') || !volumeHasData) return null;
-
-    return (
-      <ExpandableCard
-        expanded={showAllVolume}
-        onToggle={toggleVolumeExpand}
-        totalCount={volumeEntries.length}
-        visibleCount={maxVolumeRows}
-        style={styles.card}
-      >
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>🔥 Training Volume</Text>
-          <Text style={styles.cardSubtitle}>{completedDaysLabel}</Text>
+  return (
+    <LinearGradient colors={SCREEN_GRADIENT} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <Text style={styles.headerEyebrow}>ANALYTICS</Text>
+          <Text style={styles.headerTitle}>Progress</Text>
         </View>
 
-        <View style={styles.volumeGrid}>
-          {visibleVolume.map((volume, index) => {
-            const intensity = Math.min(volume.sets / planBaseline, 1);
-            const barColor = getHeatColor(intensity);
-            const trendData = volumeTrends.get(volume.key);
-            const hasTrend = trendData && trendData.length > 1;
-            const isNewlyVisible = index >= maxVolumeRows;
-            
-            // Determine trend direction
-            let trendDirection: 'up' | 'down' | 'flat' = 'flat';
-            if (hasTrend && trendData) {
-              const last = trendData[trendData.length - 1];
-              const prev = trendData[trendData.length - 2];
-              if (last > prev * 1.05) trendDirection = 'up';
-              else if (last < prev * 0.95) trendDirection = 'down';
-            }
+        <View style={styles.planCard}>
+          <View style={styles.planGlow} />
+          <View style={styles.planHeader}>
+            <View>
+              <Text style={styles.planLabel}>CURRENT PLAN</Text>
+              <Text style={styles.planName}>{planProgress.name}</Text>
+              <Text style={styles.planDates}>{planProgress.startDate} → {planProgress.endDate}</Text>
+            </View>
+            <View style={styles.planAdherence}>
+              <Text style={styles.planAdherenceValue}>{planProgress.completionRate}%</Text>
+              <Text style={styles.planAdherenceLabel}>ADHERENCE</Text>
+            </View>
+          </View>
 
+          <View style={styles.weekProgressRow}>
+            {Array.from({ length: planProgress.totalWeeks }).map((_, index) => (
+              <View
+                key={index}
+                style={[
+                  styles.weekProgressBar,
+                  index < planProgress.currentWeek && styles.weekProgressBarActive,
+                ]}
+              />
+            ))}
+          </View>
+
+          <View style={styles.planFooter}>
+            <Text style={styles.planFooterText}>Week {planProgress.currentWeek} of {planProgress.totalWeeks}</Text>
+            <Text style={styles.planFooterText}>{planProgress.completedWorkouts}/{planProgress.totalWorkouts} workouts</Text>
+          </View>
+        </View>
+
+        <View style={styles.tabRow}>
+          {VIEW_TABS.map((tab) => {
+            const isActive = activeView === tab.id;
             return (
-              <AnimatedListItem
-                key={volume.key}
-                index={isNewlyVisible ? index - maxVolumeRows : 0}
-                visible={!isNewlyVisible || showAllVolume}
+              <TouchableOpacity
+                key={tab.id}
+                style={[styles.tabButton, isActive && styles.tabButtonActive]}
+                onPress={() => setActiveView(tab.id)}
               >
-                <View style={styles.volumeRow}>
-                  <Text style={styles.volumeLabel}>{volume.group}</Text>
-                  <View style={styles.volumeBarContainer}>
-                    <View style={[styles.volumeBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
-                  </View>
-                  <View style={styles.volumeValueContainer}>
-                    {hasTrend && (
-                      <TrendArrow direction={trendDirection} small />
-                    )}
-                    <Text style={styles.volumeValue}>{volume.sets}</Text>
-                  </View>
-                </View>
-              </AnimatedListItem>
+                <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                  {tab.icon} {tab.label}
+                </Text>
+              </TouchableOpacity>
             );
           })}
         </View>
-      </ExpandableCard>
-    );
-  };
 
-  const renderStrengthCard = () => {
-    if (!activeMetrics.includes('strength') || !strengthHasData) return null;
-
-    const maxDelta = Math.max(
-      ...visibleStrength.map((trend) => Math.max(trend.deltaLbs || 0, 0)),
-      1
-    );
-
-    return (
-      <ExpandableCard
-        expanded={showAllStrength}
-        onToggle={toggleStrengthExpand}
-        totalCount={sortedStrengthTrendEntries.length}
-        visibleCount={maxStrengthRows}
-        style={styles.card}
-      >
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>💪 Strength Trends</Text>
-          <Text style={styles.cardSubtitle}>
-            {hasStrengthSnapshots ? completedDaysLabel : 'Current starting weights'}
-          </Text>
+        <View style={styles.rangeRow}>
+          {TIME_RANGES.map((range) => {
+            const isActive = timeRange === range.id;
+            return (
+              <TouchableOpacity
+                key={range.id}
+                style={[styles.rangeButton, isActive && styles.rangeButtonActive]}
+                onPress={() => setTimeRange(range.id)}
+              >
+                <Text style={[styles.rangeText, isActive && styles.rangeTextActive]}>{range.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        <View style={styles.strengthList}>
-          {visibleStrength.map((trend, index) => {
-            const weight = trend.weights[trend.weights.length - 1] || 0;
-            const delta = Math.max(trend.deltaLbs || 0, 0);
-            const intensity =
-              delta > 0
-                ? Math.min(Math.max(delta / maxDelta, 0.12), 1)
-                : weight > 0
-                  ? 0.08
-                  : 0;
-            const barColor = delta > 0 ? COLORS.success : COLORS.accent;
-            
-            // Get movement pattern color for this exercise
-            const movementPattern = getExerciseMovementPattern(trend.lift);
-            const movementColor = getMovementColor(movementPattern);
-            const isNewlyVisible = index >= maxStrengthRows;
+        {activeView === 'overview' && (
+          <>
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <View>
+                  <Text style={styles.cardTitle}>Training Volume</Text>
+                  <Text style={styles.cardSubtitle}>Total sets • Last 4 weeks</Text>
+                </View>
+                <View style={styles.cardChip}>
+                  <Text style={styles.cardChipText}>{totalSets} sets</Text>
+                </View>
+              </View>
 
-            return (
-              <AnimatedListItem
-                key={trend.key}
-                index={isNewlyVisible ? index - maxStrengthRows : 0}
-                visible={!isNewlyVisible || showAllStrength}
-              >
-                <View style={styles.strengthRow}>
-                  <View style={styles.strengthInfo}>
-                    <View style={styles.strengthTitleRow}>
-                      <View style={[styles.movementDot, { backgroundColor: movementColor }]} />
-                      <Text style={styles.strengthLift}>{trend.lift}</Text>
+              <View style={styles.volumeList}>
+                {volumeData.map((item) => (
+                  <View key={item.muscle} style={styles.volumeRow}>
+                    <View style={styles.volumeRowHeader}>
+                      <Text style={styles.volumeLabel}>{item.muscle}</Text>
+                      <Text style={[styles.volumeValue, { color: item.color }]}>{item.sets}</Text>
+                    </View>
+                    <View style={styles.volumeBarTrack}>
+                      <View
+                        style={[
+                          styles.volumeBarFill,
+                          {
+                            width: `${Math.min((item.sets / 60) * 100, 100)}%`,
+                            backgroundColor: item.color,
+                          },
+                        ]}
+                      />
                     </View>
                   </View>
-                  <View style={styles.strengthBarContainer}>
-                    <View style={[styles.strengthBar, { width: `${intensity * 100}%`, backgroundColor: barColor }]} />
-                  </View>
-                  <View style={styles.strengthStats}>
-                    <Text style={styles.strengthWeight}>{weight} lbs</Text>
-                    {trend.deltaLbs !== 0 && (
-                      <Text style={[styles.strengthDelta, trend.deltaLbs > 0 && styles.strengthDeltaPositive]}>
-                        {trend.deltaLbs > 0 ? '+' : ''}
-                        {trend.deltaLbs} lbs
-                      </Text>
-                    )}
-                  </View>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.statsGrid}>
+              {[
+                { label: 'Avg. Workout', value: `${avgWorkoutMinutes}min`, icon: '⏱️', color: COLORS.orange },
+                { label: 'Total PRs', value: '12', icon: '🔥', color: COLORS.pink },
+                { label: 'Rest Days', value: '8', icon: '😴', color: '#8B7FFF' },
+                { label: 'Consistency', value: `${planProgress.completionRate}%`, icon: '✓', color: COLORS.success },
+              ].map((stat) => (
+                <View key={stat.label} style={styles.statCard}>
+                  <View style={styles.statGlow} />
+                  <Text style={styles.statIcon}>{stat.icon}</Text>
+                  <Text style={styles.statLabel}>{stat.label}</Text>
+                  <Text style={[styles.statValue, { color: stat.color }]}>{stat.value}</Text>
                 </View>
-              </AnimatedListItem>
-            );
-          })}
-        </View>
-      </ExpandableCard>
-    );
-  };
+              ))}
+            </View>
+          </>
+        )}
 
-  const renderMovementCard = () => {
-    if (!activeMetrics.includes('movement') || !movementHasData) return null;
-
-    const maxSessions = Math.max(...movementEntries.map((m) => m.sessions), 1);
-
-    return (
-      <ExpandableCard
-        expanded={showAllMovement}
-        onToggle={toggleMovementExpand}
-        totalCount={movementEntries.length}
-        visibleCount={maxMovementRows}
-        style={styles.card}
-      >
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>🎯 Movement Balance</Text>
-          <Text style={styles.cardSubtitle}>{completedDaysLabel}</Text>
-        </View>
-
-        <View style={styles.movementBalanceContainer}>
-          {visibleMovements.map((movement, index) => {
-            const intensity = movement.sessions / maxSessions;
-            const movementKey = toTrackingKey(movement.name);
-            const movementColor = getMovementColor(movementKey);
-            const isNewlyVisible = index >= maxMovementRows;
-            
-            return (
-              <AnimatedListItem
-                key={movement.key}
-                index={isNewlyVisible ? index - maxMovementRows : 0}
-                visible={!isNewlyVisible || showAllMovement}
+        {activeView === 'strength' && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Strength Progression</Text>
+            <View style={styles.chartContainer}>
+              <VictoryChart
+                width={SCREEN_WIDTH - 64}
+                height={260}
+                padding={{ top: 20, bottom: 40, left: 40, right: 20 }}
               >
-                <View style={styles.movementBalanceRow}>
-                  <View style={styles.movementBalanceHeader}>
-                    <View style={[styles.movementIndicatorLarge, { backgroundColor: movementColor }]} />
-                    <Text style={styles.movementBalanceName}>{movement.name}</Text>
-                    <Text style={styles.movementBalanceCount}>×{movement.sessions}</Text>
-                  </View>
-                  <View style={styles.movementBalanceBarContainer}>
-                    <View 
-                      style={[
-                        styles.movementBalanceBar, 
-                        { 
-                          width: `${intensity * 100}%`, 
-                          backgroundColor: movementColor 
-                        }
-                      ]} 
-                    />
-                  </View>
-                </View>
-              </AnimatedListItem>
-            );
-          })}
-        </View>
+                <VictoryAxis
+                  tickFormat={(t) => t}
+                  style={{
+                    axis: { stroke: 'rgba(199,204,230,0.3)' },
+                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                  }}
+                />
+                <VictoryAxis
+                  dependentAxis
+                  style={{
+                    axis: { stroke: 'rgba(199,204,230,0.3)' },
+                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                    grid: { stroke: 'rgba(199,204,230,0.08)' },
+                  }}
+                />
+                <VictoryLine data={strengthData} x="week" y="squat" style={{ data: { stroke: COLORS.orange, strokeWidth: 3 } }} />
+                <VictoryLine data={strengthData} x="week" y="bench" style={{ data: { stroke: COLORS.accent, strokeWidth: 3 } }} />
+                <VictoryLine data={strengthData} x="week" y="deadlift" style={{ data: { stroke: COLORS.pink, strokeWidth: 3 } }} />
+              </VictoryChart>
+            </View>
 
-        {showAllMovement && (
-          <View style={styles.movementLegend}>
-            <Text style={styles.movementLegendTitle}>Pattern Distribution</Text>
-            <View style={styles.movementLegendRow}>
-              {movementEntries.slice(0, 4).map((movement) => {
-                const movementKey = toTrackingKey(movement.name);
-                const movementColor = getMovementColor(movementKey);
-                const percentage = ((movement.sessions / Math.max(movementEntries.reduce((sum, m) => sum + m.sessions, 0), 1)) * 100).toFixed(0);
-                
-                return (
-                  <View key={movement.key} style={styles.movementLegendItem}>
-                    <View style={[styles.movementLegendDot, { backgroundColor: movementColor }]} />
-                    <Text style={styles.movementLegendText}>{percentage}%</Text>
-                  </View>
-                );
-              })}
+            <View style={styles.liftRow}>
+              {[
+                { name: 'Squat', color: COLORS.orange, value: '215 lbs', gain: '+30' },
+                { name: 'Bench', color: COLORS.accent, value: '170 lbs', gain: '+15' },
+                { name: 'Deadlift', color: COLORS.pink, value: '255 lbs', gain: '+30' },
+                { name: 'Press', color: COLORS.success, value: '110 lbs', gain: '+15' },
+              ].map((item) => (
+                <View key={item.name} style={styles.liftCard}>
+                  <View style={[styles.liftDot, { backgroundColor: item.color }]} />
+                  <Text style={styles.liftLabel}>{item.name}</Text>
+                  <Text style={[styles.liftValue, { color: item.color }]}>{item.value}</Text>
+                  <Text style={styles.liftGain}>{item.gain} lbs</Text>
+                </View>
+              ))}
             </View>
           </View>
         )}
-      </ExpandableCard>
-    );
-  };
 
-  const renderRecordsCard = () => {
-    if (!activeMetrics.includes('records') || !recordsHasData) return null;
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>🏆 Personal Records</Text>
-          <Text style={styles.cardSubtitle}>Top 3 lifts</Text>
-        </View>
-
-        <View style={styles.prList}>
-          {recordRows.map((row, idx) => {
-            const rankEmojis = ['🥇', '🥈', '🥉'];
-            return (
-              <View key={row.lift} style={styles.prRow}>
-                <View style={[styles.prRank, idx === 0 && styles.prRank1, idx === 1 && styles.prRank2, idx === 2 && styles.prRank3]}>
-                  <Text style={styles.prRankEmoji}>{rankEmojis[idx]}</Text>
-                </View>
-                <View style={styles.prInfo}>
-                  <Text style={styles.prLift}>{row.lift}</Text>
-                  <Text style={styles.prWeight}>{row.current} lbs</Text>
-                </View>
-                {row.delta > 0 && (
-                  <View style={styles.prBadgeImproved}>
-                    <Text style={styles.prArrow}>↑</Text>
-                    <Text style={styles.prBadgeText}>+{row.delta}</Text>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </View>
-      </View>
-    );
-  };
-
-  const availableOptions = getAvailableOptions();
-  const selectedItems = Object.entries(trackingDraft[trackingCategory] ?? {});
-  const selectedCategoryLabel = TRACKING_CATEGORIES.find((c) => c.id === trackingCategory)?.label ?? 'Training Volume';
-
-  const renderEmptyMetrics = () => (
-    <View style={[styles.card, styles.emptyStateCard]}>
-      <Text style={styles.emptyStateEmoji}>📊</Text>
-      <Text style={styles.emptyStateTitle}>No progress data yet</Text>
-      <Text style={styles.emptyStateText}>
-        Complete workouts to unlock training volume, strength trends, and movement balance.
-      </Text>
-    </View>
-  );
-
-  return (
-    <>
-      <LinearGradient colors={SCREEN_GRADIENT} style={styles.container}>
-        <Animated.ScrollView
-          style={[styles.scrollView, contentStyle]}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-          onScrollBeginDrag={() => {
-            collapseAllExpanded();
-          }}
-          onMomentumScrollBegin={() => {
-            collapseAllExpanded();
-          }}
-          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
-        >
-          <Animated.View
-            style={[
-              headerStyle,
-              {
-                opacity: headerFadeAnim,
-                transform: [{ translateY: headerSlideAnim }],
-              },
-            ]}
-          >
-            <View style={styles.header}>
-              <View>
-              </View>
-            </View>
-          </Animated.View>
-
-          {showSyncNotice && <Text style={styles.syncNotice}>⏳ Syncing latest progress data...</Text>}
-
-          {hasAnyMetricData ? (
-            <Animated.View
-              style={{
-                opacity: cardFadeAnim,
-                transform: [{ translateY: cardSlideAnim }],
-                gap: 16,
-              }}
-            >
-              {renderSummaryCard()}
-              {renderVolumeCard()}
-              {renderStrengthCard()}
-              {renderMovementCard()}
-              {renderRecordsCard()}
-            </Animated.View>
-          ) : (
-            renderEmptyMetrics()
-          )}
-
-          {activeMetrics.length === 0 && (
-            <View style={styles.noMetricsCard}>
-              <Text style={styles.noMetricsEmoji}>📈</Text>
-              <Text style={styles.noMetricsTitle}>Select metrics to track</Text>
-              <Text style={styles.noMetricsText}>
-                Choose from the options above to customize your progress view
-              </Text>
-            </View>
-          )}
-        </Animated.ScrollView>
-      </LinearGradient>
-
-      {/* Tracking Modal */}
-      <Modal
-        transparent
-        animationType="fade"
-        visible={trackingModalVisible}
-        onRequestClose={handleCloseTrackingModal}
-      >
-        <View style={styles.trackingOverlay}>
-          <Pressable style={styles.trackingBackdrop} onPress={handleCloseTrackingModal} />
-          <View style={styles.trackingSheet}>
-            <View style={styles.trackingHeader}>
-              <Text style={styles.trackingTitle}>Manage Tracking</Text>
-              <TouchableOpacity
-                style={styles.trackingCloseButton}
-                onPress={handleCloseTrackingModal}
+        {activeView === 'body' && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Body Composition</Text>
+            <View style={styles.chartContainer}>
+              <VictoryChart
+                width={SCREEN_WIDTH - 64}
+                height={240}
+                padding={{ top: 20, bottom: 40, left: 40, right: 20 }}
               >
-                <Text style={styles.trackingCloseText}>×</Text>
-              </TouchableOpacity>
+                <VictoryAxis
+                  tickFormat={(t) => t}
+                  style={{
+                    axis: { stroke: 'rgba(199,204,230,0.3)' },
+                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                  }}
+                />
+                <VictoryAxis
+                  dependentAxis
+                  style={{
+                    axis: { stroke: 'rgba(199,204,230,0.3)' },
+                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                    grid: { stroke: 'rgba(199,204,230,0.08)' },
+                  }}
+                />
+                <VictoryLine data={bodyMetrics} x="date" y="weight" style={{ data: { stroke: COLORS.accent, strokeWidth: 3 } }} />
+              </VictoryChart>
             </View>
 
-            <View style={styles.trackingControlRow}>
-              <View style={styles.dropdownWrapper}>
-                <TouchableOpacity
-                  style={styles.dropdownTrigger}
-                  onPress={() => setShowCategoryMenu((v) => !v)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.dropdownLabel}>{selectedCategoryLabel}</Text>
-                  <Text style={styles.dropdownChevron}>▾</Text>
-                </TouchableOpacity>
-
-                {showCategoryMenu && (
-                  <View style={styles.dropdownMenu}>
-                    {TRACKING_CATEGORIES.map((category) => {
-                      const isActive = trackingCategory === category.id;
-                      return (
-                        <TouchableOpacity
-                          key={category.id}
-                          style={[styles.dropdownItem, isActive && styles.dropdownItemActive]}
-                          onPress={() => {
-                            runLayoutAnimation();
-                            setTrackingCategory(category.id);
-                            setTrackingTab('selected');
-                            setShowCategoryMenu(false);
-                          }}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={[styles.dropdownItemText, isActive && styles.dropdownItemTextActive]}>
-                            {category.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
+            <View style={styles.bodyGrid}>
+              <View style={styles.bodyCard}>
+                <Text style={styles.bodyLabel}>Weight</Text>
+                <Text style={styles.bodyValue}>179.8</Text>
+                <Text style={styles.bodyDelta}>-2.2 lbs</Text>
               </View>
-
-              <View style={styles.trackingTabRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.trackingTabCompact,
-                    trackingTab === 'selected' && styles.trackingTabCompactActive,
-                  ]}
-                  onPress={() => {
-                    setShowCategoryMenu(false);
-                    setTrackingTab('selected');
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.trackingTabTextCompact,
-                      trackingTab === 'selected' && styles.trackingTabTextCompactActive,
-                    ]}
-                  >
-                    Selected
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.trackingTabCompact,
-                    trackingTab === 'available' && styles.trackingTabCompactActive,
-                  ]}
-                  onPress={() => {
-                    setShowCategoryMenu(false);
-                    setTrackingTab('available');
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.trackingTabTextCompact,
-                      trackingTab === 'available' && styles.trackingTabTextCompactActive,
-                    ]}
-                  >
-                    Available
-                  </Text>
-                </TouchableOpacity>
+              <View style={[styles.bodyCard, styles.bodyCardPink]}>
+                <Text style={styles.bodyLabel}>Body Fat</Text>
+                <Text style={[styles.bodyValue, styles.bodyValuePink]}>17.2%</Text>
+                <Text style={styles.bodyDelta}>-1.0%</Text>
               </View>
             </View>
-
-            {loadingOptions ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={COLORS.accent} />
-                <Text style={styles.loadingText}>Loading options...</Text>
-              </View>
-            ) : (
-              <View style={styles.trackingContent}>
-                <Text style={styles.trackingHintText}>
-                  Only selected items with logged workouts will appear on the Progress screen.
-                </Text>
-
-                <View style={styles.trackingPanel}>
-                  <View style={styles.trackingPanelHeader}>
-                    <Text style={styles.trackingPanelLabel}>
-                      {trackingTab === 'selected'
-                        ? `${selectedItems.length} Selected`
-                        : `${availableOptions.length} Available`}
-                    </Text>
-                  </View>
-
-                  {trackingTab === 'selected' ? (
-                    selectedItems.length > 0 ? (
-                      <ScrollView
-                        style={styles.trackingPanelScroll}
-                        contentContainerStyle={styles.trackingPanelList}
-                        showsVerticalScrollIndicator={false}
-                      >
-                        {selectedItems.map(([key, label]) => (
-                          <View key={key} style={styles.trackingItem}>
-                            <Text style={styles.trackingItemLabel}>{label}</Text>
-                            <TouchableOpacity
-                              style={styles.trackingRemoveButton}
-                              onPress={() => handleRemoveTrackingItem(key)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.trackingRemoveText}>×</Text>
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                      </ScrollView>
-                    ) : (
-                      <Text style={styles.trackingColumnEmptyText}>
-                        No items selected yet.{'\n'}Switch to "Available" to add metrics.
-                      </Text>
-                    )
-                  ) : availableOptions.length > 0 ? (
-                    <ScrollView style={styles.trackingPanelScroll} showsVerticalScrollIndicator={false}>
-                      {availableOptions.map((option) => (
-                        <TouchableOpacity
-                          key={option}
-                          style={styles.optionItem}
-                          onPress={() => handleAddTrackingItem(option)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.optionText}>{option}</Text>
-                          <View style={styles.optionAddIcon}>
-                            <Text style={styles.optionAddText}>+</Text>
-                          </View>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  ) : (
-                    <Text style={styles.trackingColumnEmptyText}>
-                      No available items.{'\n'}All options have been added.
-                    </Text>
-                  )}
-                </View>
-              </View>
-            )}
-
-            <TouchableOpacity style={styles.trackingSaveButton} onPress={handleSaveTracking} activeOpacity={0.8}>
-              <Text style={styles.trackingSaveText}>Save Changes</Text>
-            </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
-    </>
+        )}
+
+        {activeView === 'nutrition' && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Nutrition Adherence</Text>
+            <View style={styles.chartContainer}>
+              <VictoryChart
+                width={SCREEN_WIDTH - 64}
+                height={220}
+                domainPadding={{ x: 18 }}
+                padding={{ top: 20, bottom: 40, left: 40, right: 20 }}
+              >
+                <VictoryAxis
+                  tickFormat={(t) => t}
+                  style={{
+                    axis: { stroke: 'rgba(199,204,230,0.3)' },
+                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                  }}
+                />
+                <VictoryAxis
+                  dependentAxis
+                  style={{
+                    axis: { stroke: 'rgba(199,204,230,0.3)' },
+                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                    grid: { stroke: 'rgba(199,204,230,0.08)' },
+                  }}
+                />
+                <VictoryGroup data={nutritionData} x="day">
+                  <VictoryBar dataKey="protein" style={{ data: { fill: COLORS.accent } }} />
+                </VictoryGroup>
+              </VictoryChart>
+            </View>
+
+            <View style={styles.macroRow}>
+              {[
+                { label: 'Protein', avg: 98, color: COLORS.accent },
+                { label: 'Carbs', avg: 93, color: COLORS.orange },
+                { label: 'Fats', avg: 91, color: COLORS.pink },
+              ].map((macro) => (
+                <View key={macro.label} style={styles.macroCard}>
+                  <Text style={styles.macroLabel}>{macro.label}</Text>
+                  <Text style={[styles.macroValue, { color: macro.color }]}>{macro.avg}%</Text>
+                  <Text style={styles.macroSub}>Avg. Adherence</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+      </ScrollView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollView: { flex: 1 },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 100,
-    paddingTop: '20%',
-  },
-
-  header: { marginBottom: 24 },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    letterSpacing: -0.5,
-  },
-  headerSubtitle: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-  },
-  syncNotice: {
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    fontSize: 13,
-    marginBottom: 16,
-  },
-
-  // Summary Card
-  summaryCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  summaryItem: {
+  container: {
     flex: 1,
-    alignItems: 'center',
+    backgroundColor: COLORS.bgPrimary,
   },
-  summaryValue: {
-    fontSize: 24,
+  content: {
+    padding: 24,
+    paddingBottom: 120,
+  },
+  header: {
+    marginBottom: 24,
+  },
+  headerEyebrow: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  headerTitle: {
+    fontSize: 36,
     fontWeight: '800',
     color: COLORS.textPrimary,
-    marginBottom: 4,
   },
-  summaryLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  summaryDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: COLORS.border,
-  },
-
-  // Cards
-  card: {
+  planCard: {
     backgroundColor: COLORS.card,
-    borderRadius: 20,
+    borderRadius: 24,
     padding: 20,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  cardHeader: { marginBottom: 16 },
-  cardTitle: {
-    fontSize: 16,
+  planGlow: {
+    position: 'absolute',
+    top: -40,
+    right: -40,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(0,245,160,0.12)',
+  },
+  planHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  planLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
     fontWeight: '700',
+    letterSpacing: 1,
+  },
+  planName: {
+    fontSize: 22,
+    fontWeight: '800',
     color: COLORS.textPrimary,
-    marginBottom: 4,
+    marginTop: 6,
+  },
+  planDates: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    marginTop: 4,
+  },
+  planAdherence: {
+    alignItems: 'flex-end',
+  },
+  planAdherenceValue: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: COLORS.success,
+  },
+  planAdherenceLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  weekProgressRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 12,
+  },
+  weekProgressBar: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(199,204,230,0.1)',
+  },
+  weekProgressBarActive: {
+    backgroundColor: COLORS.accent,
+  },
+  planFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  planFooterText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  tabRow: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: 'rgba(30,36,61,0.4)',
+    padding: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
+    marginBottom: 14,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  tabButtonActive: {
+    backgroundColor: COLORS.accent,
+  },
+  tabText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+  },
+  tabTextActive: {
+    color: COLORS.textPrimary,
+  },
+  rangeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 20,
+  },
+  rangeButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(30,36,61,0.4)',
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
+  },
+  rangeButtonActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentSoft,
+  },
+  rangeText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+  },
+  rangeTextActive: {
+    color: COLORS.textPrimary,
+  },
+  card: {
+    backgroundColor: COLORS.card,
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
   },
   cardSubtitle: {
     fontSize: 12,
-    color: COLORS.textTertiary,
+    color: COLORS.textMuted,
+    marginTop: 6,
   },
-
-  // Volume
-  volumeGrid: { gap: 10 },
-  volumeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  volumeLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    width: 80,
-  },
-  volumeBarContainer: {
-    flex: 1,
-    height: 24,
-    backgroundColor: COLORS.bgTertiary,
+  cardChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderRadius: 12,
-    overflow: 'hidden',
-  },
-  volumeBar: { height: '100%', borderRadius: 12 },
-  volumeValueContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    width: 60,
-    justifyContent: 'flex-end',
-  },
-  volumeValue: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textSecondary,
-    textAlign: 'right',
-  },
-  volumeToggle: {
-    marginTop: 12,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderRadius: 10,
+    backgroundColor: COLORS.accentSoft,
     borderWidth: 1,
-    borderColor: COLORS.accentGlow,
+    borderColor: COLORS.border,
   },
-  volumeToggleText: {
-    fontSize: 12,
-    fontWeight: '600',
+  cardChipText: {
+    fontSize: 13,
     color: COLORS.accent,
-    letterSpacing: 0.2,
+    fontWeight: '800',
   },
-
-  // Strength
-  strengthList: { gap: 12 },
-  strengthRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 5,
-    gap: 12,
-  },
-  strengthInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  strengthTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  movementDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  strengthLift: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    flexWrap: 'wrap',
-    flex: 1,
-  },
-  strengthBarContainer: {
-    flex: 1,
-    height: 24,
-    backgroundColor: COLORS.bgTertiary,
-    borderRadius: 12,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignSelf: 'center',
-  },
-  strengthBar: {
-    height: '100%',
-    borderRadius: 12,
-  },
-  strengthStats: {
-    alignItems: 'flex-end',
-    alignSelf: 'center',
-    minWidth: 60,
-  },
-  strengthWeight: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  strengthDelta: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textTertiary,
-    marginTop: 2,
-  },
-  strengthDeltaPositive: { color: COLORS.success },
-
-  // Movement Balance - Enhanced
-  movementBalanceContainer: {
+  volumeList: {
     gap: 14,
   },
-  movementBalanceRow: {
-    gap: 8,
-  },
-  movementBalanceHeader: {
+  volumeRowHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
-  movementIndicatorLarge: {
+  volumeLabel: {
+    fontSize: 14,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  volumeValue: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  volumeBarTrack: {
+    height: 10,
+    borderRadius: 6,
+    backgroundColor: 'rgba(10,14,39,0.6)',
+    overflow: 'hidden',
+  },
+  volumeBarFill: {
+    height: '100%',
+    borderRadius: 6,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  statCard: {
+    width: (SCREEN_WIDTH - 60) / 2,
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  statGlow: {
+    position: 'absolute',
+    top: -20,
+    right: -20,
+    width: 80,
+    height: 80,
+    backgroundColor: 'rgba(108,99,255,0.12)',
+    borderRadius: 40,
+  },
+  statIcon: {
+    fontSize: 24,
+    marginBottom: 10,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+  chartContainer: {
+    marginTop: 12,
+  },
+  liftRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 16,
+  },
+  liftCard: {
+    backgroundColor: 'rgba(10,14,39,0.4)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
+    minWidth: 90,
+    alignItems: 'center',
+  },
+  liftDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-  },
-  movementBalanceName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    flex: 1,
-  },
-  movementBalanceCount: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textSecondary,
-  },
-  movementBalanceBarContainer: {
-    height: 8,
-    backgroundColor: COLORS.bgTertiary,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  movementBalanceBar: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  movementLegend: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  movementLegendTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
     marginBottom: 8,
   },
-  movementLegendRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  movementLegendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  movementLegendDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  movementLegendText: {
+  liftLabel: {
     fontSize: 11,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-
-  // Movement (old pill style - keeping for compatibility)
-  movementGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    width: '100%',
-  },
-  movementPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.bgTertiary,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    gap: 6,
-    maxWidth: '100%',
-  },
-  movementIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.success,
-  },
-  movementName: {
-    fontSize: 13,
-    color: COLORS.textPrimary,
-    fontWeight: '500',
-    flexShrink: 1,
-  },
-  movementCount: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-  },
-
-  // Personal Records
-  prList: { gap: 12 },
-  prRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.bgTertiary,
-  },
-  prRank: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.accent,
-  },
-  prRank1: { backgroundColor: '#FFD700' },
-  prRank2: { backgroundColor: '#C0C0C0' },
-  prRank3: { backgroundColor: '#CD7F32' },
-  prRankEmoji: { fontSize: 20 },
-  prInfo: { flex: 1 },
-  prLift: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  prWeight: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  prBadgeImproved: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.successDim,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    gap: 4,
-  },
-  prArrow: { fontSize: 14, color: COLORS.success },
-  prBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.success,
-  },
-
-  // Empty States
-  emptyStateCard: {
-    alignItems: 'center',
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-  },
-  emptyStateEmoji: {
-    fontSize: 48,
-    marginBottom: 12,
-    opacity: 0.7,
-  },
-  emptyStateTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  emptyStateText: {
-    fontSize: 13,
-    color: COLORS.textTertiary,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-
-  // No Metrics State
-  noMetricsCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 20,
-    padding: 40,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  noMetricsEmoji: {
-    fontSize: 64,
-    marginBottom: 16,
-    opacity: 0.6,
-  },
-  noMetricsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 8,
-  },
-  noMetricsText: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-
-  // Tracking Modal
-  trackingOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-  },
-  trackingBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  trackingSheet: {
-    backgroundColor: COLORS.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 24,
-    minHeight: '60%',
-    maxHeight: '85%',
-    position: 'relative',
-  },
-  trackingHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  trackingTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  trackingCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.bgSecondary,
-  },
-  trackingCloseText: {
-    fontSize: 22,
-    color: COLORS.textSecondary,
-    fontWeight: '400',
-  },
-
-  // Dropdown - Compact Style
-  dropdownWrapper: {
-    marginRight: 8,
-    zIndex: 50,
-    minWidth: 160,
-  },
-  dropdownTrigger: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  dropdownLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    letterSpacing: 0.1,
-  },
-  dropdownChevron: {
-    fontSize: 14,
-    color: COLORS.textTertiary,
-    fontWeight: '600',
-    marginLeft: 6,
-  },
-  dropdownMenu: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 46,
-    borderRadius: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  dropdownItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-  },
-  dropdownItemActive: {
-    backgroundColor: COLORS.accentDim,
-  },
-  dropdownItemText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  dropdownItemTextActive: {
-    color: COLORS.accent,
-  },
-
-  trackingControlRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
-  },
-  trackingTabRow: {
-    flexDirection: 'row',
-    gap: 6,
-    flex: 1,
-  },
-  trackingTabCompact: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    alignItems: 'center',
-  },
-  trackingTabCompactActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentDim,
-  },
-  trackingTabTextCompact: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textTertiary,
-    letterSpacing: 0.3,
-  },
-  trackingTabTextCompactActive: {
-    color: COLORS.accent,
-  },
-
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  loadingText: {
-    color: COLORS.textSecondary,
-    marginTop: 12,
-    fontSize: 14,
-  },
-  trackingContent: {
-    flex: 1,
-    marginBottom: 16,
-  },
-  trackingHintText: {
-    fontSize: 12,
     color: COLORS.textMuted,
-    marginBottom: 12,
-    lineHeight: 16,
-    paddingHorizontal: 2,
+    fontWeight: '600',
   },
-  trackingPanel: {
-    flex: 1,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.bgSecondary,
-    overflow: 'hidden',
+  liftValue: {
+    fontSize: 16,
+    fontWeight: '900',
+    marginTop: 6,
   },
-  trackingPanelHeader: {
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(108, 99, 255, 0.08)',
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  trackingPanelLabel: {
+  liftGain: {
     fontSize: 11,
-    fontWeight: '800',
-    color: COLORS.accent,
-    textTransform: 'uppercase',
-    letterSpacing: 1.2,
+    color: COLORS.success,
+    fontWeight: '700',
   },
-  trackingPanelScroll: { flex: 1 },
-  trackingPanelList: {
-    padding: 12,
-    gap: 8,
-  },
-  trackingColumnEmptyText: {
-    padding: 32,
-    textAlign: 'center',
-    color: COLORS.textTertiary,
-    fontSize: 14,
-    fontStyle: 'italic',
-    lineHeight: 20,
-  },
-  trackingItem: {
+  bodyGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: COLORS.card,
+    gap: 12,
+    marginTop: 16,
+  },
+  bodyCard: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: COLORS.accentSoft,
     borderWidth: 1,
     borderColor: COLORS.border,
-  },
-  trackingItemLabel: {
-    flex: 1,
-    fontSize: 14,
-    color: COLORS.textPrimary,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  trackingRemoveButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 68, 68, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 123, 123, 0.3)',
-    marginLeft: 12,
   },
-  trackingRemoveText: {
-    color: '#FF6B6B',
-    fontSize: 20,
-    fontWeight: '600',
-    lineHeight: 20,
+  bodyCardPink: {
+    backgroundColor: 'rgba(236,72,153,0.1)',
+    borderColor: 'rgba(236,72,153,0.2)',
   },
-  optionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 14,
-    backgroundColor: COLORS.card,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    marginHorizontal: 12,
-    borderRadius: 12,
-    marginBottom: 8,
+  bodyLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
-  optionText: {
-    flex: 1,
-    fontSize: 14,
-    color: COLORS.textPrimary,
-    fontWeight: '500',
-    letterSpacing: 0.2,
-  },
-  optionAddIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.accentDim,
-    borderWidth: 1,
-    borderColor: COLORS.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 12,
-  },
-  optionAddText: {
-    fontSize: 18,
+  bodyValue: {
+    fontSize: 26,
+    fontWeight: '900',
     color: COLORS.accent,
-    fontWeight: '700',
-    lineHeight: 18,
+    marginTop: 8,
   },
-  trackingSaveButton: {
-    paddingVertical: 16,
+  bodyValuePink: {
+    color: COLORS.pink,
+  },
+  bodyDelta: {
+    fontSize: 12,
+    color: COLORS.success,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  macroRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  macroCard: {
+    flex: 1,
+    padding: 14,
     borderRadius: 14,
-    backgroundColor: COLORS.accent,
+    backgroundColor: 'rgba(10,14,39,0.4)',
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
     alignItems: 'center',
-    shadowColor: COLORS.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
   },
-  trackingSaveText: {
-    fontSize: 15,
+  macroLabel: {
+    fontSize: 10,
+    color: COLORS.textMuted,
     fontWeight: '700',
-    color: COLORS.bgPrimary,
+    textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  macroValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    marginTop: 8,
+  },
+  macroSub: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+    marginTop: 6,
   },
 });
 

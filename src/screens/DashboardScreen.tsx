@@ -54,6 +54,11 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(240, Math.round(SCREEN_HEIGHT * 0.20)));
 
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
+const TEMPLATE_PLACEHOLDERS = [
+  { id: 'tmpl-upper', title: 'Upper Body Power', meta: '45-55 min • Strength' },
+  { id: 'tmpl-lower', title: 'Lower Body Builder', meta: '40-50 min • Hypertrophy' },
+  { id: 'tmpl-full', title: 'Full Body Express', meta: '30-40 min • Conditioning' },
+] as const;
 
 // Animation configurations
 const ANIMATION_CONFIG = {
@@ -300,6 +305,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [calendarCardWidth, setCalendarCardWidth] = useState(
     Dimensions.get('window').width - 40
   );
+  const [dashboardTab, setDashboardTab] = useState<'plans' | 'templates'>('plans');
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orderUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -447,14 +453,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!displayExercises.length) return false;
     return displayExercises.every((exercise) => isExerciseMarked(exercise));
   }, [displayExercises, isExerciseMarked]);
-  const completedExerciseCount = useMemo(
-    () => displayExercises.filter((exercise) => isExerciseMarked(exercise)).length,
-    [displayExercises, isExerciseMarked]
-  );
-  const progressPercent = useMemo(() => {
-    if (!displayExercises.length) return 0;
-    return Math.round((completedExerciseCount / displayExercises.length) * 100);
-  }, [completedExerciseCount, displayExercises.length]);
   
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
@@ -949,8 +947,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
 
   const renderWorkoutsSection = () => {
-    return (
-      <View style={styles.section}>
+    const mainContent = (
+      <>
         {hasActivePlan && adaptationCopy ? (
           <View style={styles.adaptationCard}>
             <Text style={styles.adaptationTitle}>{adaptationCopy.title}</Text>
@@ -970,26 +968,25 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         ) : null}
         {hasActivePlan && planContextText ? null : null}
 
-        {displayExercises.length > 0 && (
-          <LinearGradient colors={CARD_GRADIENT_DEFAULT} style={styles.sessionProgressCard}>
-            <View style={styles.progressHeader}>
-              <Text style={styles.progressTitle}>
-                Progress exercises ({completedExerciseCount}/{displayExercises.length})
-              </Text>
-              <Text style={styles.progressPercentage}>{progressPercent}%</Text>
-            </View>
-            <View style={styles.progressBarContainer}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  { width: `${(completedExerciseCount / displayExercises.length) * 100}%` },
-                ]}
-              />
-            </View>
-          </LinearGradient>
-        )}
+        {dashboardTab === 'templates' ? (
+          <View style={styles.templateList}>
+            {TEMPLATE_PLACEHOLDERS.map((template) => (
+              <LinearGradient
+                key={template.id}
+                colors={CARD_GRADIENT_DEFAULT}
+                style={styles.templateCard}
+              >
+                <Text style={styles.templateTitle}>{template.title}</Text>
+                <Text style={styles.templateMeta}>{template.meta}</Text>
+                <TouchableOpacity style={styles.templateAction}>
+                  <Text style={styles.templateActionText}>Use Template</Text>
+                </TouchableOpacity>
+              </LinearGradient>
+            ))}
+          </View>
+        ) : null}
 
-        {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
+        {dashboardTab === 'plans' && !hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>🎯</Text>
             <Text style={styles.emptyTitle}>No active plan</Text>
@@ -1008,7 +1005,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               </Animated.View>
             )}
           </View>
-        ) : hasActivePlan ? (
+        ) : dashboardTab === 'plans' && hasActivePlan ? (
           <PlansScreen
             user={user}
             phase={phase}
@@ -1021,7 +1018,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             openExercisePickerSignal={exercisePickerNonce}
             selectedDateOverride={selectedDate}
           />
-        ) : !hasSyncedWorkout ? (
+        ) : dashboardTab === 'plans' && !hasSyncedWorkout ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>📭</Text>
             <Text style={styles.emptyTitle}>No workout scheduled</Text>
@@ -1029,7 +1026,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               Your workout for today will appear here once scheduled.
             </Text>
           </View>
-        ) : (
+        ) : dashboardTab === 'plans' ? (
           <View style={styles.verticalList}>
             {sortedWorkoutCards.map((exercise) => {
               const isMarked = isExerciseMarked(exercise);
@@ -1148,7 +1145,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               );
             })}
           </View>
-        )}
+        ) : null}
+      </>
+    );
+
+    return (
+      <View style={styles.section}>
+        <View style={styles.progressMainColumn}>{mainContent}</View>
       </View>
     );
   };
@@ -1304,13 +1307,52 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           showsVerticalScrollIndicator={false}
           bounces={true}
           onScrollBeginDrag={handleContentScrollBegin}
+          stickyHeaderIndices={[0]}
         >
+          <View style={styles.tabsStickyWrapper}>
+            <View style={styles.dashboardTabRow}>
+              <TouchableOpacity
+                style={[
+                  styles.dashboardTabButton,
+                  dashboardTab === 'plans' && styles.dashboardTabButtonActive,
+                ]}
+                onPress={() => setDashboardTab('plans')}
+              >
+                <Text
+                  style={[
+                    styles.dashboardTabText,
+                    dashboardTab === 'plans' && styles.dashboardTabTextActive,
+                  ]}
+                >
+                  Plans
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.dashboardTabButton,
+                  dashboardTab === 'templates' && styles.dashboardTabButtonActive,
+                ]}
+                onPress={() => setDashboardTab('templates')}
+              >
+                <Text
+                  style={[
+                    styles.dashboardTabText,
+                    dashboardTab === 'templates' && styles.dashboardTabTextActive,
+                  ]}
+                >
+                  Templates
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
           {renderWorkoutsSection()}
         </ScrollView>
       </LinearGradient>
     </View>
   );
 };
+
+
 
 const styles = StyleSheet.create({
   container: {
@@ -1320,71 +1362,98 @@ const styles = StyleSheet.create({
   gradient: {
     flex: 1,
   },
+  
+  // ========================================
+  // HEADER SECTION - Enhanced visual hierarchy
+  // ========================================
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     paddingHorizontal: 20,
     paddingTop: 60,
-    paddingBottom: 16,
+    paddingBottom: 20,
   },
   headerLeft: {
     flex: 1,
   },
   greeting: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#8B93B0',
-    marginBottom: 4,
+    marginBottom: 6,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
   userName: {
-    fontSize: 36,
-    fontWeight: '700',
+    fontSize: 38,
+    fontWeight: '800',
     color: '#FFFFFF',
+    letterSpacing: -0.8,
+    marginBottom: 2,
   },
   sessionMetaLine: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#8B93B0',
-    fontWeight: '500',
+    marginTop: 8,
+    fontSize: 13,
+    color: '#6C63FF',
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   avatarButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: 'rgba(108, 99, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderWidth: 2.5,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
   },
   avatarText: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '800',
     color: '#FFFFFF',
+    letterSpacing: 0.5,
   },
   avatarImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 35,
+    borderRadius: 31,
   },
+
+  // ========================================
+  // CALENDAR SECTION - Modern glassmorphism
+  // ========================================
   calendarSection: {
     paddingHorizontal: 20,
-    marginBottom: 16,
+    marginBottom: 10,
   },
   calendarCard: {
-    borderRadius: 20,
-    padding: 16,
+    borderRadius: 24,
+    padding: 20,
     borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.15)',
+    borderColor: 'rgba(108, 99, 255, 0.2)',
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 4,
   },
   calendarLegendRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 6,
-    marginBottom: 4,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
   },
   calendarLegendItem: {
     flexDirection: 'row',
@@ -1392,94 +1461,129 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   calendarLegendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
   },
   calendarLegendDotComplete: {
-    backgroundColor: COLORS.success,
+    backgroundColor: '#00F5A0',
+    shadowColor: '#00F5A0',
   },
   calendarLegendDotToday: {
-    backgroundColor: 'rgba(108, 99, 255, 0.7)',
+    backgroundColor: '#6C63FF',
+    shadowColor: '#6C63FF',
   },
   calendarLegendDotPlanned: {
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   calendarLegendText: {
-    fontSize: 10,
-    color: '#8B93B0',
+    fontSize: 11,
+    color: '#A0A3BD',
     fontWeight: '600',
+    letterSpacing: 0.2,
   },
+
+  // ========================================
+  // WEEK VIEW - Enhanced visual indicators
+  // ========================================
   weekViewContainer: {
     position: 'relative',
   },
   weekScrollContent: {
-    paddingVertical: 4,
+    paddingVertical: 8,
     gap: 0,
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
   },
   weekDay: {
     alignItems: 'center',
-    paddingHorizontal: 0,
-    paddingVertical: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+    borderRadius: 16,
   },
   weekDayToday: {
-    backgroundColor: 'rgba(108, 99, 255, 0.1)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderRadius: 16,
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   weekDaySelected: {
-    backgroundColor: 'rgba(108, 99, 255, 0.18)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(108, 99, 255, 0.25)',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.4)',
   },
   weekDayName: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#8B93B0',
-    fontWeight: '600',
-    marginBottom: 6,
+    fontWeight: '700',
+    marginBottom: 8,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   weekDayNameToday: {
-    color: '#6C63FF',
+    color: '#8B7FFF',
+    fontWeight: '800',
   },
   weekDayNumber: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   weekDayNumberComplete: {
     backgroundColor: '#00F5A0',
+    borderColor: '#00F5A0',
     shadowColor: '#00F5A0',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 6,
   },
   weekDayNumberToday: {
-    backgroundColor: 'rgba(108, 99, 255, 0.3)',
-    borderWidth: 2,
+    backgroundColor: 'rgba(108, 99, 255, 0.25)',
+    borderWidth: 2.5,
     borderColor: '#6C63FF',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
   },
   weekDayNumberText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '800',
     color: '#FFFFFF',
   },
   weekDayNumberTextComplete: {
     color: '#0A0E27',
+    fontWeight: '900',
   },
   weekDayNumberTextToday: {
     color: '#6C63FF',
   },
   weekDayIndicator: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: '#00F5A0',
-    marginTop: 6,
+    marginTop: 8,
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 4,
   },
+
+  // ========================================
+  // FULL CALENDAR - Expandable section
+  // ========================================
   fullCalendarContainer: {
     overflow: 'hidden',
     marginTop: 0,
@@ -1490,6 +1594,10 @@ const styles = StyleSheet.create({
   fullCalendar: {
     marginTop: 0,
   },
+
+  // ========================================
+  // CONTENT SCROLL - Main content area
+  // ========================================
   contentScrollView: {
     flex: 1,
   },
@@ -1499,59 +1607,142 @@ const styles = StyleSheet.create({
     paddingBottom: 160,
   },
 
-  sessionProgressCard: {
-    borderRadius: 16,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
+  // ========================================
+  // SECTIONS - Layout structure
+  // ========================================
+  section: {
+    position: 'relative',
   },
-  progressHeader: {
+  progressMainColumn: {
+    flex: 1,
+    gap: 8,
+  },
+
+  // ========================================
+  // TABS - Enhanced tab navigation
+  // ========================================
+  tabsStickyWrapper: {
+    paddingBottom: 0,
+  },
+  dashboardTabRow: {
     flexDirection: 'row',
+    gap: 10,
+    marginBottom: 4,
+  },
+  dashboardTabButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
+    backgroundColor: 'rgba(30, 36, 61, 0.4)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(199, 204, 230, 0.1)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
-  progressTitle: {
+  dashboardTabButtonActive: {
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.45)',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  dashboardTabText: {
     fontSize: 13,
-    color: '#C7CCE6',
+    color: '#8B93B0',
     fontWeight: '700',
+    letterSpacing: 0.3,
   },
-  progressPercentage: {
+  dashboardTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+
+  // ========================================
+  // TEMPLATES - Template list
+  // ========================================
+  templateList: {
+    gap: 12,
+  },
+  templateCard: {
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.25)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+  },
+  templateTitle: {
+    fontSize: 17,
+    color: '#FFFFFF',
+    fontWeight: '800',
+    marginBottom: 8,
+    letterSpacing: -0.2,
+  },
+  templateMeta: {
+    fontSize: 13,
+    color: '#A0A3BD',
+    marginBottom: 14,
+    fontWeight: '600',
+  },
+  templateAction: {
+    alignSelf: 'flex-start',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(108, 99, 255, 0.25)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.4)',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  templateActionText: {
     fontSize: 13,
     color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  progressBarContainer: {
-    height: 6,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 4,
-    backgroundColor: '#6C63FF',
-  },
-  adaptationCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 245, 160, 0.25)',
-    backgroundColor: 'rgba(0, 245, 160, 0.08)',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  adaptationTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#00F5A0',
-    marginBottom: 4,
+    fontWeight: '800',
     letterSpacing: 0.2,
   },
-  adaptationText: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#C7CCE6',
+
+  // ========================================
+  // ADAPTATION CARD - Progress insights
+  // ========================================
+  adaptationCard: {
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: 'rgba(0, 245, 160, 0.3)',
+    backgroundColor: 'rgba(0, 245, 160, 0.1)',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
   },
+  adaptationTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#00F5A0',
+    marginBottom: 6,
+    letterSpacing: 0.3,
+  },
+  adaptationText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#E0E2F0',
+    fontWeight: '500',
+  },
+
+  // ========================================
+  // CHECKLIST CARD - Missing inputs
+  // ========================================
   checklistCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -1577,6 +1768,10 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     lineHeight: 18,
   },
+
+  // ========================================
+  // PLAN CONTEXT CARD - Plan details
+  // ========================================
   planContextCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -1596,59 +1791,81 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     lineHeight: 17,
   },
+
+  // ========================================
+  // EMPTY STATE - No content placeholder
+  // ========================================
   emptyCard: {
-    borderRadius: 20,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
-    padding: 32,
+    borderColor: 'rgba(108, 99, 255, 0.25)',
+    padding: 36,
     alignItems: 'center',
-    backgroundColor: 'rgba(108, 99, 255, 0.05)',
+    backgroundColor: 'rgba(108, 99, 255, 0.08)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
   },
   emptyEmoji: {
-    fontSize: 48,
-    marginBottom: 16,
+    fontSize: 56,
+    marginBottom: 20,
+    textShadowColor: 'rgba(0, 0, 0, 0.1)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '800',
     color: '#FFFFFF',
-    marginBottom: 8,
+    marginBottom: 10,
+    letterSpacing: -0.3,
   },
   emptyText: {
     fontSize: 14,
-    color: '#8B93B0',
+    color: '#A0A3BD',
     textAlign: 'center',
-    marginBottom: 20,
-    lineHeight: 20,
+    marginBottom: 24,
+    lineHeight: 22,
+    paddingHorizontal: 10,
   },
   createPlanButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
+    paddingVertical: 16,
+    paddingHorizontal: 36,
     backgroundColor: '#6C63FF',
-    borderRadius: 12,
+    borderRadius: 14,
     shadowColor: '#6C63FF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 8,
   },
   createPlanButtonText: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#FFFFFF',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
   },
+
+  // ========================================
+  // EXERCISE CARDS - Workout items
+  // ========================================
   verticalList: {
     gap: 12,
   },
   exerciseCard: {
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
+    borderColor: 'rgba(108, 99, 255, 0.25)',
     position: 'relative',
     overflow: 'hidden',
     width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
   },
   exerciseCardDisabled: {
     opacity: 0.6,
@@ -1672,47 +1889,66 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+
+  // ========================================
+  // CHECKBOX - Exercise completion
+  // ========================================
   checkCircleActive: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
     borderColor: '#00F5A0',
-    backgroundColor: 'rgba(0, 245, 160, 0.12)',
+    backgroundColor: '#00F5A0',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
   },
   checkCircleInactive: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkCircleText: {
-    color: '#00F5A0',
-    fontSize: 14,
-    fontWeight: '700',
+    color: '#0A0E27',
+    fontSize: 16,
+    fontWeight: '900',
   },
+
+  // ========================================
+  // EXERCISE INFO - Details and meta
+  // ========================================
   exerciseName: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '800',
     color: '#FFFFFF',
-    marginBottom: 4,
+    marginBottom: 6,
+    letterSpacing: -0.2,
   },
   exerciseMetaLine: {
     fontSize: 12,
-    color: '#8B93B0',
-    marginBottom: 8,
+    color: '#A0A3BD',
+    marginBottom: 10,
+    fontWeight: '600',
   },
   exerciseBodyParts: {
     fontSize: 12,
-    color: '#A0A3BD',
+    color: '#8B7FFF',
     marginBottom: 4,
+    fontWeight: '600',
   },
+
+  // ========================================
+  // WORKOUT CONTROLS - Sets, RPE, Rest
+  // ========================================
   workoutControlRow: {
     marginTop: 8,
     gap: 8,
@@ -1721,44 +1957,51 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   stepperButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    backgroundColor: 'rgba(108, 99, 255, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
   },
   stepperButtonText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
   },
   stepperValue: {
-    color: '#C7CCE6',
-    fontSize: 12,
-    fontWeight: '600',
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   restButton: {
-    marginTop: 8,
+    marginTop: 10,
     alignSelf: 'flex-start',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 245, 160, 0.35)',
-    backgroundColor: 'rgba(0, 245, 160, 0.12)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(0, 245, 160, 0.4)',
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    shadowColor: '#00F5A0',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   restButtonText: {
     color: '#00F5A0',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });
