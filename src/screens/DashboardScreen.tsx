@@ -11,6 +11,7 @@ import {
   Animated,
   Easing,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   User,
@@ -50,14 +51,49 @@ const COLORS = {
   overlayLight: 'rgba(255, 255, 255, 0.25)',
 } as const;
 
-// Muscle group color mapping
-const MUSCLE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  chest: { bg: 'rgba(239, 68, 68, 0.15)', text: '#FCA5A5', border: 'rgba(239, 68, 68, 0.3)' },
-  back: { bg: 'rgba(59, 130, 246, 0.15)', text: '#93C5FD', border: 'rgba(59, 130, 246, 0.3)' },
-  legs: { bg: 'rgba(168, 85, 247, 0.15)', text: '#C4B5FD', border: 'rgba(168, 85, 247, 0.3)' },
-  shoulders: { bg: 'rgba(234, 179, 8, 0.15)', text: '#FDE047', border: 'rgba(234, 179, 8, 0.3)' },
-  arms: { bg: 'rgba(236, 72, 153, 0.15)', text: '#F9A8D4', border: 'rgba(236, 72, 153, 0.3)' },
-  core: { bg: 'rgba(16, 185, 129, 0.15)', text: '#6EE7B7', border: 'rgba(16, 185, 129, 0.3)' },
+// Muscle group color mapping with gradients
+const MUSCLE_COLORS: Record<string, { 
+  bg: string; 
+  text: string; 
+  border: string;
+  gradient: readonly string[];
+}> = {
+  chest: { 
+    bg: 'rgba(239, 68, 68, 0.15)', 
+    text: '#FCA5A5', 
+    border: 'rgba(239, 68, 68, 0.3)',
+    gradient: ['#EF4444', '#DC2626'] as const,
+  },
+  back: { 
+    bg: 'rgba(59, 130, 246, 0.15)', 
+    text: '#93C5FD', 
+    border: 'rgba(59, 130, 246, 0.3)',
+    gradient: ['#3B82F6', '#2563EB'] as const,
+  },
+  legs: { 
+    bg: 'rgba(168, 85, 247, 0.15)', 
+    text: '#C4B5FD', 
+    border: 'rgba(168, 85, 247, 0.3)',
+    gradient: ['#A855F7', '#9333EA'] as const,
+  },
+  shoulders: { 
+    bg: 'rgba(234, 179, 8, 0.15)', 
+    text: '#FDE047', 
+    border: 'rgba(234, 179, 8, 0.3)',
+    gradient: ['#EAB308', '#CA8A04'] as const,
+  },
+  arms: { 
+    bg: 'rgba(236, 72, 153, 0.15)', 
+    text: '#F9A8D4', 
+    border: 'rgba(236, 72, 153, 0.3)',
+    gradient: ['#EC4899', '#DB2777'] as const,
+  },
+  core: { 
+    bg: 'rgba(16, 185, 129, 0.15)', 
+    text: '#6EE7B7', 
+    border: 'rgba(16, 185, 129, 0.3)',
+    gradient: ['#10B981', '#059669'] as const,
+  },
 };
 
 const ACTIVITY_TOTAL_DAYS_FALLBACK = 182;
@@ -66,7 +102,7 @@ const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(240, Math.round(SCREEN_HE
 
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
 
-// 🎨 Enhanced Template System with Full Exercise Details
+// 🎨 Enhanced Template System
 type TemplateExercise = {
   name: string;
   bodyParts: string[];
@@ -93,7 +129,7 @@ const TEMPLATE_LIBRARY: WorkoutTemplate[] = [
     title: 'Upper Body Power',
     meta: '45-55 min • Strength',
     description: 'Build explosive upper body strength with compound movements',
-    gradient: ['rgba(108, 99, 255, 0.25)', 'rgba(72, 63, 200, 0.15)'] as const,
+    gradient: ['rgba(108, 99, 255, 0.35)', 'rgba(72, 63, 200, 0.25)', 'rgba(50, 40, 150, 0.15)'] as const,
     icon: '💪',
     difficulty: 'intermediate',
     estimatedTime: '50 min',
@@ -111,7 +147,7 @@ const TEMPLATE_LIBRARY: WorkoutTemplate[] = [
     title: 'Lower Body Builder',
     meta: '40-50 min • Hypertrophy',
     description: 'Comprehensive leg development with high volume training',
-    gradient: ['rgba(0, 245, 160, 0.25)', 'rgba(0, 180, 120, 0.15)'] as const,
+    gradient: ['rgba(0, 245, 160, 0.35)', 'rgba(0, 180, 120, 0.25)', 'rgba(0, 140, 90, 0.15)'] as const,
     icon: '🦵',
     difficulty: 'intermediate',
     estimatedTime: '45 min',
@@ -129,7 +165,7 @@ const TEMPLATE_LIBRARY: WorkoutTemplate[] = [
     title: 'Full Body Express',
     meta: '30-40 min • Conditioning',
     description: 'Efficient full-body workout for busy schedules',
-    gradient: ['rgba(255, 196, 66, 0.25)', 'rgba(200, 140, 20, 0.15)'] as const,
+    gradient: ['rgba(255, 196, 66, 0.35)', 'rgba(200, 140, 20, 0.25)', 'rgba(160, 100, 0, 0.15)'] as const,
     icon: '⚡',
     difficulty: 'beginner',
     estimatedTime: '35 min',
@@ -142,6 +178,44 @@ const TEMPLATE_LIBRARY: WorkoutTemplate[] = [
     ],
   },
 ];
+
+// 🎨 Progress Ring Component
+const ProgressRing: React.FC<{
+  progress: number;
+  size: number;
+  strokeWidth: number;
+  color: string;
+}> = ({ progress, size, strokeWidth, color }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const strokeDashoffset = circumference - (progress / 100) * circumference;
+
+  return (
+    <Svg width={size} height={size}>
+      <Circle
+        stroke="rgba(255,255,255,0.1)"
+        fill="none"
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        strokeWidth={strokeWidth}
+      />
+      <Circle
+        stroke={color}
+        fill="none"
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        strokeWidth={strokeWidth}
+        strokeDasharray={`${circumference} ${circumference}`}
+        strokeDashoffset={strokeDashoffset}
+        strokeLinecap="round"
+        rotation="-90"
+        origin={`${size / 2}, ${size / 2}`}
+      />
+    </Svg>
+  );
+};
 
 // Animation configurations
 const ANIMATION_CONFIG = {
@@ -396,6 +470,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   
   // 🎨 Template system state
   const [activeTemplate, setActiveTemplate] = useState<WorkoutTemplate | null>(null);
+  const [lastAddedTemplate, setLastAddedTemplate] = useState<WorkoutTemplate | null>(null);
   
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -409,6 +484,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   const calendarExpandAnim = useRef(new Animated.Value(0)).current;
   const templateCardScales = useRef<Map<string, Animated.Value>>(new Map());
+  const templateBannerAnim = useRef(new Animated.Value(0)).current;
+  
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
   
@@ -430,6 +507,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const selectedSession =
     resolvedSessions.find((session) => session.date === selectedDate) || null;
+
+  useEffect(() => {
+    if (!lastAddedTemplate) return;
+    templateBannerAnim.setValue(0);
+    Animated.spring(templateBannerAnim, {
+      toValue: 1,
+      ...ANIMATION_CONFIG.spring,
+      useNativeDriver: true,
+    }).start();
+  }, [lastAddedTemplate, selectedDate, templateBannerAnim]);
 
   const displayExercises = selectedSession?.exercises ?? EMPTY_EXERCISES;
   
@@ -484,33 +571,29 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
     for (let i = 0; i < template.exercises.length; i++) {
       const ex = template.exercises[i];
-      const displayOrder = (displayExercises.length || 0) + i;
       const exercise: WorkoutSessionExercise = {
         name: ex.name,
         bodyParts: ex.bodyParts as MuscleGroup[],
         sets: ex.sets,
         reps: ex.reps,
         movementPattern: ex.movementPattern,
-        displayOrder,
+        displayOrder: (displayExercises.length || 0) + i,
         completed: false,
       };
       await onAddExercise(selectedSession.id, exercise);
     }
 
-    // Success feedback
-    Animated.sequence([
-      Animated.timing(checkboxPulseAnim, {
-        toValue: 1.2,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-      Animated.spring(checkboxPulseAnim, {
-        toValue: 1,
-        ...ANIMATION_CONFIG.spring,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [selectedSession, onAddExercise, displayExercises.length, checkboxPulseAnim]);
+    setLastAddedTemplate(template);
+    setActiveTemplate(null);
+
+    Animated.spring(templateBannerAnim, {
+      toValue: 1,
+      ...ANIMATION_CONFIG.spring,
+      useNativeDriver: true,
+    }).start();
+
+    setDashboardTab('plans');
+  }, [selectedSession, onAddExercise, displayExercises.length, templateBannerAnim]);
 
   useEffect(() => {
     setLocalCompletionOverrides({});
@@ -607,7 +690,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!displayExercises.length) return false;
     return displayExercises.every((exercise) => isExerciseMarked(exercise));
   }, [displayExercises, isExerciseMarked]);
-  
+
   const hasSyncedWorkout = displayExercises.length > 0;
   const greetingMessage = getGreetingMessage();
   const displayName = user.name?.trim() || 'Athlete';
@@ -1089,10 +1172,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     </View>
   );
 
-  // 🎨 Render improved template card with expandable exercises
+  // 🎨 Render template card
   const renderTemplateCard = (template: WorkoutTemplate) => {
     const scale = getTemplateCardScale(template.id);
-    const isExpanded = activeTemplate?.id === template.id;
 
     return (
       <Animated.View key={template.id} style={{ transform: [{ scale }], marginBottom: 16 }}>
@@ -1101,11 +1183,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           onPress={() => handleTemplatePress(template)}
         >
           <LinearGradient
-            colors={isExpanded ? ['rgba(108, 99, 255, 0.35)', 'rgba(72, 63, 200, 0.25)'] : template.gradient}
-            style={[
-              styles.templateCard,
-              isExpanded && styles.templateCardExpanded,
-            ]}
+            colors={template.gradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.templateCard}
           >
             <View style={styles.templateHeader}>
               <View style={styles.templateIconBadge}>
@@ -1116,9 +1197,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <Text style={styles.templateMeta}>{template.meta}</Text>
               </View>
               <View style={styles.templateChevron}>
-                <Text style={[styles.templateChevronText, isExpanded && styles.templateChevronTextExpanded]}>
-                  {isExpanded ? '−' : '+'}
-                </Text>
+                <Text style={styles.templateChevronText}>→</Text>
               </View>
             </View>
             
@@ -1136,7 +1215,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 </Text>
               </View>
             </View>
-
           </LinearGradient>
         </TouchableOpacity>
       </Animated.View>
@@ -1151,6 +1229,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       const isExpanded = expandedExerciseKey === exerciseKey;
       const targetSets = Math.max(1, exercise.sets ?? 3);
       const scaleAnim = getExerciseCardAnimation(cardKey);
+      const completedSets = workoutSetProgress[exerciseKey]?.completedSets ?? 0;
+      const setProgress = targetSets > 0 ? (completedSets / targetSets) * 100 : 0;
+
+      // Get primary muscle color
+      const primaryMuscle = exercise.bodyParts[0]?.toLowerCase() || 'core';
+      const muscleColor = MUSCLE_COLORS[primaryMuscle] || MUSCLE_COLORS.core;
 
       return (
         <Animated.View
@@ -1160,13 +1244,18 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           }}
         >
           <TouchableOpacity
-            activeOpacity={0.8}
+            activeOpacity={0.85}
             onPress={() =>
               setExpandedExerciseKey((prev) => (prev === exerciseKey ? null : exerciseKey))
             }
           >
             <LinearGradient
-              colors={CARD_GRADIENT_DEFAULT}
+              colors={isMarked 
+                ? ['rgba(0, 245, 160, 0.15)', 'rgba(0, 200, 130, 0.1)']
+                : CARD_GRADIENT_DEFAULT
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
               style={[
                 styles.exerciseCard,
                 !canLogWorkouts && styles.exerciseCardDisabled,
@@ -1174,24 +1263,37 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               ]}
             >
               <View style={styles.exerciseCardRow}>
-                <Animated.View
-                  style={{
-                    transform: [{ scale: checkboxPulseAnim }],
-                  }}
-                >
-                  <TouchableOpacity
-                    disabled={!canLogWorkouts}
-                    onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise)}
-                  >
-                    <View
-                      style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                {/* Left Side: Progress Ring + Checkbox */}
+                <View style={styles.exerciseLeftSection}>
+                  <View style={styles.progressRingContainer}>
+                    <ProgressRing
+                      progress={setProgress}
+                      size={56}
+                      strokeWidth={4}
+                      color={isMarked ? COLORS.success : muscleColor.text}
+                    />
+                    <TouchableOpacity
+                      disabled={!canLogWorkouts}
+                      onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise)}
+                      style={styles.centeredCheckbox}
                     >
-                      {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
-                    </View>
-                  </TouchableOpacity>
-                </Animated.View>
+                      <Animated.View
+                        style={{
+                          transform: [{ scale: checkboxPulseAnim }],
+                        }}
+                      >
+                        <View
+                          style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                        >
+                          {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
+                        </View>
+                      </Animated.View>
+                    </TouchableOpacity>
+                  </View>
+                </View>
 
-                <View style={styles.exerciseCardMain}>
+                {/* Right Side: Exercise Info */}
+                <View style={styles.exerciseRightSection}>
                   <Text style={[styles.exerciseName, isMarked && styles.exerciseNameCompleted]}>
                     {exercise.name}
                   </Text>
@@ -1201,14 +1303,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                       const muscleKey = muscle.toLowerCase();
                       const colors = MUSCLE_COLORS[muscleKey] || MUSCLE_COLORS.core;
                       return (
-                        <View
+                        <LinearGradient
                           key={i}
-                          style={[styles.muscleTag, { backgroundColor: colors.bg, borderColor: colors.border }]}
+                          colors={colors.gradient}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.muscleTag}
                         >
-                          <Text style={[styles.muscleTagText, { color: colors.text }]}>
+                          <Text style={styles.muscleTagText}>
                             {getBodyPartLabel(muscle)}
                           </Text>
-                        </View>
+                        </LinearGradient>
                       );
                     })}
                   </View>
@@ -1241,7 +1346,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                           <Text style={styles.stepperButtonText}>−</Text>
                         </TouchableOpacity>
                         <Text style={styles.stepperValue}>
-                          {`${workoutSetProgress[exerciseKey]?.completedSets ?? 0}/${targetSets} sets`}
+                          {`${completedSets}/${targetSets} sets`}
                         </Text>
                         <TouchableOpacity
                           style={styles.stepperButton}
@@ -1295,6 +1400,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <Text style={styles.adaptationText}>{adaptationCopy.text}</Text>
           </View>
         ) : null}
+        
         {!hasActivePlan && missingPlanInputs.length > 0 ? (
           <View style={styles.checklistCard}>
             <Text style={styles.checklistTitle}>Missing inputs for plan generation</Text>
@@ -1309,6 +1415,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
         {dashboardTab === 'templates' ? (
           <View style={styles.templateList}>
+        
             {TEMPLATE_LIBRARY.map(renderTemplateCard)}
           </View>
         ) : null}
@@ -1333,18 +1440,66 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             )}
           </View>
         ) : dashboardTab === 'plans' && hasActivePlan ? (
-          <PlansScreen
-            user={user}
-            phase={phase}
-            workoutSessions={workoutSessions}
-            onSaveCustomSession={onSaveCustomSession}
-            onDeleteSession={onDeleteSession}
-            onAddExercise={onAddExercise}
-            onDeleteExercise={onDeleteExercise}
-            embedded
-            openExercisePickerSignal={exercisePickerNonce}
-            selectedDateOverride={selectedDate}
-          />
+          <>
+            {lastAddedTemplate && (
+              <Animated.View 
+                style={[
+                  styles.templateSourceBanner,
+                  {
+                    opacity: templateBannerAnim,
+                    transform: [{
+                      translateY: templateBannerAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [-20, 0],
+                      }),
+                    }],
+                  },
+                ]}
+              >
+                <LinearGradient
+                  colors={lastAddedTemplate.gradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.templateSourceGradient}
+                >
+                  <View style={styles.templateSourceContent}>
+                    <View style={styles.templateSourceIconSmall}>
+                      <Text style={styles.templateSourceIconText}>{lastAddedTemplate.icon}</Text>
+                    </View>
+                    <View style={styles.templateSourceInfo}>
+                      <Text style={styles.templateSourceLabel}>FROM TEMPLATE</Text>
+                      <Text style={styles.templateSourceTitle}>{lastAddedTemplate.title}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.templateSourceClose}
+                      onPress={() => {
+                        Animated.timing(templateBannerAnim, {
+                          toValue: 0,
+                          duration: 200,
+                          useNativeDriver: true,
+                        }).start(() => setLastAddedTemplate(null));
+                      }}
+                    >
+                      <Text style={styles.templateSourceCloseText}>×</Text>
+                    </TouchableOpacity>
+                  </View>
+                </LinearGradient>
+              </Animated.View>
+            )}
+
+            <PlansScreen
+              user={user}
+              phase={phase}
+              workoutSessions={workoutSessions}
+              onSaveCustomSession={onSaveCustomSession}
+              onDeleteSession={onDeleteSession}
+              onAddExercise={onAddExercise}
+              onDeleteExercise={onDeleteExercise}
+              embedded
+              openExercisePickerSignal={exercisePickerNonce}
+              selectedDateOverride={selectedDate}
+            />
+          </>
         ) : dashboardTab === 'plans' && !hasSyncedWorkout ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>📭</Text>
@@ -1559,6 +1714,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
           {renderWorkoutsSection()}
         </ScrollView>
+        
+        {/* 🎨 Template Modal */}
         <Modal
           visible={!!activeTemplate}
           transparent
@@ -1596,38 +1753,46 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   contentContainerStyle={styles.templateExercisesList}
                   showsVerticalScrollIndicator={false}
                 >
-                  {activeTemplate.exercises.map((ex, idx) => (
-                    <View key={idx} style={styles.templateExercisePreview}>
-                      <View style={styles.templateExerciseIcon}>
-                        <Text style={styles.templateExerciseNumber}>{idx + 1}</Text>
-                      </View>
-                      <View style={styles.templateExerciseInfo}>
-                        <Text style={styles.templateExerciseName}>{ex.name}</Text>
-                        <View style={styles.templateExerciseMuscles}>
-                          {ex.bodyParts.slice(0, 2).map((muscle, i) => {
-                            const colors =
-                              MUSCLE_COLORS[muscle.toLowerCase()] || MUSCLE_COLORS.core;
-                            return (
-                              <View
-                                key={i}
-                                style={[
-                                  styles.templateMuscleTag,
-                                  { backgroundColor: colors.bg, borderColor: colors.border },
-                                ]}
-                              >
-                                <Text style={[styles.templateMuscleTagText, { color: colors.text }]}>
-                                  {getBodyPartLabel(muscle)}
-                                </Text>
-                              </View>
-                            );
-                          })}
+                  {activeTemplate.exercises.map((ex, idx) => {
+                    const primaryMuscle = ex.bodyParts[0]?.toLowerCase() || 'core';
+                    const muscleColor = MUSCLE_COLORS[primaryMuscle] || MUSCLE_COLORS.core;
+                    
+                    return (
+                      <View key={idx} style={styles.templateExercisePreview}>
+                        <LinearGradient
+                          colors={muscleColor.gradient}
+                          style={styles.templateExerciseIcon}
+                        >
+                          <Text style={styles.templateExerciseNumber}>{idx + 1}</Text>
+                        </LinearGradient>
+                        <View style={styles.templateExerciseInfo}>
+                          <Text style={styles.templateExerciseName}>{ex.name}</Text>
+                          <View style={styles.templateExerciseMuscles}>
+                            {ex.bodyParts.slice(0, 2).map((muscle, i) => {
+                              const colors =
+                                MUSCLE_COLORS[muscle.toLowerCase()] || MUSCLE_COLORS.core;
+                              return (
+                                <View
+                                  key={i}
+                                  style={[
+                                    styles.templateMuscleTag,
+                                    { backgroundColor: colors.bg, borderColor: colors.border },
+                                  ]}
+                                >
+                                  <Text style={[styles.templateMuscleTagText, { color: colors.text }]}>
+                                    {getBodyPartLabel(muscle)}
+                                  </Text>
+                                </View>
+                              );
+                            })}
+                          </View>
                         </View>
+                        <Text style={styles.templateExerciseSets}>
+                          {ex.sets}×{ex.reps}
+                        </Text>
                       </View>
-                      <Text style={styles.templateExerciseSets}>
-                        {ex.sets}×{ex.reps}
-                      </Text>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </ScrollView>
 
                 {selectedSession?.id && onAddExercise && (
@@ -1635,7 +1800,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     style={styles.addToTodayButton}
                     onPress={() => handleAddTemplateToToday(activeTemplate)}
                   >
-                    <Text style={styles.addToTodayButtonText}>+ Add All to Today</Text>
+                    <LinearGradient
+                      colors={['#6C63FF', '#4C3BFF']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.addToTodayGradient}
+                    >
+                      <Text style={styles.addToTodayButtonText}>+ Add All to Today</Text>
+                    </LinearGradient>
                   </TouchableOpacity>
                 )}
               </View>
@@ -1950,6 +2122,71 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
+  // 🎨 TEMPLATE SOURCE BANNER (NEW!)
+  // ========================================
+  templateSourceBanner: {
+    marginBottom: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  templateSourceGradient: {
+    padding: 16,
+  },
+  templateSourceContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  templateSourceIconSmall: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  templateSourceIconText: {
+    fontSize: 20,
+  },
+  templateSourceInfo: {
+    flex: 1,
+  },
+  templateSourceLabel: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontWeight: '600',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  templateSourceTitle: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  templateSourceClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  templateSourceCloseText: {
+    fontSize: 20,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    marginTop: -2,
+  },
+
+  // ========================================
   // TEMPLATES
   // ========================================
   templateList: {
@@ -1960,17 +2197,12 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 20,
     borderWidth: 1.5,
-    borderColor: 'rgba(108, 99, 255, 0.3)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.2,
     shadowRadius: 12,
     elevation: 4,
-  },
-  templateCardExpanded: {
-    borderColor: 'rgba(108, 99, 255, 0.6)',
-    shadowColor: '#6C63FF',
-    shadowOpacity: 0.4,
   },
   templateHeader: {
     flexDirection: 'row',
@@ -1981,12 +2213,12 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   templateIcon: {
     fontSize: 28,
@@ -2003,31 +2235,27 @@ const styles = StyleSheet.create({
   },
   templateMeta: {
     fontSize: 13,
-    color: COLORS.textMuted,
+    color: 'rgba(255, 255, 255, 0.8)',
     fontWeight: '600',
   },
   templateChevron: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   templateChevronText: {
-    fontSize: 20,
+    fontSize: 18,
     color: COLORS.textPrimary,
     fontWeight: '700',
-    marginTop: -2,
-  },
-  templateChevronTextExpanded: {
-    fontSize: 24,
   },
   templateDescription: {
     fontSize: 14,
-    color: COLORS.textSecondary,
+    color: 'rgba(255, 255, 255, 0.85)',
     marginBottom: 18,
     lineHeight: 21,
   },
@@ -2039,84 +2267,20 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   templateBadgeText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: COLORS.textPrimary,
     fontWeight: '700',
     textTransform: 'capitalize',
   },
 
   // ========================================
-  // TEMPLATE EXERCISES (Expandable)
+  // TEMPLATE MODAL
   // ========================================
-  templateExercisesContainer: {
-    overflow: 'hidden',
-  },
-  templateExercisesList: {
-    backgroundColor: 'rgba(10, 14, 39, 0.6)',
-    borderRadius: 20,
-    padding: 16,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
-  },
-  templateExercisePreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
-    gap: 12,
-  },
-  templateExerciseIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(108, 99, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.3)',
-  },
-  templateExerciseNumber: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: COLORS.textPrimary,
-  },
-  templateExerciseInfo: {
-    flex: 1,
-  },
-  templateExerciseName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 6,
-  },
-  templateExerciseMuscles: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  templateMuscleTag: {
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  templateMuscleTagText: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'capitalize',
-  },
-  templateExerciseSets: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.textMuted,
-  },
   templateModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(8, 10, 24, 0.7)',
@@ -2166,28 +2330,85 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 12,
   },
+  templateExercisesList: {
+    paddingVertical: 8,
+  },
+  templateExercisePreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    gap: 12,
+  },
+  templateExerciseIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  templateExerciseNumber: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  templateExerciseInfo: {
+    flex: 1,
+  },
+  templateExerciseName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+  },
+  templateExerciseMuscles: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  templateMuscleTag: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  templateMuscleTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  templateExerciseSets: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+  },
   addToTodayButton: {
     marginTop: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(108, 99, 255, 0.25)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(108, 99, 255, 0.4)',
-    alignItems: 'center',
+    borderRadius: 14,
+    overflow: 'hidden',
     shadowColor: '#6C63FF',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  addToTodayGradient: {
+    paddingVertical: 16,
+    alignItems: 'center',
   },
   addToTodayButtonText: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
-    color: COLORS.textPrimary,
+    color: '#FFFFFF',
     letterSpacing: 0.3,
   },
 
   // ========================================
-  // ADAPTATION & CHECKLIST CARDS
+  // OTHER CARDS
   // ========================================
   adaptationCard: {
     borderRadius: 16,
@@ -2239,10 +2460,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     lineHeight: 18,
   },
-
-  // ========================================
-  // EMPTY STATE
-  // ========================================
   emptyCard: {
     borderRadius: 24,
     borderWidth: 1,
@@ -2293,29 +2510,28 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
-  // EXERCISE CARDS (Plans - IMPROVED!)
+  // EXERCISE CARDS
   // ========================================
   verticalList: {
     marginTop: 6,
     gap: 12,
   },
   exerciseCard: {
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(108, 99, 255, 0.25)',
-    position: 'relative',
     overflow: 'hidden',
-    width: '100%',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
   },
   exerciseCardCompleted: {
-    borderColor: 'rgba(0, 245, 160, 0.3)',
-    backgroundColor: 'rgba(0, 245, 160, 0.03)',
+    borderColor: 'rgba(0, 245, 160, 0.4)',
+    shadowColor: '#00F5A0',
+    shadowOpacity: 0.2,
   },
   exerciseCardDisabled: {
     opacity: 0.6,
@@ -2325,9 +2541,20 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 14,
   },
-  exerciseCardMain: {
-    flex: 1,
-    minWidth: 0,
+  exerciseLeftSection: {
+    marginRight: 4,
+  },
+  progressRingContainer: {
+    position: 'relative',
+    width: 56,
+    height: 56,
+  },
+  centeredCheckbox: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -14,
+    marginTop: -14,
   },
   checkCircleActive: {
     width: 28,
@@ -2340,16 +2567,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     shadowColor: '#00F5A0',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.5,
     shadowRadius: 6,
   },
   checkCircleInactive: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.25)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 2.5,
+    borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2357,6 +2584,9 @@ const styles = StyleSheet.create({
     color: '#0A0E27',
     fontSize: 16,
     fontWeight: '900',
+  },
+  exerciseRightSection: {
+    flex: 1,
   },
   exerciseName: {
     fontSize: 17,
@@ -2371,19 +2601,24 @@ const styles = StyleSheet.create({
   muscleTagsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 8,
     marginBottom: 10,
   },
   muscleTag: {
-    paddingVertical: 4,
+    paddingVertical: 5,
     paddingHorizontal: 10,
-    borderRadius: 6,
-    borderWidth: 1,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   muscleTagText: {
     fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'capitalize',
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   exerciseMetaRow: {
     flexDirection: 'row',
@@ -2408,9 +2643,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderRadius: 8,
-    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    backgroundColor: 'rgba(0, 245, 160, 0.2)',
     borderWidth: 1,
-    borderColor: 'rgba(0, 245, 160, 0.3)',
+    borderColor: 'rgba(0, 245, 160, 0.4)',
   },
   completedBadgeText: {
     fontSize: 11,
