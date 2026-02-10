@@ -7,6 +7,7 @@ import {
   ScrollView,
   Image,
   Dimensions,
+  Modal,
   Animated,
   Easing,
 } from 'react-native';
@@ -49,16 +50,98 @@ const COLORS = {
   overlayLight: 'rgba(255, 255, 255, 0.25)',
 } as const;
 
+// Muscle group color mapping
+const MUSCLE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  chest: { bg: 'rgba(239, 68, 68, 0.15)', text: '#FCA5A5', border: 'rgba(239, 68, 68, 0.3)' },
+  back: { bg: 'rgba(59, 130, 246, 0.15)', text: '#93C5FD', border: 'rgba(59, 130, 246, 0.3)' },
+  legs: { bg: 'rgba(168, 85, 247, 0.15)', text: '#C4B5FD', border: 'rgba(168, 85, 247, 0.3)' },
+  shoulders: { bg: 'rgba(234, 179, 8, 0.15)', text: '#FDE047', border: 'rgba(234, 179, 8, 0.3)' },
+  arms: { bg: 'rgba(236, 72, 153, 0.15)', text: '#F9A8D4', border: 'rgba(236, 72, 153, 0.3)' },
+  core: { bg: 'rgba(16, 185, 129, 0.15)', text: '#6EE7B7', border: 'rgba(16, 185, 129, 0.3)' },
+};
+
 const ACTIVITY_TOTAL_DAYS_FALLBACK = 182;
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(240, Math.round(SCREEN_HEIGHT * 0.20)));
 
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
-const TEMPLATE_PLACEHOLDERS = [
-  { id: 'tmpl-upper', title: 'Upper Body Power', meta: '45-55 min • Strength' },
-  { id: 'tmpl-lower', title: 'Lower Body Builder', meta: '40-50 min • Hypertrophy' },
-  { id: 'tmpl-full', title: 'Full Body Express', meta: '30-40 min • Conditioning' },
-] as const;
+
+// 🎨 Enhanced Template System with Full Exercise Details
+type TemplateExercise = {
+  name: string;
+  bodyParts: string[];
+  sets: number;
+  reps: string;
+  movementPattern?: string;
+};
+
+type WorkoutTemplate = {
+  id: string;
+  title: string;
+  meta: string;
+  description: string;
+  gradient: readonly string[];
+  icon: string;
+  exercises: TemplateExercise[];
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  estimatedTime: string;
+};
+
+const TEMPLATE_LIBRARY: WorkoutTemplate[] = [
+  {
+    id: 'tmpl-upper',
+    title: 'Upper Body Power',
+    meta: '45-55 min • Strength',
+    description: 'Build explosive upper body strength with compound movements',
+    gradient: ['rgba(108, 99, 255, 0.25)', 'rgba(72, 63, 200, 0.15)'] as const,
+    icon: '💪',
+    difficulty: 'intermediate',
+    estimatedTime: '50 min',
+    exercises: [
+      { name: 'Barbell Bench Press', bodyParts: ['chest', 'shoulders', 'arms'], sets: 4, reps: '6-8', movementPattern: 'horizontal_push' },
+      { name: 'Weighted Pull-ups', bodyParts: ['back', 'arms'], sets: 4, reps: '6-8', movementPattern: 'vertical_pull' },
+      { name: 'Overhead Press', bodyParts: ['shoulders', 'arms'], sets: 4, reps: '8-10', movementPattern: 'vertical_push' },
+      { name: 'Barbell Rows', bodyParts: ['back', 'arms'], sets: 3, reps: '8-10', movementPattern: 'horizontal_pull' },
+      { name: 'Dumbbell Curls', bodyParts: ['arms'], sets: 3, reps: '10-12' },
+      { name: 'Tricep Dips', bodyParts: ['arms', 'chest'], sets: 3, reps: '10-12' },
+    ],
+  },
+  {
+    id: 'tmpl-lower',
+    title: 'Lower Body Builder',
+    meta: '40-50 min • Hypertrophy',
+    description: 'Comprehensive leg development with high volume training',
+    gradient: ['rgba(0, 245, 160, 0.25)', 'rgba(0, 180, 120, 0.15)'] as const,
+    icon: '🦵',
+    difficulty: 'intermediate',
+    estimatedTime: '45 min',
+    exercises: [
+      { name: 'Back Squat', bodyParts: ['legs'], sets: 4, reps: '8-12', movementPattern: 'squat' },
+      { name: 'Romanian Deadlift', bodyParts: ['legs', 'back'], sets: 4, reps: '8-12', movementPattern: 'hinge' },
+      { name: 'Bulgarian Split Squats', bodyParts: ['legs'], sets: 3, reps: '10-12', movementPattern: 'lunge' },
+      { name: 'Leg Press', bodyParts: ['legs'], sets: 3, reps: '12-15', movementPattern: 'squat' },
+      { name: 'Leg Curls', bodyParts: ['legs'], sets: 3, reps: '12-15' },
+      { name: 'Calf Raises', bodyParts: ['legs'], sets: 4, reps: '15-20' },
+    ],
+  },
+  {
+    id: 'tmpl-full',
+    title: 'Full Body Express',
+    meta: '30-40 min • Conditioning',
+    description: 'Efficient full-body workout for busy schedules',
+    gradient: ['rgba(255, 196, 66, 0.25)', 'rgba(200, 140, 20, 0.15)'] as const,
+    icon: '⚡',
+    difficulty: 'beginner',
+    estimatedTime: '35 min',
+    exercises: [
+      { name: 'Goblet Squat', bodyParts: ['legs'], sets: 3, reps: '12-15', movementPattern: 'squat' },
+      { name: 'Push-ups', bodyParts: ['chest', 'arms', 'shoulders'], sets: 3, reps: '12-15', movementPattern: 'horizontal_push' },
+      { name: 'Dumbbell Rows', bodyParts: ['back', 'arms'], sets: 3, reps: '12-15', movementPattern: 'horizontal_pull' },
+      { name: 'Lunges', bodyParts: ['legs'], sets: 3, reps: '10-12', movementPattern: 'lunge' },
+      { name: 'Plank', bodyParts: ['core'], sets: 3, reps: '30-60s' },
+    ],
+  },
+];
 
 // Animation configurations
 const ANIMATION_CONFIG = {
@@ -77,6 +160,10 @@ const ANIMATION_CONFIG = {
   springMedium: {
     tension: 100,
     friction: 10,
+  },
+  bounce: {
+    tension: 300,
+    friction: 8,
   },
   pulse: {
     delay: 2000,
@@ -306,6 +393,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     Dimensions.get('window').width - 40
   );
   const [dashboardTab, setDashboardTab] = useState<'plans' | 'templates'>('plans');
+  
+  // 🎨 Template system state
+  const [activeTemplate, setActiveTemplate] = useState<WorkoutTemplate | null>(null);
+  
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orderUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -317,10 +408,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   const calendarExpandAnim = useRef(new Animated.Value(0)).current;
+  const templateCardScales = useRef<Map<string, Animated.Value>>(new Map());
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
   
-  // Track if calendar should be mounted (for smooth animation)
   const [shouldMountCalendar, setShouldMountCalendar] = useState(false);
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
@@ -341,6 +432,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     resolvedSessions.find((session) => session.date === selectedDate) || null;
 
   const displayExercises = selectedSession?.exercises ?? EMPTY_EXERCISES;
+  
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (exercise.id) return exercise.id;
     if (exercise.exerciseId && exercise.displayOrder !== undefined && exercise.displayOrder !== null) {
@@ -357,6 +449,68 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     ];
     return parts.filter(Boolean).join('-');
   };
+
+  // 🎨 Template animation helpers
+  const getTemplateCardScale = useCallback((templateId: string) => {
+    if (!templateCardScales.current.has(templateId)) {
+      templateCardScales.current.set(templateId, new Animated.Value(1));
+    }
+    return templateCardScales.current.get(templateId)!;
+  }, []);
+
+  // 🎨 Handle template modal open
+  const handleTemplatePress = useCallback((template: WorkoutTemplate) => {
+    const scale = getTemplateCardScale(template.id);
+    
+    // Haptic animation
+    Animated.sequence([
+      Animated.timing(scale, {
+        toValue: 0.98,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scale, {
+        toValue: 1,
+        ...ANIMATION_CONFIG.bounce,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    setActiveTemplate(template);
+  }, [getTemplateCardScale]);
+
+  // 🎨 Add template to today's workout
+  const handleAddTemplateToToday = useCallback(async (template: WorkoutTemplate) => {
+    if (!selectedSession?.id || !onAddExercise) return;
+
+    for (let i = 0; i < template.exercises.length; i++) {
+      const ex = template.exercises[i];
+      const displayOrder = (displayExercises.length || 0) + i;
+      const exercise: WorkoutSessionExercise = {
+        name: ex.name,
+        bodyParts: ex.bodyParts as MuscleGroup[],
+        sets: ex.sets,
+        reps: ex.reps,
+        movementPattern: ex.movementPattern,
+        displayOrder,
+        completed: false,
+      };
+      await onAddExercise(selectedSession.id, exercise);
+    }
+
+    // Success feedback
+    Animated.sequence([
+      Animated.timing(checkboxPulseAnim, {
+        toValue: 1.2,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.spring(checkboxPulseAnim, {
+        toValue: 1,
+        ...ANIMATION_CONFIG.spring,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [selectedSession, onAddExercise, displayExercises.length, checkboxPulseAnim]);
 
   useEffect(() => {
     setLocalCompletionOverrides({});
@@ -562,7 +716,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     todayStr,
   ]);
 
-  // Week view data
   const weekDates = useMemo(() => {
     const startOfWeek = new Date(today);
     startOfWeek.setDate(today.getDate() - today.getDay());
@@ -620,7 +773,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return estimatedMinutes ? `${planContextText} · ~${estimatedMinutes} min` : planContextText;
   }, [displayExercises.length, planContextText]);
 
-  // FAB Action configuration
   const getFabActionConfig = useCallback(() => {
     const baseConfig = {
       colors: [COLORS.accent, COLORS.accentDark] as const,
@@ -682,7 +834,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     ]).start();
   };
 
-  // Header entrance animation
   useEffect(() => {
     Animated.parallel([
       Animated.timing(headerFadeAnim, {
@@ -699,7 +850,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     ]).start();
   }, []);
 
-  // Calendar expand/collapse animation
   useEffect(() => {
     const animation = Animated.timing(calendarExpandAnim, {
       toValue: calendarExpanded ? 1 : 0,
@@ -721,13 +871,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   useEffect(() => {
     if (calendarExpanded) {
-      // Mount immediately when expanding
       setShouldMountCalendar(true);
     }
-    // Note: unmounting is handled in animation completion callback above
   }, [calendarExpanded]);
 
-  // Create button pulse animation
   useEffect(() => {
     const pulseLoop = Animated.loop(
       Animated.sequence([
@@ -939,14 +1086,207 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           );
         })}
       </ScrollView>
-      
-      {null}
     </View>
   );
 
+  // 🎨 Render improved template card with expandable exercises
+  const renderTemplateCard = (template: WorkoutTemplate) => {
+    const scale = getTemplateCardScale(template.id);
+    const isExpanded = activeTemplate?.id === template.id;
 
+    return (
+      <Animated.View key={template.id} style={{ transform: [{ scale }], marginBottom: 16 }}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => handleTemplatePress(template)}
+        >
+          <LinearGradient
+            colors={isExpanded ? ['rgba(108, 99, 255, 0.35)', 'rgba(72, 63, 200, 0.25)'] : template.gradient}
+            style={[
+              styles.templateCard,
+              isExpanded && styles.templateCardExpanded,
+            ]}
+          >
+            <View style={styles.templateHeader}>
+              <View style={styles.templateIconBadge}>
+                <Text style={styles.templateIcon}>{template.icon}</Text>
+              </View>
+              <View style={styles.templateHeaderText}>
+                <Text style={styles.templateTitle}>{template.title}</Text>
+                <Text style={styles.templateMeta}>{template.meta}</Text>
+              </View>
+              <View style={styles.templateChevron}>
+                <Text style={[styles.templateChevronText, isExpanded && styles.templateChevronTextExpanded]}>
+                  {isExpanded ? '−' : '+'}
+                </Text>
+              </View>
+            </View>
+            
+            <Text style={styles.templateDescription}>{template.description}</Text>
+            
+            <View style={styles.templateFooter}>
+              <View style={styles.templateBadge}>
+                <Text style={styles.templateBadgeText}>
+                  {template.exercises.length} exercises
+                </Text>
+              </View>
+              <View style={styles.templateBadge}>
+                <Text style={styles.templateBadgeText}>
+                  {template.difficulty}
+                </Text>
+              </View>
+            </View>
+
+          </LinearGradient>
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  };
 
   const renderWorkoutsSection = () => {
+    const renderExerciseCard = (exercise: WorkoutSessionEntry['exercises'][number]) => {
+      const isMarked = isExerciseMarked(exercise);
+      const cardKey = `${selectedDate}-${getExerciseKey(exercise)}`;
+      const exerciseKey = getExerciseKey(exercise);
+      const isExpanded = expandedExerciseKey === exerciseKey;
+      const targetSets = Math.max(1, exercise.sets ?? 3);
+      const scaleAnim = getExerciseCardAnimation(cardKey);
+
+      return (
+        <Animated.View
+          key={cardKey}
+          style={{
+            transform: [{ scale: scaleAnim }],
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() =>
+              setExpandedExerciseKey((prev) => (prev === exerciseKey ? null : exerciseKey))
+            }
+          >
+            <LinearGradient
+              colors={CARD_GRADIENT_DEFAULT}
+              style={[
+                styles.exerciseCard,
+                !canLogWorkouts && styles.exerciseCardDisabled,
+                isMarked && styles.exerciseCardCompleted,
+              ]}
+            >
+              <View style={styles.exerciseCardRow}>
+                <Animated.View
+                  style={{
+                    transform: [{ scale: checkboxPulseAnim }],
+                  }}
+                >
+                  <TouchableOpacity
+                    disabled={!canLogWorkouts}
+                    onPress={() => canLogWorkouts && handleToggleExerciseAnimated(exercise)}
+                  >
+                    <View
+                      style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
+                    >
+                      {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
+                    </View>
+                  </TouchableOpacity>
+                </Animated.View>
+
+                <View style={styles.exerciseCardMain}>
+                  <Text style={[styles.exerciseName, isMarked && styles.exerciseNameCompleted]}>
+                    {exercise.name}
+                  </Text>
+
+                  <View style={styles.muscleTagsRow}>
+                    {exercise.bodyParts.slice(0, 3).map((muscle, i) => {
+                      const muscleKey = muscle.toLowerCase();
+                      const colors = MUSCLE_COLORS[muscleKey] || MUSCLE_COLORS.core;
+                      return (
+                        <View
+                          key={i}
+                          style={[styles.muscleTag, { backgroundColor: colors.bg, borderColor: colors.border }]}
+                        >
+                          <Text style={[styles.muscleTagText, { color: colors.text }]}>
+                            {getBodyPartLabel(muscle)}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+
+                  <View style={styles.exerciseMetaRow}>
+                    <View style={styles.exerciseMetaBadge}>
+                      <Text style={styles.exerciseMetaText}>
+                        {exercise.sets ?? '—'} sets
+                      </Text>
+                    </View>
+                    <View style={styles.exerciseMetaBadge}>
+                      <Text style={styles.exerciseMetaText}>
+                        {exercise.reps ?? '—'} reps
+                      </Text>
+                    </View>
+                    {isMarked && (
+                      <View style={styles.completedBadge}>
+                        <Text style={styles.completedBadgeText}>✓ Done</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {isExpanded ? (
+                    <View style={styles.workoutControlRow}>
+                      <View style={styles.stepper}>
+                        <TouchableOpacity
+                          style={styles.stepperButton}
+                          onPress={() => updateExerciseSets(exerciseKey, targetSets, -1)}
+                        >
+                          <Text style={styles.stepperButtonText}>−</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.stepperValue}>
+                          {`${workoutSetProgress[exerciseKey]?.completedSets ?? 0}/${targetSets} sets`}
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.stepperButton}
+                          onPress={() => updateExerciseSets(exerciseKey, targetSets, 1)}
+                        >
+                          <Text style={styles.stepperButtonText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={styles.stepper}>
+                        <TouchableOpacity
+                          style={styles.stepperButton}
+                          onPress={() => updateExerciseRpe(exerciseKey, -0.5)}
+                        >
+                          <Text style={styles.stepperButtonText}>−</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.stepperValue}>
+                          {`RPE ${workoutSetProgress[exerciseKey]?.rpe?.toFixed(1) ?? '—'}`}
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.stepperButton}
+                          onPress={() => updateExerciseRpe(exerciseKey, 0.5)}
+                        >
+                          <Text style={styles.stepperButtonText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.restButton}
+                        onPress={() => startRestTimerFor(exerciseKey)}
+                      >
+                        <Text style={styles.restButtonText}>
+                          {activeRestKey === exerciseKey && restSecondsLeft > 0
+                            ? `Rest ${formatRest(restSecondsLeft)}`
+                            : 'Start Rest Timer'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
+      );
+    };
+
     const mainContent = (
       <>
         {hasActivePlan && adaptationCopy ? (
@@ -966,23 +1306,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </Text>
           </View>
         ) : null}
-        {hasActivePlan && planContextText ? null : null}
 
         {dashboardTab === 'templates' ? (
           <View style={styles.templateList}>
-            {TEMPLATE_PLACEHOLDERS.map((template) => (
-              <LinearGradient
-                key={template.id}
-                colors={CARD_GRADIENT_DEFAULT}
-                style={styles.templateCard}
-              >
-                <Text style={styles.templateTitle}>{template.title}</Text>
-                <Text style={styles.templateMeta}>{template.meta}</Text>
-                <TouchableOpacity style={styles.templateAction}>
-                  <Text style={styles.templateActionText}>Use Template</Text>
-                </TouchableOpacity>
-              </LinearGradient>
-            ))}
+            {TEMPLATE_LIBRARY.map(renderTemplateCard)}
           </View>
         ) : null}
 
@@ -1028,122 +1355,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
         ) : dashboardTab === 'plans' ? (
           <View style={styles.verticalList}>
-            {sortedWorkoutCards.map((exercise) => {
-              const isMarked = isExerciseMarked(exercise);
-              const cardKey = `${selectedDate}-${getExerciseKey(exercise)}`;
-              const exerciseKey = getExerciseKey(exercise);
-              const isExpanded = expandedExerciseKey === exerciseKey;
-              const targetSets = Math.max(1, exercise.sets ?? 3);
-              const scaleAnim = getExerciseCardAnimation(cardKey);
-              
-              return (
-                <Animated.View
-                  key={cardKey}
-                  style={{
-                    transform: [{ scale: scaleAnim }],
-                  }}
-                >
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => setExpandedExerciseKey((prev) => (prev === exerciseKey ? null : exerciseKey))}
-                  >
-                    <LinearGradient
-                      colors={CARD_GRADIENT_DEFAULT}
-                      style={[
-                        styles.exerciseCard,
-                        !canLogWorkouts && styles.exerciseCardDisabled,
-                      ]}
-                    >
-                      <View style={styles.exerciseCardRow}>
-                        <View style={styles.exerciseCardMain}>
-                          <View style={styles.cardHeader}>
-                            <Animated.View
-                              style={{
-                                transform: [{ scale: checkboxPulseAnim }],
-                              }}
-                            >
-                              <TouchableOpacity
-                                disabled={!canLogWorkouts}
-                                onPress={() =>
-                                  canLogWorkouts && handleToggleExerciseAnimated(exercise)
-                                }
-                              >
-                                <View
-                                  style={isMarked ? styles.checkCircleActive : styles.checkCircleInactive}
-                                >
-                                  {isMarked && <Text style={styles.checkCircleText}>✓</Text>}
-                                </View>
-                              </TouchableOpacity>
-                            </Animated.View>
-                            <View style={styles.exerciseHeaderText}>
-                              <Text style={styles.exerciseName}>{exercise.name}</Text>
-                              <Text style={styles.exerciseBodyParts}>
-                                {formatBodyPartList(exercise.bodyParts)}
-                              </Text>
-                              <Text style={styles.exerciseMetaLine}>
-                                {`${exercise.sets ?? '—'} sets • ${exercise.reps ?? '—'} reps`}
-                              </Text>
-                              {isExpanded ? (
-                                <View style={styles.workoutControlRow}>
-                                  <View style={styles.stepper}>
-                                    <TouchableOpacity
-                                      style={styles.stepperButton}
-                                      onPress={() =>
-                                        updateExerciseSets(exerciseKey, targetSets, -1)
-                                      }
-                                    >
-                                      <Text style={styles.stepperButtonText}>−</Text>
-                                    </TouchableOpacity>
-                                    <Text style={styles.stepperValue}>
-                                      {`${workoutSetProgress[exerciseKey]?.completedSets ?? 0}/${targetSets} sets`}
-                                    </Text>
-                                    <TouchableOpacity
-                                      style={styles.stepperButton}
-                                      onPress={() =>
-                                        updateExerciseSets(exerciseKey, targetSets, 1)
-                                      }
-                                    >
-                                      <Text style={styles.stepperButtonText}>+</Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                  <View style={styles.stepper}>
-                                    <TouchableOpacity
-                                      style={styles.stepperButton}
-                                      onPress={() => updateExerciseRpe(exerciseKey, -0.5)}
-                                    >
-                                      <Text style={styles.stepperButtonText}>−</Text>
-                                    </TouchableOpacity>
-                                    <Text style={styles.stepperValue}>
-                                      {`RPE ${workoutSetProgress[exerciseKey]?.rpe?.toFixed(1) ?? '—'}`}
-                                    </Text>
-                                    <TouchableOpacity
-                                      style={styles.stepperButton}
-                                      onPress={() => updateExerciseRpe(exerciseKey, 0.5)}
-                                    >
-                                      <Text style={styles.stepperButtonText}>+</Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                  <TouchableOpacity
-                                    style={styles.restButton}
-                                    onPress={() => startRestTimerFor(exerciseKey)}
-                                  >
-                                    <Text style={styles.restButtonText}>
-                                      {activeRestKey === exerciseKey && restSecondsLeft > 0
-                                        ? `Rest ${formatRest(restSecondsLeft)}`
-                                        : 'Start Rest Timer'}
-                                    </Text>
-                                  </TouchableOpacity>
-                                </View>
-                              ) : null}
-                            </View>
-                          </View>
-                        </View>
-                      </View>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                </Animated.View>
-              );
-            })}
+            {sortedWorkoutCards.map(renderExerciseCard)}
           </View>
         ) : null}
       </>
@@ -1324,7 +1536,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     dashboardTab === 'plans' && styles.dashboardTabTextActive,
                   ]}
                 >
-                  Plans
+                  Today
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -1347,12 +1559,93 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
           {renderWorkoutsSection()}
         </ScrollView>
+        <Modal
+          visible={!!activeTemplate}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setActiveTemplate(null)}
+        >
+          <View style={styles.templateModalOverlay}>
+            <TouchableOpacity
+              style={styles.templateModalBackdrop}
+              activeOpacity={1}
+              onPress={() => setActiveTemplate(null)}
+            />
+            {activeTemplate && (
+              <View style={styles.templateModalCard}>
+                <View style={styles.templateModalHeader}>
+                  <View style={styles.templateIconBadge}>
+                    <Text style={styles.templateIcon}>{activeTemplate.icon}</Text>
+                  </View>
+                  <View style={styles.templateHeaderText}>
+                    <Text style={styles.templateTitle}>{activeTemplate.title}</Text>
+                    <Text style={styles.templateMeta}>{activeTemplate.meta}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.templateModalClose}
+                    onPress={() => setActiveTemplate(null)}
+                  >
+                    <Text style={styles.templateModalCloseText}>×</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.templateDescription}>{activeTemplate.description}</Text>
+
+                <ScrollView
+                  style={styles.templateModalScroll}
+                  contentContainerStyle={styles.templateExercisesList}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {activeTemplate.exercises.map((ex, idx) => (
+                    <View key={idx} style={styles.templateExercisePreview}>
+                      <View style={styles.templateExerciseIcon}>
+                        <Text style={styles.templateExerciseNumber}>{idx + 1}</Text>
+                      </View>
+                      <View style={styles.templateExerciseInfo}>
+                        <Text style={styles.templateExerciseName}>{ex.name}</Text>
+                        <View style={styles.templateExerciseMuscles}>
+                          {ex.bodyParts.slice(0, 2).map((muscle, i) => {
+                            const colors =
+                              MUSCLE_COLORS[muscle.toLowerCase()] || MUSCLE_COLORS.core;
+                            return (
+                              <View
+                                key={i}
+                                style={[
+                                  styles.templateMuscleTag,
+                                  { backgroundColor: colors.bg, borderColor: colors.border },
+                                ]}
+                              >
+                                <Text style={[styles.templateMuscleTagText, { color: colors.text }]}>
+                                  {getBodyPartLabel(muscle)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </View>
+                      <Text style={styles.templateExerciseSets}>
+                        {ex.sets}×{ex.reps}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
+
+                {selectedSession?.id && onAddExercise && (
+                  <TouchableOpacity
+                    style={styles.addToTodayButton}
+                    onPress={() => handleAddTemplateToToday(activeTemplate)}
+                  >
+                    <Text style={styles.addToTodayButtonText}>+ Add All to Today</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+        </Modal>
       </LinearGradient>
     </View>
   );
 };
-
-
 
 const styles = StyleSheet.create({
   container: {
@@ -1364,7 +1657,7 @@ const styles = StyleSheet.create({
   },
   
   // ========================================
-  // HEADER SECTION - Enhanced visual hierarchy
+  // HEADER
   // ========================================
   header: {
     flexDirection: 'row',
@@ -1427,7 +1720,7 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
-  // CALENDAR SECTION - Modern glassmorphism
+  // CALENDAR
   // ========================================
   calendarSection: {
     paddingHorizontal: 20,
@@ -1485,10 +1778,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.2,
   },
-
-  // ========================================
-  // WEEK VIEW - Enhanced visual indicators
-  // ========================================
   weekViewContainer: {
     position: 'relative',
   },
@@ -1580,10 +1869,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.6,
     shadowRadius: 4,
   },
-
-  // ========================================
-  // FULL CALENDAR - Expandable section
-  // ========================================
   fullCalendarContainer: {
     overflow: 'hidden',
     marginTop: 0,
@@ -1596,7 +1881,7 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
-  // CONTENT SCROLL - Main content area
+  // CONTENT
   // ========================================
   contentScrollView: {
     flex: 1,
@@ -1606,10 +1891,6 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 160,
   },
-
-  // ========================================
-  // SECTIONS - Layout structure
-  // ========================================
   section: {
     position: 'relative',
   },
@@ -1619,100 +1900,294 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
-  // TABS - Enhanced tab navigation
+  // TABS
   // ========================================
   tabsStickyWrapper: {
-    paddingBottom: 0,
+    paddingBottom: 2,
   },
   dashboardTabRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 4,
+    gap: 14,
+    justifyContent: 'space-between',
   },
   dashboardTabButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
     alignItems: 'center',
-    backgroundColor: 'rgba(30, 36, 61, 0.4)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(199, 204, 230, 0.1)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    backgroundColor: 'transparent',
   },
   dashboardTabButtonActive: {
-    backgroundColor: 'rgba(108, 99, 255, 0.15)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(108, 99, 255, 0.45)',
-    shadowColor: '#6C63FF',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.accent,
   },
   dashboardTabText: {
     fontSize: 13,
     color: '#8B93B0',
-    fontWeight: '700',
-    letterSpacing: 0.3,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   dashboardTabTextActive: {
     color: '#FFFFFF',
-    fontWeight: '800',
+    fontWeight: '700',
   },
 
   // ========================================
-  // TEMPLATES - Template list
+  // SECTION TITLES
+  // ========================================
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    marginBottom: 8,
+    letterSpacing: -0.3,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+
+  // ========================================
+  // TEMPLATES
   // ========================================
   templateList: {
-    gap: 12,
+    marginTop: 10,
+    gap: 4,
   },
   templateCard: {
-    borderRadius: 18,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.25)',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  templateCardExpanded: {
+    borderColor: 'rgba(108, 99, 255, 0.6)',
+    shadowColor: '#6C63FF',
+    shadowOpacity: 0.4,
+  },
+  templateHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  templateIconBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  templateIcon: {
+    fontSize: 28,
+  },
+  templateHeaderText: {
+    flex: 1,
   },
   templateTitle: {
-    fontSize: 17,
-    color: '#FFFFFF',
+    fontSize: 20,
+    color: COLORS.textPrimary,
     fontWeight: '800',
-    marginBottom: 8,
-    letterSpacing: -0.2,
+    marginBottom: 4,
+    letterSpacing: -0.3,
   },
   templateMeta: {
     fontSize: 13,
-    color: '#A0A3BD',
-    marginBottom: 14,
+    color: COLORS.textMuted,
     fontWeight: '600',
   },
-  templateAction: {
-    alignSelf: 'flex-start',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+  templateChevron: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  templateChevronText: {
+    fontSize: 20,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+    marginTop: -2,
+  },
+  templateChevronTextExpanded: {
+    fontSize: 24,
+  },
+  templateDescription: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginBottom: 18,
+    lineHeight: 21,
+  },
+  templateFooter: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  templateBadge: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  templateBadgeText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+
+  // ========================================
+  // TEMPLATE EXERCISES (Expandable)
+  // ========================================
+  templateExercisesContainer: {
+    overflow: 'hidden',
+  },
+  templateExercisesList: {
+    backgroundColor: 'rgba(10, 14, 39, 0.6)',
+    borderRadius: 20,
+    padding: 16,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.2)',
+  },
+  templateExercisePreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    gap: 12,
+  },
+  templateExerciseIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+  },
+  templateExerciseNumber: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+  },
+  templateExerciseInfo: {
+    flex: 1,
+  },
+  templateExerciseName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 6,
+  },
+  templateExerciseMuscles: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  templateMuscleTag: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  templateMuscleTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  templateExerciseSets: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+  },
+  templateModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(8, 10, 24, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  templateModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  templateModalCard: {
+    width: '100%',
+    maxHeight: '80%',
+    borderRadius: 22,
+    padding: 20,
+    backgroundColor: 'rgba(18, 22, 48, 0.95)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.35)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  templateModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  templateModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  templateModalCloseText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    marginTop: -1,
+  },
+  templateModalScroll: {
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  addToTodayButton: {
+    marginTop: 16,
+    paddingVertical: 14,
     borderRadius: 12,
     backgroundColor: 'rgba(108, 99, 255, 0.25)',
     borderWidth: 1.5,
     borderColor: 'rgba(108, 99, 255, 0.4)',
+    alignItems: 'center',
     shadowColor: '#6C63FF',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
-  templateActionText: {
-    fontSize: 13,
-    color: '#FFFFFF',
+  addToTodayButtonText: {
+    fontSize: 15,
     fontWeight: '800',
-    letterSpacing: 0.2,
+    color: COLORS.textPrimary,
+    letterSpacing: 0.3,
   },
 
   // ========================================
-  // ADAPTATION CARD - Progress insights
+  // ADAPTATION & CHECKLIST CARDS
   // ========================================
   adaptationCard: {
     borderRadius: 16,
@@ -1739,10 +2214,6 @@ const styles = StyleSheet.create({
     color: '#E0E2F0',
     fontWeight: '500',
   },
-
-  // ========================================
-  // CHECKLIST CARD - Missing inputs
-  // ========================================
   checklistCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -1770,30 +2241,7 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
-  // PLAN CONTEXT CARD - Plan details
-  // ========================================
-  planContextCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.3)',
-    backgroundColor: 'rgba(108, 99, 255, 0.12)',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  planContextTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#C7CCE6',
-    marginBottom: 4,
-  },
-  planContextText: {
-    fontSize: 12,
-    color: '#FFFFFF',
-    lineHeight: 17,
-  },
-
-  // ========================================
-  // EMPTY STATE - No content placeholder
+  // EMPTY STATE
   // ========================================
   emptyCard: {
     borderRadius: 24,
@@ -1810,9 +2258,6 @@ const styles = StyleSheet.create({
   emptyEmoji: {
     fontSize: 56,
     marginBottom: 20,
-    textShadowColor: 'rgba(0, 0, 0, 0.1)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
   },
   emptyTitle: {
     fontSize: 20,
@@ -1848,9 +2293,10 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
-  // EXERCISE CARDS - Workout items
+  // EXERCISE CARDS (Plans - IMPROVED!)
   // ========================================
   verticalList: {
+    marginTop: 6,
     gap: 12,
   },
   exerciseCard: {
@@ -1867,32 +2313,22 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
+  exerciseCardCompleted: {
+    borderColor: 'rgba(0, 245, 160, 0.3)',
+    backgroundColor: 'rgba(0, 245, 160, 0.03)',
+  },
   exerciseCardDisabled: {
     opacity: 0.6,
   },
   exerciseCardRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
+    alignItems: 'flex-start',
+    gap: 14,
   },
   exerciseCardMain: {
     flex: 1,
     minWidth: 0,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 6,
-  },
-  exerciseHeaderText: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  // ========================================
-  // CHECKBOX - Exercise completion
-  // ========================================
   checkCircleActive: {
     width: 28,
     height: 28,
@@ -1922,35 +2358,67 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
   },
-
-  // ========================================
-  // EXERCISE INFO - Details and meta
-  // ========================================
   exerciseName: {
     fontSize: 17,
     fontWeight: '800',
     color: '#FFFFFF',
-    marginBottom: 6,
+    marginBottom: 10,
     letterSpacing: -0.2,
   },
-  exerciseMetaLine: {
-    fontSize: 12,
-    color: '#A0A3BD',
+  exerciseNameCompleted: {
+    color: '#00F5A0',
+  },
+  muscleTagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
     marginBottom: 10,
-    fontWeight: '600',
   },
-  exerciseBodyParts: {
+  muscleTag: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  muscleTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  exerciseMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+  },
+  exerciseMetaBadge: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  exerciseMetaText: {
     fontSize: 12,
-    color: '#8B7FFF',
-    marginBottom: 4,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: COLORS.textSecondary,
   },
-
-  // ========================================
-  // WORKOUT CONTROLS - Sets, RPE, Rest
-  // ========================================
+  completedBadge: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 160, 0.3)',
+  },
+  completedBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#00F5A0',
+  },
   workoutControlRow: {
-    marginTop: 8,
+    marginTop: 12,
     gap: 8,
   },
   stepper: {
