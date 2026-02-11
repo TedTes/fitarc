@@ -471,6 +471,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   // 🎨 Template system state
   const [activeTemplate, setActiveTemplate] = useState<WorkoutTemplate | null>(null);
   const [lastAddedTemplate, setLastAddedTemplate] = useState<WorkoutTemplate | null>(null);
+  const [selectedTemplateExerciseIndexes, setSelectedTemplateExerciseIndexes] = useState<
+    Record<string, boolean>
+  >({});
   
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -518,7 +521,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }).start();
   }, [lastAddedTemplate, selectedDate, templateBannerAnim]);
 
+  // When template changes, default-select all its exercises
+  useEffect(() => {
+    if (!activeTemplate) {
+      setSelectedTemplateExerciseIndexes({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    activeTemplate.exercises.forEach((_, idx) => {
+      next[String(idx)] = true;
+    });
+    setSelectedTemplateExerciseIndexes(next);
+  }, [activeTemplate]);
+
   const displayExercises = selectedSession?.exercises ?? EMPTY_EXERCISES;
+  const selectedTemplateCount = useMemo(
+    () => Object.values(selectedTemplateExerciseIndexes).filter(Boolean).length,
+    [selectedTemplateExerciseIndexes]
+  );
   
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (exercise.id) return exercise.id;
@@ -546,54 +566,86 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   }, []);
 
   // 🎨 Handle template modal open
-  const handleTemplatePress = useCallback((template: WorkoutTemplate) => {
-    const scale = getTemplateCardScale(template.id);
-    
-    // Haptic animation
-    Animated.sequence([
-      Animated.timing(scale, {
-        toValue: 0.98,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scale, {
+  const handleTemplatePress = useCallback(
+    (template: WorkoutTemplate) => {
+      const scale = getTemplateCardScale(template.id);
+
+      // Haptic-style card animation
+      Animated.sequence([
+        Animated.timing(scale, {
+          toValue: 0.98,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scale, {
+          toValue: 1,
+          ...ANIMATION_CONFIG.bounce,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      setActiveTemplate(template);
+    },
+    [getTemplateCardScale]
+  );
+
+  /**
+   * 🎨 Apply a template to today's workout plan.
+   *
+   * - 'replace': use the template as the entire workout for the selected date
+   * - 'append': keep existing exercises and add the template on top
+   *
+   * This uses `onSaveCustomSession` so we always work at the "plan" level:
+   * existing history is preserved; we only rewrite the session for the selected day.
+   */
+  const handleApplyTemplateToToday = useCallback(
+    async (template: WorkoutTemplate, mode: 'replace' | 'append') => {
+      if (!onSaveCustomSession) {
+        return;
+      }
+
+      const selectedTemplateExercises = template.exercises.filter((_, index) =>
+        selectedTemplateExerciseIndexes[String(index)]
+      );
+
+      if (!selectedTemplateExercises.length) {
+        return;
+      }
+
+      const baseExercises: WorkoutSessionExercise[] =
+        mode === 'append' && selectedSession
+          ? selectedSession.exercises ?? []
+          : [];
+
+      const startOrder = baseExercises.length;
+      const templateExercises: WorkoutSessionExercise[] = selectedTemplateExercises.map(
+        (ex, index) => ({
+          name: ex.name,
+          bodyParts: ex.bodyParts as MuscleGroup[],
+          sets: ex.sets,
+          reps: ex.reps,
+          movementPattern: ex.movementPattern,
+          displayOrder: startOrder + index + 1,
+          completed: false,
+        })
+      );
+
+      const nextExercises = [...baseExercises, ...templateExercises];
+
+      await onSaveCustomSession(selectedDate, nextExercises);
+
+      setLastAddedTemplate(template);
+      setActiveTemplate(null);
+
+      Animated.spring(templateBannerAnim, {
         toValue: 1,
-        ...ANIMATION_CONFIG.bounce,
+        ...ANIMATION_CONFIG.spring,
         useNativeDriver: true,
-      }),
-    ]).start();
-    setActiveTemplate(template);
-  }, [getTemplateCardScale]);
+      }).start();
 
-  // 🎨 Add template to today's workout
-  const handleAddTemplateToToday = useCallback(async (template: WorkoutTemplate) => {
-    if (!selectedSession?.id || !onAddExercise) return;
-
-    for (let i = 0; i < template.exercises.length; i++) {
-      const ex = template.exercises[i];
-      const exercise: WorkoutSessionExercise = {
-        name: ex.name,
-        bodyParts: ex.bodyParts as MuscleGroup[],
-        sets: ex.sets,
-        reps: ex.reps,
-        movementPattern: ex.movementPattern,
-        displayOrder: (displayExercises.length || 0) + i,
-        completed: false,
-      };
-      await onAddExercise(selectedSession.id, exercise);
-    }
-
-    setLastAddedTemplate(template);
-    setActiveTemplate(null);
-
-    Animated.spring(templateBannerAnim, {
-      toValue: 1,
-      ...ANIMATION_CONFIG.spring,
-      useNativeDriver: true,
-    }).start();
-
-    setDashboardTab('plans');
-  }, [selectedSession, onAddExercise, displayExercises.length, templateBannerAnim]);
+      setDashboardTab('plans');
+    },
+    [onSaveCustomSession, selectedSession, selectedDate, selectedTemplateExerciseIndexes, templateBannerAnim]
+  );
 
   useEffect(() => {
     setLocalCompletionOverrides({});
@@ -1748,6 +1800,30 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
                 <Text style={styles.templateDescription}>{activeTemplate.description}</Text>
 
+                <View style={styles.templateSelectionRow}>
+                  <Text style={styles.templateSelectionCount}>
+                    {selectedTemplateCount}/{activeTemplate.exercises.length} selected
+                  </Text>
+                  <View style={styles.templateSelectionActions}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const next: Record<string, boolean> = {};
+                        activeTemplate.exercises.forEach((_, idx) => {
+                          next[String(idx)] = true;
+                        });
+                        setSelectedTemplateExerciseIndexes(next);
+                      }}
+                    >
+                      <Text style={styles.templateSelectionActionText}>Select all</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setSelectedTemplateExerciseIndexes({})}
+                    >
+                      <Text style={styles.templateSelectionActionText}>Clear</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
                 <ScrollView
                   style={styles.templateModalScroll}
                   contentContainerStyle={styles.templateExercisesList}
@@ -1756,9 +1832,23 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   {activeTemplate.exercises.map((ex, idx) => {
                     const primaryMuscle = ex.bodyParts[0]?.toLowerCase() || 'core';
                     const muscleColor = MUSCLE_COLORS[primaryMuscle] || MUSCLE_COLORS.core;
+                    const isSelected = !!selectedTemplateExerciseIndexes[String(idx)];
                     
                     return (
-                      <View key={idx} style={styles.templateExercisePreview}>
+                      <TouchableOpacity
+                        key={idx}
+                        style={[
+                          styles.templateExercisePreview,
+                          isSelected && styles.templateExercisePreviewSelected,
+                        ]}
+                        activeOpacity={0.8}
+                        onPress={() =>
+                          setSelectedTemplateExerciseIndexes((prev) => ({
+                            ...prev,
+                            [String(idx)]: !prev[String(idx)],
+                          }))
+                        }
+                      >
                         <LinearGradient
                           colors={muscleColor.gradient}
                           style={styles.templateExerciseIcon}
@@ -1790,25 +1880,52 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         <Text style={styles.templateExerciseSets}>
                           {ex.sets}×{ex.reps}
                         </Text>
-                      </View>
+                      </TouchableOpacity>
                     );
                   })}
                 </ScrollView>
 
-                {selectedSession?.id && onAddExercise && (
-                  <TouchableOpacity
-                    style={styles.addToTodayButton}
-                    onPress={() => handleAddTemplateToToday(activeTemplate)}
-                  >
-                    <LinearGradient
-                      colors={['#6C63FF', '#4C3BFF']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.addToTodayGradient}
+                {onSaveCustomSession && (
+                  <View style={styles.templateActionsRow}>
+                    <TouchableOpacity
+                      style={styles.addToTodayButton}
+                      disabled={selectedTemplateCount === 0}
+                      onPress={() => handleApplyTemplateToToday(activeTemplate, 'replace')}
                     >
-                      <Text style={styles.addToTodayButtonText}>+ Add All to Today</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
+                      <LinearGradient
+                        colors={selectedTemplateCount === 0 ? ['#4A4F73', '#3A3F63'] : ['#6C63FF', '#4C3BFF']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.addToTodayGradient}
+                      >
+                        <Text style={styles.addToTodayButtonText}>
+                          {selectedTemplateCount === 0
+                            ? 'Select exercises first'
+                            : `Use as Today\'s Workout (${selectedTemplateCount})`}
+                        </Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+
+                    {selectedSession && (
+                      <TouchableOpacity
+                        style={[
+                          styles.addToTodayButton,
+                          styles.addToTodayButtonSecondary,
+                          selectedTemplateCount === 0 && styles.addToTodayButtonSecondaryDisabled,
+                        ]}
+                        disabled={selectedTemplateCount === 0}
+                        onPress={() => handleApplyTemplateToToday(activeTemplate, 'append')}
+                      >
+                        <View style={styles.addToTodaySecondaryInner}>
+                          <Text style={styles.addToTodaySecondaryText}>
+                            {selectedTemplateCount === 0
+                              ? 'Select exercises first'
+                              : `Add on Top (${selectedTemplateCount})`}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 )}
               </View>
             )}
@@ -2326,6 +2443,27 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     marginTop: -1,
   },
+  templateSelectionRow: {
+    marginTop: 6,
+    marginBottom: 2,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  templateSelectionCount: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  templateSelectionActions: {
+    flexDirection: 'row',
+    gap: 14,
+  },
+  templateSelectionActionText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   templateModalScroll: {
     marginTop: 8,
     marginBottom: 12,
@@ -2340,6 +2478,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.05)',
     gap: 12,
+  },
+  templateExercisePreviewSelected: {
+    backgroundColor: 'rgba(108, 99, 255, 0.14)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
   },
   templateExerciseIcon: {
     width: 40,
@@ -2405,6 +2548,34 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: 0.3,
+  },
+
+  templateActionsRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  addToTodayButtonSecondary: {
+    shadowOpacity: 0,
+    shadowRadius: 0,
+  },
+  addToTodayButtonSecondaryDisabled: {
+    opacity: 0.65,
+  },
+  addToTodaySecondaryInner: {
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(10,14,39,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addToTodaySecondaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 
   // ========================================
