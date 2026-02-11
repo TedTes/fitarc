@@ -1249,7 +1249,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <Text style={styles.templateMeta}>{template.meta}</Text>
               </View>
               <View style={styles.templateChevron}>
-                <Text style={styles.templateChevronText}>→</Text>
+                <Text style={styles.templateChevronText}>+</Text>
               </View>
             </View>
             
@@ -1888,9 +1888,27 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 {onSaveCustomSession && (
                   <View style={styles.templateActionsRow}>
                     <TouchableOpacity
-                      style={styles.addToTodayButton}
+                      style={[
+                        styles.addToTodayButton,
+                        styles.addToTodayButtonSecondary,
+                        styles.templateActionHalf,
+                      ]}
+                      onPress={() => setActiveTemplate(null)}
+                    >
+                      <View style={styles.addToTodaySecondaryInner}>
+                        <Text style={styles.addToTodaySecondaryText}>Cancel</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.addToTodayButton, styles.templateActionHalf]}
                       disabled={selectedTemplateCount === 0}
-                      onPress={() => handleApplyTemplateToToday(activeTemplate, 'replace')}
+                      onPress={() =>
+                        handleApplyTemplateToToday(
+                          activeTemplate,
+                          selectedSession ? 'append' : 'replace'
+                        )
+                      }
                     >
                       <LinearGradient
                         colors={selectedTemplateCount === 0 ? ['#4A4F73', '#3A3F63'] : ['#6C63FF', '#4C3BFF']}
@@ -1901,30 +1919,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         <Text style={styles.addToTodayButtonText}>
                           {selectedTemplateCount === 0
                             ? 'Select exercises first'
-                            : `Use as Today\'s Workout (${selectedTemplateCount})`}
+                            : selectedTemplateCount === activeTemplate.exercises.length
+                              ? 'Add (All)'
+                              : `Add (${selectedTemplateCount})`}
                         </Text>
                       </LinearGradient>
                     </TouchableOpacity>
-
-                    {selectedSession && (
-                      <TouchableOpacity
-                        style={[
-                          styles.addToTodayButton,
-                          styles.addToTodayButtonSecondary,
-                          selectedTemplateCount === 0 && styles.addToTodayButtonSecondaryDisabled,
-                        ]}
-                        disabled={selectedTemplateCount === 0}
-                        onPress={() => handleApplyTemplateToToday(activeTemplate, 'append')}
-                      >
-                        <View style={styles.addToTodaySecondaryInner}>
-                          <Text style={styles.addToTodaySecondaryText}>
-                            {selectedTemplateCount === 0
-                              ? 'Select exercises first'
-                              : `Add on Top (${selectedTemplateCount})`}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 )}
               </View>
@@ -2554,6 +2554,10 @@ const styles = StyleSheet.create({
     marginTop: 16,
     flexDirection: 'row',
     gap: 12,
+  },
+  templateActionHalf: {
+    flex: 1,
+    marginTop: 0,
   },
   addToTodayButtonSecondary: {
     shadowOpacity: 0,
