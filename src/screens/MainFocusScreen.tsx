@@ -21,7 +21,7 @@ export const MainFocusScreen: React.FC<MainFocusScreenProps> = ({ onSelect, onSk
     <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
       <View style={styles.content}>
         <Text style={styles.title}>Main Focus</Text>
-        <Text style={styles.subtitle}>Choose your primary training direction.</Text>
+        <Text style={styles.subtitle}>We will match your profile to the best training program.</Text>
         <View style={styles.grid}>
           {GOALS.map((goal) => (
             <TouchableOpacity

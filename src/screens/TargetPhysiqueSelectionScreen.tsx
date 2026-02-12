@@ -143,12 +143,15 @@ export const TargetPhysiqueSelectionScreen: React.FC<TargetPhysiqueSelectionScre
       >
         <Pressable style={styles.confirmOverlay} onPress={handleDismissConfirm}>
           <Pressable style={styles.confirmCard} onPress={() => {}}>
-            <Text style={styles.confirmTitle}>Start this plan?</Text>
+            <Text style={styles.confirmTitle}>Generate matched program?</Text>
             <Text style={styles.confirmBody}>
               Target: Level {pendingTarget ?? '-'}
             </Text>
             <Text style={styles.confirmBody}>
               Estimated duration: {((pendingTarget ?? currentLevelId) - currentLevelId) * 8} weeks
+            </Text>
+            <Text style={styles.confirmBody}>
+              We'll select the closest template and you can edit workouts anytime.
             </Text>
             <View style={styles.confirmActions}>
               <TouchableOpacity style={styles.confirmCancel} onPress={handleDismissConfirm}>

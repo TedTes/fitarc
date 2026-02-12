@@ -47,10 +47,10 @@ export const QuickPlanSetupScreen: React.FC<QuickPlanSetupScreenProps> = ({
     <View style={styles.container}>
       <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
         <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.title}>Quick Plan Setup</Text>
-          <Text style={styles.subtitle}>10-second setup for your first personalized block.</Text>
+          <Text style={styles.title}>Program Matching</Text>
+          <Text style={styles.subtitle}>Set key preferences so we can match you to the right template.</Text>
 
-          <Text style={styles.sectionTitle}>Days / Week</Text>
+          <Text style={styles.sectionTitle}>Training Days / Week</Text>
           <View style={styles.row}>
             {DAY_OPTIONS.map((days) => (
               <TouchableOpacity
@@ -65,7 +65,7 @@ export const QuickPlanSetupScreen: React.FC<QuickPlanSetupScreenProps> = ({
             ))}
           </View>
 
-          <Text style={styles.sectionTitle}>Equipment</Text>
+          <Text style={styles.sectionTitle}>Equipment Access</Text>
           <View style={styles.row}>
             {EQUIPMENT_OPTIONS.map((item) => (
               <TouchableOpacity
@@ -82,7 +82,7 @@ export const QuickPlanSetupScreen: React.FC<QuickPlanSetupScreenProps> = ({
             ))}
           </View>
 
-          <Text style={styles.sectionTitle}>Injuries (optional)</Text>
+          <Text style={styles.sectionTitle}>Limitations (optional)</Text>
           <View style={styles.row}>
             {INJURY_OPTIONS.map((name) => (
               <TouchableOpacity
@@ -109,7 +109,7 @@ export const QuickPlanSetupScreen: React.FC<QuickPlanSetupScreenProps> = ({
               })
             }
           >
-            <Text style={styles.primaryText}>Continue</Text>
+            <Text style={styles.primaryText}>Match My Program</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.secondaryButton} onPress={onSkip}>
             <Text style={styles.secondaryText}>Skip for now</Text>
