@@ -154,7 +154,7 @@ const buildVolumeRows = (workoutLogs: WorkoutLog[]) => {
 };
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
-  user,
+  user: _user,
   phase,
   workoutSessions,
   workoutLogs,
@@ -459,7 +459,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                   }}
                 />
                 <VictoryGroup data={nutritionData} x="day">
-                  <VictoryBar dataKey="protein" style={{ data: { fill: COLORS.accent } }} />
+                  <VictoryBar y="protein" style={{ data: { fill: COLORS.accent } }} />
                 </VictoryGroup>
               </VictoryChart>
             </View>
@@ -676,6 +676,9 @@ const styles = StyleSheet.create({
   },
   volumeList: {
     gap: 14,
+  },
+  volumeRow: {
+    gap: 6,
   },
   volumeRowHeader: {
     flexDirection: 'row',

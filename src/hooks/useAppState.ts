@@ -6,15 +6,11 @@ import {
   PhotoCheckin,
   ProgressEstimate,
   createEmptyAppState,
-  WorkoutLog,
   WorkoutSessionEntry,
   WorkoutSessionExercise,
   DailyMealPlan,
   PlanDay,
 } from '../types/domain';
-import {
-  sessionToWorkoutLog,
-} from '../utils/workoutPlanner';
 import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
 import {
   fetchWorkoutSessionEntries,
@@ -34,33 +30,6 @@ import {
   deletePlanExercise,
   ensurePlanWorkoutForDate,
 } from '../services/planSnapshotService';
-
-const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
-  const index = logs.findIndex(
-    (existing) => existing.date === log.date && existing.phasePlanId === log.phasePlanId
-  );
-  if (index >= 0) {
-    const updated = [...logs];
-    updated[index] = log;
-    return updated;
-  }
-  return [...logs, log];
-};
-
-const upsertWorkoutSession = (
-  sessions: WorkoutSessionEntry[],
-  session: WorkoutSessionEntry
-): WorkoutSessionEntry[] => {
-  const index = sessions.findIndex(
-    (existing) => existing.date === session.date && existing.phasePlanId === session.phasePlanId
-  );
-  if (index >= 0) {
-    const updated = [...sessions];
-    updated[index] = session;
-    return updated;
-  }
-  return [...sessions, session];
-};
 
 const upsertMealPlan = (plans: DailyMealPlan[], plan: DailyMealPlan): DailyMealPlan[] => {
   const index = plans.findIndex(

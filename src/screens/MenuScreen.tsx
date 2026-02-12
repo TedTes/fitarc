@@ -622,7 +622,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     [toggleMealTypeCompleted]
   );
 
-  const handleSwapMeal = useCallback((mealType: string, entryId: string) => {
+  const handleSwapMeal = useCallback((_mealType: string, _entryId: string) => {
     Alert.alert('Swap Meal', 'Generate a new meal suggestion?', [
       { text: 'Cancel', style: 'cancel' },
       {

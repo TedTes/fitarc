@@ -48,7 +48,13 @@ export const mapSessionRow = (
     phasePlanId: phasePlanId ?? session.plan_id,
     date: sessionDate,
     exercises: sessionExercises.map((se: any) => {
-      const setDetails = (se.sets || []).map((s: any) => ({
+      const setDetails: Array<{
+        setNumber: number | null;
+        reps: number | null;
+        weight: number | null;
+        rpe: number | null;
+        restSeconds: number | null;
+      }> = (se.sets || []).map((s: any) => ({
         setNumber: s.set_number,
         reps: s.reps,
         weight: s.weight,

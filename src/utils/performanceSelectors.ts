@@ -52,6 +52,23 @@ const createZeroVolume = <T extends string>(keys: T[]): Record<T, number> =>
 
 const sortDesc = (a: VolumeEntryView, b: VolumeEntryView) => b.sets - a.sets;
 
+const buildGlyph = (weights: number[]): string => {
+  if (!weights.length) return '';
+  const glyphs = '▁▂▃▄▅▆▇█';
+  const min = Math.min(...weights);
+  const max = Math.max(...weights);
+  if (min === max) {
+    return glyphs[Math.floor(glyphs.length / 2)].repeat(weights.length);
+  }
+  return weights
+    .map((value) => {
+      const ratio = (value - min) / (max - min);
+      const idx = Math.max(0, Math.min(glyphs.length - 1, Math.round(ratio * (glyphs.length - 1))));
+      return glyphs[idx];
+    })
+    .join('');
+};
+
 export const buildStrengthTrends = (
   snapshots: StrengthSnapshot[],
   labelMaps?: TrackingLabelMaps

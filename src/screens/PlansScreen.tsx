@@ -117,7 +117,7 @@ const getPhaseWeek = (phase: PhasePlan) => {
 export const PlansScreen: React.FC<PlansScreenProps> = ({
   user,
   phase,
-  workoutSessions,
+  workoutSessions: _workoutSessions,
   plannedWorkouts,
   onSaveCustomSession,
   onAddExercise,
@@ -192,10 +192,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }, [handleOpenExerciseModal, setFabAction])
   );
 
-  const resolvedSessions = useMemo(() => {
-    if (!phase?.id) return workoutSessions;
-    return workoutSessions.filter((session) => session.phasePlanId === phase.id);
-  }, [phase?.id, workoutSessions]);
   const resolvedPlannedWorkouts = useMemo(() => {
     if (!phase?.id) return plannedWorkouts;
     return plannedWorkouts.filter((day) => day.planId === phase.id);

@@ -7,7 +7,8 @@ type PlanDayRow = {
   plan_id: string;
   user_id: string;
   day_date: string;
-  workout?: {
+  workout?:
+    | {
     id: string;
     title: string | null;
     source_template_id: string | null;
@@ -23,7 +24,45 @@ type PlanDayRow = {
       display_order: number | null;
       notes: string | null;
     }>;
-  } | null;
+  }
+    | {
+    id: string;
+    title: string | null;
+    source_template_id: string | null;
+    source_type: string | null;
+    exercises?: Array<{
+      id: string;
+      exercise_id: string | null;
+      exercise_name: string;
+      movement_pattern: string | null;
+      body_parts: string[] | null;
+      sets: number | null;
+      reps: string | null;
+      display_order: number | null;
+      notes: string | null;
+    }>;
+  }[]
+    | null;
+};
+
+type PlanWorkoutRow = {
+  id: string;
+  title: string | null;
+  source_template_id: string | null;
+  source_type: string | null;
+  exercises?: PlanWorkoutExerciseRow[];
+};
+
+type PlanWorkoutExerciseRow = {
+  id: string;
+  exercise_id: string | null;
+  exercise_name: string;
+  movement_pattern: string | null;
+  body_parts: string[] | null;
+  sets: number | null;
+  reps: string | null;
+  display_order: number | null;
+  notes: string | null;
 };
 
 export type PlanExerciseInput = {
@@ -39,7 +78,7 @@ export type PlanExerciseInput = {
 };
 
 const mapPlanExerciseRow = (
-  row: NonNullable<NonNullable<PlanDayRow['workout']>['exercises']>[number],
+  row: PlanWorkoutExerciseRow,
   planWorkoutId: string
 ): PlanWorkoutExercise => ({
   id: row.id,
@@ -55,9 +94,10 @@ const mapPlanExerciseRow = (
 });
 
 const mapPlanDayRow = (row: PlanDayRow): PlanDay => {
-  const workout = row.workout
+  const rawWorkout = (Array.isArray(row.workout) ? row.workout[0] ?? null : row.workout) as PlanWorkoutRow | null;
+  const workout = rawWorkout
     ? (() => {
-        const exercises = (row.workout.exercises ?? []).filter((exercise) => {
+        const exercises = (rawWorkout.exercises ?? []).filter((exercise) => {
           if (exercise.exercise_id) return true;
           console.warn(
             '[planSnapshotService] Dropping plan exercise without exercise_id:',
@@ -67,12 +107,12 @@ const mapPlanDayRow = (row: PlanDayRow): PlanDay => {
         });
 
         return {
-          id: row.workout.id,
+          id: rawWorkout.id,
           planDayId: row.id,
-          title: row.workout.title,
-          sourceTemplateId: row.workout.source_template_id,
-          sourceType: row.workout.source_type,
-          exercises: exercises.map((exercise) => mapPlanExerciseRow(exercise, row.workout!.id)),
+          title: rawWorkout.title,
+          sourceTemplateId: rawWorkout.source_template_id,
+          sourceType: rawWorkout.source_type,
+          exercises: exercises.map((exercise) => mapPlanExerciseRow(exercise, rawWorkout.id)),
         };
       })()
     : null;
@@ -167,7 +207,7 @@ export const fetchPlanWorkoutForDate = async (
     .maybeSingle();
 
   if (error) throw error;
-  return data ? mapPlanDayRow(data as PlanDayRow) : null;
+  return data ? mapPlanDayRow(data as unknown as PlanDayRow) : null;
 };
 
 const ensurePlanWorkout = async (
@@ -276,7 +316,7 @@ export const replacePlanExercisesForDate = async (
   title?: string | null
 ) => {
   const workout = await ensurePlanWorkout(userId, planId, date);
-  let planWorkoutId = workout?.id ?? null;
+  let planWorkoutId: string | null = workout.id;
   if (!planWorkoutId) {
     const fallback = await fetchPlanWorkoutForDate(userId, planId, date);
     planWorkoutId = fallback?.workout?.id ?? null;
@@ -311,7 +351,7 @@ export const appendPlanExercisesForDate = async (
   title?: string | null
 ) => {
   const workout = await ensurePlanWorkout(userId, planId, date);
-  let planWorkoutId = workout?.id ?? null;
+  let planWorkoutId: string | null = workout.id;
   if (!planWorkoutId) {
     const fallback = await fetchPlanWorkoutForDate(userId, planId, date);
     planWorkoutId = fallback?.workout?.id ?? null;

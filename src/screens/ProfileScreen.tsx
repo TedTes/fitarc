@@ -38,7 +38,7 @@ type ProfileScreenProps = {
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   user,
   onSave,
-  onClose,
+  onClose: _onClose,
   onChangeCurrentLevel: _onChangeCurrentLevel,
   onChangeTargetLevel,
   onLogout,
@@ -1526,6 +1526,39 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#A0A3BD',
     textAlign: 'center',
+  },
+  deleteActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+    width: '100%',
+    justifyContent: 'flex-end',
+  },
+  deleteSecondary: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2A2F4F',
+    backgroundColor: '#1E2340',
+  },
+  deleteSecondaryText: {
+    color: '#A0A3BD',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  deletePrimary: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#6C63FF',
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+  },
+  deletePrimaryText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
   modalListItemSubtitle: {
     color: '#A0A3BD',

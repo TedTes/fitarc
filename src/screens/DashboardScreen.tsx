@@ -30,6 +30,7 @@ import { useFabAction } from '../contexts/FabActionContext';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import { Calendar } from 'react-native-calendars';
 import { getBodyPartLabel } from '../utils';
+import type { BodyPart } from '../utils/trainingSplitHelper';
 import { addDays, formatLocalDateYMD, parseYMDToDate } from '../utils/date';
 import { type AdaptationMode } from '../services/planningRules';
 import { PLAN_INPUT_LABELS, getMissingPlanInputs } from '../utils/planReadiness';
@@ -55,6 +56,7 @@ const COLORS = {
   overlayLight: 'rgba(255, 255, 255, 0.25)',
   surface: '#0C1021',
   elevated: '#151A2E',
+  card: '#101427',
   borderSubtle: 'rgba(255,255,255,0.06)',
 } as const;
 
@@ -63,7 +65,7 @@ const MUSCLE_COLORS: Record<string, {
   bg: string; 
   text: string; 
   border: string;
-  gradient: readonly string[];
+  gradient: readonly [string, string, ...string[]];
 }> = {
   chest: { 
     bg: 'rgba(239, 68, 68, 0.15)', 
@@ -261,15 +263,9 @@ const getCalendarTheme = () => ({
   },
 } as any);
 
-// Helper functions
-const formatBodyPartList = (parts: MuscleGroup[]): string => {
-  if (!parts.length) return 'Full Body';
-  return parts
-    .map((part) => {
-      const key = part.toLowerCase();
-      return KNOWN_BODY_PARTS.has(key) ? getBodyPartLabel(key as any) : part;
-    })
-    .join(' • ');
+const formatBodyPartSafe = (part: string) => {
+  const key = part.toLowerCase();
+  return KNOWN_BODY_PARTS.has(key) ? getBodyPartLabel(key as BodyPart) : part;
 };
 
 const getGreetingMessage = () => {
@@ -589,7 +585,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     setTemplateExercisesAdded(new Set());
   }, [selectedDate]);
 
-  const plannedExercisesForSelectedDate = useMemo(() => {
+  const plannedExercisesForSelectedDate = useMemo<WorkoutSessionExercise[]>(() => {
     if (selectedSession?.exercises?.length || !selectedPlanDay?.workout?.exercises?.length) {
       return EMPTY_EXERCISES;
     }
@@ -607,7 +603,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }));
   }, [selectedPlanDay, selectedSession]);
 
-  const displayExercises =
+  const displayExercises: WorkoutSessionExercise[] =
     selectedSession?.exercises?.length
       ? selectedSession.exercises
       : plannedExercisesForSelectedDate ?? EMPTY_EXERCISES;
@@ -1494,7 +1490,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                           style={styles.muscleTag}
                         >
                           <Text style={styles.muscleTagText}>
-                            {getBodyPartLabel(muscle)}
+                            {formatBodyPartSafe(muscle)}
                           </Text>
                         </LinearGradient>
                       );
@@ -2042,7 +2038,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         <View style={styles.templateModalExerciseInfo}>
                           <Text style={styles.templateModalExerciseName}>{ex.name}</Text>
                           <Text style={styles.templateModalExerciseMeta}>
-                            {ex.sets}×{ex.reps} • {ex.bodyParts.slice(0, 2).map(getBodyPartLabel).join(', ')}
+                            {ex.sets}×{ex.reps} • {ex.bodyParts.slice(0, 2).map(formatBodyPartSafe).join(', ')}
                           </Text>
                         </View>
                         <View
