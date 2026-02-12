@@ -23,9 +23,9 @@ import {
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
 import { fetchMealPlansForRange } from '../services/mealService';
-import { supabase } from '../lib/supabaseClient';
 import {
   fetchPlanRange,
+  appendPlanExercisesForDate,
   replacePlanExercisesForDate,
   deletePlanExercise,
   ensurePlanWorkoutForDate,
@@ -466,25 +466,30 @@ export const useAppState = () => {
       if (!exercise.exerciseId) {
         throw new Error('exercise_id_required');
       }
-      const displayOrder = exercise.displayOrder ?? 1;
-      const { data, error } = await supabase
-        .from('fitarc_plan_exercises')
-        .insert({
-          plan_workout_id: planWorkoutId,
-          exercise_id: exercise.exerciseId,
-          exercise_name: exercise.name,
-          movement_pattern: exercise.movementPattern ?? null,
-          body_parts: exercise.bodyParts ?? [],
+      const virtualParts = planWorkoutId.startsWith('virtual:')
+        ? planWorkoutId.split(':')
+        : null;
+      const virtualPlanId = virtualParts?.[1];
+      const virtualDate = virtualParts?.[2];
+      const resolvedDate =
+        virtualDate ??
+        current.plannedWorkouts.find((day) => day.workout?.id === planWorkoutId)?.date ??
+        formatLocalDateYMD(new Date());
+      const resolvedPlanId = virtualPlanId ?? current.currentPhase.id;
+
+      await appendPlanExercisesForDate(current.user.id, resolvedPlanId, resolvedDate, [
+        {
+          exerciseId: exercise.exerciseId,
+          name: exercise.name,
+          bodyParts: exercise.bodyParts ?? [],
+          movementPattern: exercise.movementPattern ?? null,
           sets: exercise.sets ?? null,
           reps: exercise.reps ?? null,
-          display_order: displayOrder,
+          displayOrder: exercise.displayOrder ?? 1,
           notes: exercise.notes ?? null,
-        })
-        .select('id')
-        .single();
-      if (error) throw error;
+        },
+      ]);
       await loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id);
-      return data?.id;
     },
     [loadPlannedWorkoutsFromSupabase]
   );

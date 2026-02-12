@@ -1,14 +1,6 @@
-import { MuscleGroup, PlanDay, PlanWorkoutExercise } from '../types/domain';
-import {
-  appendPlanExercisesForDate as appendSnapshotExercisesForDate,
-  deletePlanExercise as deleteSnapshotPlanExercise,
-  ensurePlanWorkoutForDate as ensureSnapshotPlanWorkoutForDate,
-  fetchPlanWorkoutForDate as fetchSnapshotPlanWorkoutForDate,
-  fetchPlanWorkoutsForRange as fetchSnapshotPlanWorkoutsForRange,
-  replacePlanExercisesForDate as replaceSnapshotExercisesForDate,
-} from './planSnapshotService';
-
-export type PlanSourceMode = 'snapshot' | 'template_overrides';
+import { supabase } from '../lib/supabaseClient';
+import { MuscleGroup, PlanDay, PlanWorkout, PlanWorkoutExercise, User } from '../types/domain';
+import { fetchUserProfile } from './userProfileService';
 
 export type PlanExerciseInput = {
   exerciseId: string;
@@ -22,20 +14,456 @@ export type PlanExerciseInput = {
   sourceTemplateExerciseId?: string | null;
 };
 
-const PLAN_SOURCE_MODE = (
-  process.env.EXPO_PUBLIC_PLAN_SOURCE_MODE?.trim().toLowerCase() === 'template_overrides'
-    ? 'template_overrides'
-    : 'snapshot'
-) as PlanSourceMode;
+type PlanContext = {
+  planId: string;
+  userId: string;
+  startDate: string;
+  goalType?: string | null;
+};
 
-export const getPlanSourceMode = (): PlanSourceMode => PLAN_SOURCE_MODE;
+type TemplateExerciseRow = {
+  id: string;
+  exercise_id: string;
+  exercise_name: string;
+  movement_pattern: string | null;
+  body_parts: string[] | null;
+  sets: number | null;
+  reps: string | null;
+  display_order: number | null;
+  notes: string | null;
+};
 
-const assertModeImplemented = () => {
-  if (PLAN_SOURCE_MODE === 'template_overrides') {
-    throw new Error(
-      'template_overrides_mode_not_implemented: runtime still using snapshot-backed plan data'
-    );
+type TemplateRow = {
+  id: string;
+  title: string;
+  difficulty: string | null;
+  equipment_level: string | null;
+  goal_tags: string[] | null;
+  exercises: TemplateExerciseRow[];
+};
+
+type OverrideRow = {
+  id: string;
+  user_id: string;
+  plan_id: string;
+  day_date: string;
+  template_exercise_id: string | null;
+  action_type: 'add' | 'remove' | 'update' | 'replace';
+  exercise_id: string | null;
+  exercise_name: string | null;
+  movement_pattern: string | null;
+  body_parts: string[] | null;
+  sets: number | null;
+  reps: string | null;
+  display_order: number | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
+const normalizeKey = (value?: string | null): string =>
+  (value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+
+const normalizeEquipmentLevel = (value?: string | null): 'bodyweight' | 'dumbbells' | 'full_gym' | null => {
+  const key = normalizeKey(value);
+  if (!key) return null;
+  if (key === 'full_gym' || key === 'gym') return 'full_gym';
+  if (key === 'dumbbells' || key === 'dumbbell') return 'dumbbells';
+  if (key === 'bodyweight' || key === 'body_weight') return 'bodyweight';
+  return null;
+};
+
+const EQUIPMENT_RANK = {
+  bodyweight: 0,
+  dumbbells: 1,
+  full_gym: 2,
+} as const;
+
+const EXPERIENCE_RANK: Record<User['experienceLevel'], number> = {
+  beginner: 0,
+  intermediate: 1,
+  advanced: 2,
+};
+
+const GOAL_ALIAS_MAP: Record<string, string[]> = {
+  hypertrophy: ['hypertrophy', 'build_muscle', 'muscle', 'general'],
+  strength: ['strength', 'get_stronger', 'power', 'general'],
+  fat_loss: ['fat_loss', 'lose_fat', 'conditioning', 'general_fitness', 'general'],
+  endurance: ['endurance', 'conditioning', 'general_fitness'],
+  general: ['general', 'general_fitness', 'conditioning', 'full_body'],
+};
+
+const mapSplitToTags = (split: User['trainingSplit']): string[] => {
+  switch (split) {
+    case 'push_pull_legs':
+      return ['push', 'pull', 'legs'];
+    case 'upper_lower':
+      return ['upper', 'lower'];
+    case 'bro_split':
+      return ['chest', 'back', 'shoulders', 'arms', 'legs'];
+    case 'full_body':
+    default:
+      return ['full_body'];
   }
+};
+
+const inferDaysPerWeek = (split: User['trainingSplit']): 3 | 4 | 5 | 6 => {
+  if (split === 'full_body') return 3;
+  if (split === 'upper_lower') return 4;
+  if (split === 'push_pull_legs') return 5;
+  return 5;
+};
+
+const shouldTrainOnDate = (date: Date, daysPerWeek: 3 | 4 | 5 | 6): boolean => {
+  const day = date.getDay();
+  if (daysPerWeek === 6) return day !== 0;
+  if (daysPerWeek === 5) return day >= 1 && day <= 5;
+  if (daysPerWeek === 4) return day === 1 || day === 2 || day === 4 || day === 6;
+  return day === 1 || day === 3 || day === 5;
+};
+
+const parseYmd = (value: string): Date => {
+  const [year, month, day] = value.split('-').map((part) => parseInt(part, 10) || 0);
+  return new Date(year, Math.max(0, month - 1), day || 1);
+};
+
+const formatYmd = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const buildDateRange = (startDate: string, endDate: string): string[] => {
+  const start = parseYmd(startDate);
+  const end = parseYmd(endDate);
+  const out: string[] = [];
+  const cursor = new Date(start);
+  while (cursor.getTime() <= end.getTime()) {
+    out.push(formatYmd(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+};
+
+const resolveScheduledIndex = (
+  phaseStartDate: string,
+  targetDate: string,
+  daysPerWeek: 3 | 4 | 5 | 6
+): number | null => {
+  const start = parseYmd(phaseStartDate);
+  const target = parseYmd(targetDate);
+  if (target.getTime() < start.getTime()) return null;
+
+  const cursor = new Date(start);
+  let scheduledIndex = -1;
+  while (cursor.getTime() <= target.getTime()) {
+    if (shouldTrainOnDate(cursor, daysPerWeek)) {
+      scheduledIndex += 1;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return scheduledIndex >= 0 ? scheduledIndex : null;
+};
+
+const extractTemplateExerciseId = (exerciseId?: string | null): string | null => {
+  if (!exerciseId || !exerciseId.startsWith('tpl:')) return null;
+  const parts = exerciseId.split(':');
+  return parts[parts.length - 1] ?? null;
+};
+
+const buildTemplateExerciseUiId = (planId: string, date: string, templateExerciseId: string): string =>
+  `tpl:${planId}:${date}:${templateExerciseId}`;
+
+const buildOverrideExerciseUiId = (overrideId: string): string =>
+  `ovr:${overrideId}`;
+
+const fetchPlanContext = async (planId: string): Promise<PlanContext | null> => {
+  const { data, error } = await supabase
+    .from('fitarc_workout_plans')
+    .select('id, user_id, start_date, goal_type')
+    .eq('id', planId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    planId: data.id,
+    userId: data.user_id,
+    startDate: data.start_date,
+    goalType: data.goal_type,
+  };
+};
+
+const fetchTemplatesForUser = async (userId: string): Promise<TemplateRow[]> => {
+  const { data, error } = await supabase
+    .from('fitarc_workout_templates')
+    .select(
+      `
+      id,
+      title,
+      difficulty,
+      equipment_level,
+      goal_tags,
+      exercises:fitarc_workout_template_exercises (
+        id,
+        exercise_id,
+        exercise_name,
+        movement_pattern,
+        body_parts,
+        sets,
+        reps,
+        display_order,
+        notes
+      )
+    `
+    )
+    .eq('is_deprecated', false)
+    .or(`is_public.eq.true,created_by.eq.${userId}`);
+  if (error) throw error;
+
+  return ((data ?? []) as TemplateRow[]).map((template) => ({
+    ...template,
+    goal_tags: (template.goal_tags ?? []).map((tag) => normalizeKey(tag)),
+    exercises: (template.exercises ?? [])
+      .filter((exercise) => Boolean(exercise.exercise_id))
+      .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)),
+  }));
+};
+
+const fetchOverridesForRange = async (
+  userId: string,
+  planId: string,
+  startDate: string,
+  endDate: string
+): Promise<Map<string, OverrideRow[]>> => {
+  const { data, error } = await supabase
+    .from('fitarc_plan_overrides')
+    .select(
+      `
+      id,
+      user_id,
+      plan_id,
+      day_date,
+      template_exercise_id,
+      action_type,
+      exercise_id,
+      exercise_name,
+      movement_pattern,
+      body_parts,
+      sets,
+      reps,
+      display_order,
+      notes,
+      is_active,
+      created_at
+    `
+    )
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .eq('is_active', true)
+    .gte('day_date', startDate)
+    .lte('day_date', endDate)
+    .order('display_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+
+  const byDay = new Map<string, OverrideRow[]>();
+  (data ?? []).forEach((row) => {
+    const list = byDay.get(row.day_date) ?? [];
+    list.push(row as OverrideRow);
+    byDay.set(row.day_date, list);
+  });
+  return byDay;
+};
+
+const chooseTemplatesForTag = (
+  tag: string,
+  templates: TemplateRow[],
+  goalType: string | null | undefined,
+  equipmentLevel: 'bodyweight' | 'dumbbells' | 'full_gym' | null,
+  experienceLevel?: User['experienceLevel']
+): TemplateRow[] => {
+  const tagPool = templates.filter((template) => (template.goal_tags ?? []).includes(tag));
+  const basePool = tagPool.length ? tagPool : templates;
+  const goalAliases = GOAL_ALIAS_MAP[normalizeKey(goalType)] ?? GOAL_ALIAS_MAP.general;
+
+  const matchesGoal = (template: TemplateRow) =>
+    !goalAliases.length || (template.goal_tags ?? []).some((entry) => goalAliases.includes(entry));
+
+  const matchesEquipment = (template: TemplateRow) => {
+    if (!equipmentLevel) return true;
+    const level = normalizeEquipmentLevel(template.equipment_level);
+    if (!level) return true;
+    return EQUIPMENT_RANK[level] <= EQUIPMENT_RANK[equipmentLevel];
+  };
+
+  const matchesDifficulty = (template: TemplateRow) => {
+    if (!experienceLevel) return true;
+    const templateDifficulty = normalizeKey(template.difficulty) as User['experienceLevel'];
+    if (!(templateDifficulty in EXPERIENCE_RANK)) return true;
+    return Math.abs(EXPERIENCE_RANK[templateDifficulty] - EXPERIENCE_RANK[experienceLevel]) <= 1;
+  };
+
+  const tiers: Array<(template: TemplateRow) => boolean> = [
+    (template) => matchesGoal(template) && matchesEquipment(template) && matchesDifficulty(template),
+    (template) => matchesGoal(template) && matchesEquipment(template),
+    (template) => matchesGoal(template),
+    (template) => matchesEquipment(template) && matchesDifficulty(template),
+    (template) => matchesEquipment(template),
+    (template) => matchesDifficulty(template),
+  ];
+
+  for (const tier of tiers) {
+    const matched = basePool.filter(tier);
+    if (matched.length) return matched;
+  }
+  return basePool.length ? basePool : templates;
+};
+
+const resolveTemplateForDate = (
+  context: PlanContext,
+  date: string,
+  split: User['trainingSplit'],
+  daysPerWeek: 3 | 4 | 5 | 6,
+  templates: TemplateRow[],
+  equipmentLevel: 'bodyweight' | 'dumbbells' | 'full_gym' | null,
+  experienceLevel?: User['experienceLevel']
+): TemplateRow | null => {
+  const scheduledIndex = resolveScheduledIndex(context.startDate, date, daysPerWeek);
+  if (scheduledIndex === null) return null;
+  const tags = mapSplitToTags(split);
+  const workoutTag = tags[scheduledIndex % tags.length];
+  const candidates = chooseTemplatesForTag(
+    workoutTag,
+    templates,
+    context.goalType,
+    equipmentLevel,
+    experienceLevel
+  );
+  return candidates.length ? candidates[scheduledIndex % candidates.length] : null;
+};
+
+const buildBaseExercises = (
+  template: TemplateRow,
+  planId: string,
+  date: string,
+  workoutId: string
+): PlanWorkoutExercise[] =>
+  (template.exercises ?? []).map((exercise, index) => ({
+    id: buildTemplateExerciseUiId(planId, date, exercise.id),
+    planWorkoutId: workoutId,
+    exerciseId: exercise.exercise_id,
+    name: exercise.exercise_name,
+    bodyParts: (exercise.body_parts ?? []) as MuscleGroup[],
+    movementPattern: exercise.movement_pattern ?? undefined,
+    sets: exercise.sets ?? 4,
+    reps: exercise.reps ?? '8-12',
+    displayOrder: exercise.display_order ?? index + 1,
+    notes: exercise.notes ?? undefined,
+  }));
+
+const applyOverrides = (
+  base: PlanWorkoutExercise[],
+  overrides: OverrideRow[],
+  planId: string,
+  date: string,
+  workoutId: string
+): PlanWorkoutExercise[] => {
+  const overrideByTemplateExercise = new Map<string, OverrideRow>();
+  const additions: OverrideRow[] = [];
+
+  overrides.forEach((row) => {
+    if (row.action_type === 'add' && !row.template_exercise_id) {
+      additions.push(row);
+      return;
+    }
+    if (row.template_exercise_id) {
+      overrideByTemplateExercise.set(row.template_exercise_id, row);
+    }
+  });
+
+  const resolvedBase: PlanWorkoutExercise[] = [];
+  base.forEach((exercise) => {
+    const templateExerciseId = extractTemplateExerciseId(exercise.id);
+    if (!templateExerciseId) {
+      resolvedBase.push(exercise);
+      return;
+    }
+    const override = overrideByTemplateExercise.get(templateExerciseId);
+    if (!override) {
+      resolvedBase.push(exercise);
+      return;
+    }
+    if (override.action_type === 'remove') return;
+
+    resolvedBase.push({
+      ...exercise,
+      id: buildTemplateExerciseUiId(planId, date, templateExerciseId),
+      planWorkoutId: workoutId,
+      exerciseId: override.exercise_id ?? exercise.exerciseId,
+      name: override.exercise_name ?? exercise.name,
+      movementPattern: override.movement_pattern ?? exercise.movementPattern,
+      bodyParts: (override.body_parts ?? exercise.bodyParts) as MuscleGroup[],
+      sets: override.sets ?? exercise.sets,
+      reps: override.reps ?? exercise.reps,
+      displayOrder: override.display_order ?? exercise.displayOrder,
+      notes: override.notes ?? exercise.notes,
+    });
+  });
+
+  const resolvedAdds = additions.map((override) => ({
+    id: buildOverrideExerciseUiId(override.id),
+    planWorkoutId: workoutId,
+    exerciseId: override.exercise_id ?? '',
+    name: override.exercise_name ?? 'Custom Exercise',
+    movementPattern: override.movement_pattern ?? undefined,
+    bodyParts: (override.body_parts ?? []) as MuscleGroup[],
+    sets: override.sets ?? 4,
+    reps: override.reps ?? '8-12',
+    displayOrder: override.display_order ?? undefined,
+    notes: override.notes ?? undefined,
+  }));
+
+  return [...resolvedBase, ...resolvedAdds].sort(
+    (a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)
+  );
+};
+
+const resolveTemplateBackedPlanDay = (
+  context: PlanContext,
+  date: string,
+  template: TemplateRow,
+  overrides: OverrideRow[]
+): PlanDay => {
+  const dayId = `virtual:${context.planId}:${date}`;
+  const workoutId = `virtual:${context.planId}:${date}`;
+  const baseExercises = buildBaseExercises(template, context.planId, date, workoutId);
+  const exercises = applyOverrides(baseExercises, overrides, context.planId, date, workoutId);
+  return {
+    id: dayId,
+    planId: context.planId,
+    userId: context.userId,
+    date,
+    workout: {
+      id: workoutId,
+      planDayId: dayId,
+      title: template.title,
+      sourceTemplateId: template.id,
+      sourceType: 'template',
+      exercises,
+    },
+  };
+};
+
+const setDayOverridesInactive = async (userId: string, planId: string, date: string) => {
+  const { error } = await supabase
+    .from('fitarc_plan_overrides')
+    .update({ is_active: false })
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .eq('day_date', date)
+    .eq('is_active', true);
+  if (error) throw error;
 };
 
 export const fetchPlanRange = async (
@@ -44,8 +472,35 @@ export const fetchPlanRange = async (
   startDate: string,
   endDate: string
 ): Promise<PlanDay[]> => {
-  assertModeImplemented();
-  return fetchSnapshotPlanWorkoutsForRange(userId, planId, startDate, endDate);
+  const context = await fetchPlanContext(planId);
+  if (!context || context.userId !== userId) return [];
+
+  const profile = await fetchUserProfile(userId);
+  const split = profile?.trainingSplit ?? 'full_body';
+  const daysPerWeek = inferDaysPerWeek(split);
+  const templates = await fetchTemplatesForUser(userId);
+  if (!templates.length) return [];
+  const overridesByDay = await fetchOverridesForRange(userId, planId, startDate, endDate);
+  const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
+
+  const dates = buildDateRange(startDate, endDate);
+  const resolved: PlanDay[] = [];
+  dates.forEach((date) => {
+    if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) return;
+    const template = resolveTemplateForDate(
+      context,
+      date,
+      split,
+      daysPerWeek,
+      templates,
+      equipmentLevel,
+      profile?.experienceLevel
+    );
+    if (!template) return;
+    const overrides = overridesByDay.get(date) ?? [];
+    resolved.push(resolveTemplateBackedPlanDay(context, date, template, overrides));
+  });
+  return resolved;
 };
 
 export const fetchResolvedPlanForDate = async (
@@ -53,17 +508,45 @@ export const fetchResolvedPlanForDate = async (
   planId: string,
   date: string
 ): Promise<PlanDay | null> => {
-  assertModeImplemented();
-  return fetchSnapshotPlanWorkoutForDate(userId, planId, date);
+  const context = await fetchPlanContext(planId);
+  if (!context || context.userId !== userId) return null;
+
+  const profile = await fetchUserProfile(userId);
+  const split = profile?.trainingSplit ?? 'full_body';
+  const daysPerWeek = inferDaysPerWeek(split);
+  if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) return null;
+
+  const templates = await fetchTemplatesForUser(userId);
+  if (!templates.length) return null;
+  const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
+  const template = resolveTemplateForDate(
+    context,
+    date,
+    split,
+    daysPerWeek,
+    templates,
+    equipmentLevel,
+    profile?.experienceLevel
+  );
+  if (!template) return null;
+  const overridesByDay = await fetchOverridesForRange(userId, planId, date, date);
+  return resolveTemplateBackedPlanDay(context, date, template, overridesByDay.get(date) ?? []);
 };
 
 export const ensurePlanWorkoutForDate = async (
   userId: string,
   planId: string,
   date: string
-) => {
-  assertModeImplemented();
-  return ensureSnapshotPlanWorkoutForDate(userId, planId, date);
+): Promise<PlanWorkout> => {
+  const resolved = await fetchResolvedPlanForDate(userId, planId, date);
+  if (resolved?.workout) return resolved.workout;
+  return {
+    id: `virtual:${planId}:${date}`,
+    planDayId: `virtual:${planId}:${date}`,
+    title: null,
+    sourceType: 'template',
+    exercises: [],
+  };
 };
 
 export const replacePlanExercisesForDate = async (
@@ -71,18 +554,33 @@ export const replacePlanExercisesForDate = async (
   planId: string,
   date: string,
   exercises: PlanExerciseInput[],
-  sourceTemplateId?: string | null,
-  title?: string | null
+  _sourceTemplateId?: string | null,
+  _title?: string | null
 ) => {
-  assertModeImplemented();
-  return replaceSnapshotExercisesForDate(
-    userId,
-    planId,
-    date,
-    exercises,
-    sourceTemplateId,
-    title
-  );
+  await setDayOverridesInactive(userId, planId, date);
+  if (!exercises.length) return;
+
+  const rows = exercises.map((exercise, index) => {
+    const templateExerciseId = exercise.sourceTemplateExerciseId;
+    return {
+      user_id: userId,
+      plan_id: planId,
+      day_date: date,
+      template_exercise_id: templateExerciseId,
+      action_type: templateExerciseId ? 'replace' : 'add',
+      exercise_id: exercise.exerciseId,
+      exercise_name: exercise.name,
+      movement_pattern: exercise.movementPattern ?? null,
+      body_parts: exercise.bodyParts ?? [],
+      sets: exercise.sets ?? null,
+      reps: exercise.reps ?? null,
+      display_order: exercise.displayOrder ?? index + 1,
+      notes: exercise.notes ?? null,
+      is_active: true,
+    };
+  });
+  const { error } = await supabase.from('fitarc_plan_overrides').insert(rows);
+  if (error) throw error;
 };
 
 export const appendPlanExercisesForDate = async (
@@ -90,23 +588,84 @@ export const appendPlanExercisesForDate = async (
   planId: string,
   date: string,
   exercises: PlanExerciseInput[],
-  sourceTemplateId?: string | null,
-  title?: string | null
+  _sourceTemplateId?: string | null,
+  _title?: string | null
 ) => {
-  assertModeImplemented();
-  return appendSnapshotExercisesForDate(
-    userId,
-    planId,
-    date,
-    exercises,
-    sourceTemplateId,
-    title
-  );
+  const existing = await fetchResolvedPlanForDate(userId, planId, date);
+  const current = toPlanExerciseInputs(existing?.workout?.exercises ?? []);
+  const nextStartOrder = current.length + 1;
+  const appended = [
+    ...current,
+    ...exercises.map((exercise, idx) => ({
+      ...exercise,
+      displayOrder: exercise.displayOrder ?? nextStartOrder + idx,
+    })),
+  ];
+  return replacePlanExercisesForDate(userId, planId, date, appended);
 };
 
 export const deletePlanExercise = async (planExerciseId: string) => {
-  assertModeImplemented();
-  return deleteSnapshotPlanExercise(planExerciseId);
+  if (planExerciseId.startsWith('ovr:')) {
+    const overrideId = planExerciseId.slice(4);
+    const { error } = await supabase
+      .from('fitarc_plan_overrides')
+      .update({ is_active: false })
+      .eq('id', overrideId);
+    if (error) throw error;
+    return;
+  }
+
+  if (!planExerciseId.startsWith('tpl:')) {
+    throw new Error('unsupported_plan_exercise_identifier');
+  }
+
+  const parts = planExerciseId.split(':');
+  if (parts.length < 4) throw new Error('invalid_template_exercise_id');
+  const planId = parts[1];
+  const dayDate = parts[2];
+  const templateExerciseId = parts[3];
+
+  const context = await fetchPlanContext(planId);
+  if (!context) throw new Error('plan_not_found');
+
+  const { data: existing, error: existingError } = await supabase
+    .from('fitarc_plan_overrides')
+    .select('id')
+    .eq('user_id', context.userId)
+    .eq('plan_id', planId)
+    .eq('day_date', dayDate)
+    .eq('template_exercise_id', templateExerciseId)
+    .eq('is_active', true)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  if (existing?.id) {
+    const { error } = await supabase
+      .from('fitarc_plan_overrides')
+      .update({
+        action_type: 'remove',
+        exercise_id: null,
+        exercise_name: null,
+        movement_pattern: null,
+        body_parts: null,
+        sets: null,
+        reps: null,
+        notes: null,
+      })
+      .eq('id', existing.id);
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase.from('fitarc_plan_overrides').insert({
+    user_id: context.userId,
+    plan_id: planId,
+    day_date: dayDate,
+    template_exercise_id: templateExerciseId,
+    action_type: 'remove',
+    is_active: true,
+  });
+  if (error) throw error;
 };
 
 export const toPlanExerciseInputs = (
@@ -121,4 +680,5 @@ export const toPlanExerciseInputs = (
     reps: exercise.reps ?? null,
     displayOrder: exercise.displayOrder ?? null,
     notes: exercise.notes ?? null,
+    sourceTemplateExerciseId: extractTemplateExerciseId(exercise.id),
   }));
