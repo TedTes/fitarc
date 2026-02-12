@@ -400,16 +400,22 @@ export const useAppState = () => {
         current.user.id,
         current.currentPhase.id,
         date,
-        normalizedExercises.map((exercise) => ({
-          exerciseId: exercise.exerciseId!,
-          name: exercise.name,
-          bodyParts: exercise.bodyParts,
-          movementPattern: exercise.movementPattern ?? null,
-          sets: exercise.sets ?? null,
-          reps: exercise.reps ?? null,
-          displayOrder: exercise.displayOrder ?? null,
-          notes: exercise.notes ?? null,
-        }))
+        normalizedExercises.map((exercise) => {
+          const templateId = exercise.id?.startsWith('tpl:')
+            ? exercise.id.split(':').pop() ?? null
+            : null;
+          return {
+            exerciseId: exercise.exerciseId!,
+            name: exercise.name,
+            bodyParts: exercise.bodyParts,
+            movementPattern: exercise.movementPattern ?? null,
+            sets: exercise.sets ?? null,
+            reps: exercise.reps ?? null,
+            displayOrder: exercise.displayOrder ?? null,
+            notes: exercise.notes ?? null,
+            sourceTemplateExerciseId: templateId,
+          };
+        })
       );
       await loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id);
     },

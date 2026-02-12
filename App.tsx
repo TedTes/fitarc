@@ -40,7 +40,6 @@ import {
   PhotoCheckin,
   TrackingPreferences,
   User,
-  WorkoutSessionEntry,
 } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { fetchUserProfile, saveUserProfile, updateTrackingPreferences, getSignedAvatarUrl } from './src/services/userProfileService';
@@ -51,7 +50,6 @@ import {
   createPhase,
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
-import { fetchWorkoutSessionEntries } from './src/services/workoutService';
 import { supabase } from './src/lib/supabaseClient';
 import { deleteAccount as deleteAccountService } from './src/services/accountService';
 
@@ -535,29 +533,6 @@ function AppContent() {
     };
   }, []);
 
-  const waitForInitialSessions = useCallback(async (
-    userId: string,
-    planId: string
-  ): Promise<WorkoutSessionEntry[]> => {
-    const maxAttempts = 10;
-    const delayMs = 2000;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      try {
-        const sessions = await fetchWorkoutSessionEntries(userId, planId);
-        if (sessions.length > 0) {
-          return sessions;
-        }
-      } catch (error) {
-        console.warn('Workout session poll failed', error);
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-
-    return [];
-  }, []);
-
   const handleCurrentPhysiqueSelect = (levelId: number) => {
     setTempCurrentLevel(levelId);
     if (state?.user) {
@@ -670,14 +645,12 @@ function AppContent() {
 
       await startPhase(remotePhase);
       resetWorkoutData();
-      const seededSessions = await waitForInitialSessions(authUser.id, remotePhase.id);
-      if (seededSessions.length) {
-        await hydrateFromRemote({ workoutSessions: seededSessions });
-      }
-      // Meal entries are generated on demand via the generate-meals edge function.
-      await loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id);
-      await loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id);
-      await loadMealPlansFromSupabase(authUser.id, remotePhase.id);
+      // Load runtime data in parallel; sessions can legitimately be empty until user starts training.
+      await Promise.all([
+        loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id),
+        loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id),
+        loadMealPlansFromSupabase(authUser.id, remotePhase.id),
+      ]);
       
       console.log('✅ Sessions loaded successfully');
       

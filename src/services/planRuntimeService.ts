@@ -455,15 +455,86 @@ const resolveTemplateBackedPlanDay = (
   };
 };
 
-const setDayOverridesInactive = async (userId: string, planId: string, date: string) => {
-  const { error } = await supabase
-    .from('fitarc_plan_overrides')
-    .update({ is_active: false })
-    .eq('user_id', userId)
-    .eq('plan_id', planId)
-    .eq('day_date', date)
-    .eq('is_active', true);
-  if (error) throw error;
+type TemplateBaselineExercise = {
+  exerciseId: string | null;
+  name: string;
+  movementPattern: string | null;
+  bodyParts: string[];
+  sets: number | null;
+  reps: string | null;
+  displayOrder: number | null;
+  notes: string | null;
+};
+
+const buildTemplateBaselineForDate = async (
+  userId: string,
+  context: PlanContext,
+  date: string
+): Promise<Map<string, TemplateBaselineExercise>> => {
+  const profile = await fetchUserProfile(userId);
+  const split = profile?.trainingSplit ?? 'full_body';
+  const daysPerWeek = inferDaysPerWeek(split);
+  if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) {
+    return new Map();
+  }
+  const templates = await fetchTemplatesForUser(userId);
+  if (!templates.length) {
+    return new Map();
+  }
+  const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
+  const template = resolveTemplateForDate(
+    context,
+    date,
+    split,
+    daysPerWeek,
+    templates,
+    equipmentLevel,
+    profile?.experienceLevel
+  );
+  if (!template) {
+    return new Map();
+  }
+
+  const baseline = new Map<string, TemplateBaselineExercise>();
+  (template.exercises ?? []).forEach((exercise, index) => {
+    baseline.set(exercise.id, {
+      exerciseId: exercise.exercise_id ?? null,
+      name: exercise.exercise_name,
+      movementPattern: exercise.movement_pattern ?? null,
+      bodyParts: (exercise.body_parts ?? []).map((part) => normalizeKey(part)),
+      sets: exercise.sets ?? null,
+      reps: exercise.reps ?? null,
+      displayOrder: exercise.display_order ?? index + 1,
+      notes: exercise.notes ?? null,
+    });
+  });
+  return baseline;
+};
+
+const normalizeNullableText = (value?: string | null): string | null => {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const normalizeBodyParts = (parts?: string[] | null): string[] =>
+  (parts ?? []).map((part) => normalizeKey(part)).filter(Boolean);
+
+const isSameAsBaseline = (
+  input: PlanExerciseInput,
+  displayOrder: number | null,
+  baseline: TemplateBaselineExercise
+): boolean => {
+  return (
+    (input.exerciseId ?? null) === baseline.exerciseId &&
+    normalizeNullableText(input.name) === normalizeNullableText(baseline.name) &&
+    normalizeNullableText(input.movementPattern ?? null) === baseline.movementPattern &&
+    JSON.stringify(normalizeBodyParts(input.bodyParts)) === JSON.stringify(baseline.bodyParts) &&
+    (input.sets ?? null) === baseline.sets &&
+    normalizeNullableText(input.reps ?? null) === normalizeNullableText(baseline.reps) &&
+    (displayOrder ?? null) === baseline.displayOrder &&
+    normalizeNullableText(input.notes ?? null) === normalizeNullableText(baseline.notes)
+  );
 };
 
 export const fetchPlanRange = async (
@@ -557,28 +628,90 @@ export const replacePlanExercisesForDate = async (
   _sourceTemplateId?: string | null,
   _title?: string | null
 ) => {
-  await setDayOverridesInactive(userId, planId, date);
-  if (!exercises.length) return;
+  const context = await fetchPlanContext(planId);
+  if (!context || context.userId !== userId) {
+    throw new Error('plan_not_found_or_not_owned');
+  }
 
-  const rows = exercises.map((exercise, index) => {
-    const templateExerciseId = exercise.sourceTemplateExerciseId;
-    return {
+  const baselineByTemplateExerciseId = await buildTemplateBaselineForDate(userId, context, date);
+  const desiredTemplateIds = new Set<string>();
+  const rows: Array<Record<string, unknown>> = [];
+
+  exercises.forEach((exercise, index) => {
+    const displayOrder = exercise.displayOrder ?? index + 1;
+    const templateExerciseId = exercise.sourceTemplateExerciseId ?? null;
+    if (templateExerciseId) {
+      desiredTemplateIds.add(templateExerciseId);
+      const baseline = baselineByTemplateExerciseId.get(templateExerciseId);
+      if (baseline && isSameAsBaseline(exercise, displayOrder, baseline)) {
+        return;
+      }
+      rows.push({
+        user_id: userId,
+        plan_id: planId,
+        day_date: date,
+        template_exercise_id: templateExerciseId,
+        action_type: 'replace',
+        exercise_id: exercise.exerciseId,
+        exercise_name: exercise.name,
+        movement_pattern: exercise.movementPattern ?? null,
+        body_parts: exercise.bodyParts ?? [],
+        sets: exercise.sets ?? null,
+        reps: exercise.reps ?? null,
+        display_order: displayOrder,
+        notes: exercise.notes ?? null,
+        is_active: true,
+      });
+      return;
+    }
+
+    rows.push({
       user_id: userId,
       plan_id: planId,
       day_date: date,
-      template_exercise_id: templateExerciseId,
-      action_type: templateExerciseId ? 'replace' : 'add',
+      template_exercise_id: null,
+      action_type: 'add',
       exercise_id: exercise.exerciseId,
       exercise_name: exercise.name,
       movement_pattern: exercise.movementPattern ?? null,
       body_parts: exercise.bodyParts ?? [],
       sets: exercise.sets ?? null,
       reps: exercise.reps ?? null,
-      display_order: exercise.displayOrder ?? index + 1,
+      display_order: displayOrder,
       notes: exercise.notes ?? null,
       is_active: true,
-    };
+    });
   });
+
+  baselineByTemplateExerciseId.forEach((_baseline, templateExerciseId) => {
+    if (desiredTemplateIds.has(templateExerciseId)) return;
+    rows.push({
+      user_id: userId,
+      plan_id: planId,
+      day_date: date,
+      template_exercise_id: templateExerciseId,
+      action_type: 'remove',
+      exercise_id: null,
+      exercise_name: null,
+      movement_pattern: null,
+      body_parts: null,
+      sets: null,
+      reps: null,
+      display_order: null,
+      notes: null,
+      is_active: true,
+    });
+  });
+
+  const { error: clearError } = await supabase
+    .from('fitarc_plan_overrides')
+    .delete()
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .eq('day_date', date);
+  if (clearError) throw clearError;
+
+  if (!rows.length) return;
   const { error } = await supabase.from('fitarc_plan_overrides').insert(rows);
   if (error) throw error;
 };
