@@ -25,6 +25,7 @@ import {
   WorkoutSessionEntry,
   WorkoutSessionExercise,
   MuscleGroup,
+  PlanDay,
 } from '../types/domain';
 import { useSupabaseExercises } from '../hooks/useSupabaseExercises';
 import { ExerciseCatalogEntry } from '../services/workoutService';
@@ -39,10 +40,10 @@ type PlansScreenProps = {
   user: User;
   phase: PhasePlan | null;
   workoutSessions: WorkoutSessionEntry[];
+  plannedWorkouts: PlanDay[];
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
-  onDeleteSession?: (date: string) => void;
-  onAddExercise?: (sessionId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
-  onDeleteExercise?: (sessionId: string, sessionExerciseId: string) => Promise<void>;
+  onAddExercise?: (planWorkoutId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
+  onDeleteExercise?: (planWorkoutId: string, planExerciseId: string) => Promise<void>;
   embedded?: boolean;
   openExercisePickerSignal?: number;
   selectedDateOverride?: string;
@@ -113,32 +114,12 @@ const getPhaseWeek = (phase: PhasePlan) => {
   return Math.max(1, Math.min(phase.expectedWeeks || week, week));
 };
 
-const createSessionExercises = (entries: WorkoutSessionExercise[]): WorkoutSessionExercise[] =>
-  entries.map((exercise) => ({
-    id: exercise.id,
-    name: exercise.name,
-    bodyParts: [...exercise.bodyParts],
-    completed: !!exercise.completed,
-    sets: exercise.sets ?? 4,
-    reps: exercise.reps ?? '8-12',
-    movementPattern: exercise.movementPattern,
-    exerciseId: exercise.exerciseId,
-    displayOrder: exercise.displayOrder,
-    setDetails: exercise.setDetails?.map((set, index) => ({
-      setNumber: set?.setNumber ?? index + 1,
-      weight: set?.weight,
-      reps: set?.reps,
-      rpe: set?.rpe,
-      restSeconds: set?.restSeconds,
-    })),
-  }));
-
 export const PlansScreen: React.FC<PlansScreenProps> = ({
   user,
   phase,
   workoutSessions,
+  plannedWorkouts,
   onSaveCustomSession,
-  onDeleteSession,
   onAddExercise,
   onDeleteExercise,
   embedded = false,
@@ -215,6 +196,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     if (!phase?.id) return workoutSessions;
     return workoutSessions.filter((session) => session.phasePlanId === phase.id);
   }, [phase?.id, workoutSessions]);
+  const resolvedPlannedWorkouts = useMemo(() => {
+    if (!phase?.id) return plannedWorkouts;
+    return plannedWorkouts.filter((day) => day.planId === phase.id);
+  }, [phase?.id, plannedWorkouts]);
 
   const convertCatalogExercise = useCallback(
     (entry: ExerciseCatalogEntry): WorkoutSessionExercise => {
@@ -235,7 +220,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     []
   );
 
-  // Build week plans from database sessions only
+  // Build week plans from plan snapshots
   const weekPlans = useMemo(() => {
     if (!phase) return [];
     const anchor = selectedDate ? parseLocalDateFromYMD(selectedDate) : new Date();
@@ -246,14 +231,14 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       const date = new Date(startOfWeek);
       date.setDate(startOfWeek.getDate() + idx);
       const dateStr = formatLocalDateYMD(date);
-      const session =
-        resolvedSessions.find((entry) => entry.phasePlanId === phase.id && entry.date === dateStr) || null;
+      const planDay =
+        resolvedPlannedWorkouts.find((entry) => entry.planId === phase.id && entry.date === dateStr) || null;
       return {
         dateStr,
-        session,
+        planDay,
       };
     });
-  }, [resolvedSessions, phase?.id, selectedDate]);
+  }, [resolvedPlannedWorkouts, phase?.id, selectedDate]);
 
   const selectedPlan =
     weekPlans.find((plan) => plan.dateStr === selectedDate) || weekPlans[0];
@@ -269,18 +254,18 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const lastSyncedKeyRef = useRef<string | null>(null);
   const localEditsDateRef = useRef<string | null>(null);
   const isDeletingRef = useRef(false);
-  const sessionFingerprint =
-    selectedPlan?.session?.exercises
+  const planFingerprint =
+    selectedPlan?.planDay?.workout?.exercises
       ?.map(
         (exercise) =>
-          `${exercise.name}:${exercise.completed ? '1' : '0'}:${exercise.sets ?? ''}:${exercise.reps ?? ''}`
+          `${exercise.name}:${exercise.sets ?? ''}:${exercise.reps ?? ''}:${exercise.displayOrder ?? ''}`
       )
       .join('|') ?? '';
 
   const planSyncKey = selectedPlan
-    ? selectedPlan.session
-      ? `session-${selectedPlan.session.id}-${sessionFingerprint}`
-      : `no-session-${selectedPlan.dateStr}`
+    ? selectedPlan.planDay?.workout
+      ? `plan-${selectedPlan.planDay.workout.id}-${planFingerprint}`
+      : `no-plan-${selectedPlan.dateStr}`
     : null;
 
   const persistSession = useCallback(
@@ -291,7 +276,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     [onSaveCustomSession]
   );
 
- // Sync editing exercises when selected plan changes or sessions update
+ // Sync editing exercises when selected plan changes or plan snapshots update
   useEffect(() => {
     if (!selectedPlan) {
       runLayoutAnimation();
@@ -306,16 +291,27 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       return;
     }
 
-    // Load exercises from the database session if it exists
-    if (selectedPlan.session && selectedPlan.session.exercises.length > 0) {
+    // Load exercises from the plan snapshot if it exists
+    if (selectedPlan.planDay?.workout && selectedPlan.planDay.workout.exercises.length > 0) {
       runLayoutAnimation();
-      setEditingExercises(createSessionExercises(selectedPlan.session.exercises));
+      const mapped = selectedPlan.planDay.workout.exercises.map((exercise) => ({
+        id: exercise.id,
+        name: exercise.name,
+        bodyParts: [...exercise.bodyParts],
+        completed: false,
+        sets: exercise.sets ?? 4,
+        reps: exercise.reps ?? '8-12',
+        movementPattern: exercise.movementPattern,
+        exerciseId: exercise.exerciseId ?? undefined,
+        displayOrder: exercise.displayOrder,
+      }));
+      setEditingExercises(mapped);
       setIsDirty(false);
       lastSyncedKeyRef.current = planSyncKey;
       return;
     }
 
-    // No session exists - keep local edits only for the same day
+    // No plan snapshot exists - keep local edits only for the same day
     if (
       editingExercisesRef.current.length > 0 &&
       localEditsDateRef.current === selectedPlan.dateStr
@@ -435,14 +431,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const saveCurrentSession = useCallback(
     async (plan: typeof selectedPlan, exercises: WorkoutSessionExercise[]) => {
       if (!plan) return;
-      if (!onSaveCustomSession && !onDeleteSession) return;
-      if (!exercises.length) {
-        await onDeleteSession?.(plan.dateStr);
-        return;
-      }
+      if (!onSaveCustomSession) return;
       await persistSession(plan.dateStr, exercises);
     },
-    [onDeleteSession, onSaveCustomSession, persistSession]
+    [onSaveCustomSession, persistSession]
   );
 
   const enqueueSave = useCallback(
@@ -544,7 +536,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       },
     });
 
-    const canPersistImmediately = Boolean(targetPlan.session?.id && onAddExercise);
+    const planWorkoutId = targetPlan.planDay?.workout?.id;
+    const canPersistImmediately = Boolean(planWorkoutId && onAddExercise);
     editingExercisesRef.current = next;
     setEditingExercises(next);
     if (targetPlan) {
@@ -570,14 +563,14 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }).start();
 
     try {
-      if (targetPlan.session?.id && onAddExercise) {
-        const sessionExerciseId = await onAddExercise(targetPlan.session.id, newExercise);
-        if (sessionExerciseId) {
+      if (planWorkoutId && onAddExercise) {
+        const planExerciseId = await onAddExercise(planWorkoutId, newExercise);
+        if (planExerciseId) {
           setEditingExercises((prev) => {
             if (!prev.length) return prev;
             const updated = [...prev];
             const lastIndex = updated.length - 1;
-            updated[lastIndex] = { ...updated[lastIndex], id: sessionExerciseId };
+            updated[lastIndex] = { ...updated[lastIndex], id: planExerciseId };
             editingExercisesRef.current = updated;
             return updated;
           });
@@ -600,8 +593,9 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     const exercise = editingExercisesRef.current[index];
     const cardKey = exercise.id ?? exercise.exerciseId ?? `${exercise.name}-${index}`;
     const cardAnim = getExerciseAnimation(cardKey);
-    const needsRemoteDelete = Boolean(selectedPlan?.session?.id && exercise?.id && onDeleteExercise);
-    const shouldPersistLocally = !selectedPlan?.session?.id;
+    const planWorkoutId = selectedPlan?.planDay?.workout?.id;
+    const needsRemoteDelete = Boolean(planWorkoutId && exercise?.id && onDeleteExercise);
+    const shouldPersistLocally = !planWorkoutId;
     isDeletingRef.current = true;
     if (selectedPlan) {
       localEditsDateRef.current = selectedPlan.dateStr;
@@ -641,7 +635,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
     if (needsRemoteDelete) {
       try {
-        await onDeleteExercise!(selectedPlan!.session!.id, exercise!.id!);
+        await onDeleteExercise!(planWorkoutId!, exercise!.id!);
       } catch (err) {
         console.error('Failed to delete workout exercise:', err);
       } finally {
@@ -802,7 +796,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           <Text style={styles.emptyIcon}>💪</Text>
           <Text style={styles.emptyTitle}>No workout planned</Text>
           <Text style={styles.emptySubtitle}>
-            Start today's session from the Dashboard tab, then it will appear here.
+            Add exercises or apply a template to plan your workout for this day.
           </Text>
         </View>
       );
@@ -1021,7 +1015,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                   {weekPlans.map((plan) => {
                     const { weekday } = formatDateLabel(plan.dateStr);
                     const isActive = plan.dateStr === selectedDate;
-                    const hasWorkout = plan.session && plan.session.exercises.length > 0;
+                    const hasWorkout =
+                      plan.planDay?.workout && plan.planDay.workout.exercises.length > 0;
                     const isFutureDay = plan.dateStr > todayKey;
                     const isCompletedDay = !isFutureDay && Boolean(completionMap[plan.dateStr]);
                     return (
