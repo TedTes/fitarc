@@ -16,13 +16,13 @@ import { NavigationContainer, useNavigationContainerRef } from '@react-navigatio
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as ExpoLinking from 'expo-linking';
 import { useAppState } from './src/hooks';
 import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import { 
   WelcomeScreen,
   MainFocusScreen,
   QuickPlanSetupScreen,
-  FirstWorkoutPreviewScreen,
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
@@ -33,7 +33,7 @@ import {
   ProfileSetupScreen,
   AuthNavigator,
 } from './src/screens';
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   PlanPreferences,
   PrimaryGoal,
@@ -48,10 +48,10 @@ import { fetchHomeData } from './src/services/dashboardService';
 import { formatLocalDateYMD } from './src/utils/date';
 import { hasRequiredPlanInputs } from './src/utils/planReadiness';
 import { 
-  createPhaseWithWorkouts,
+  createPhase,
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
-import { fetchWorkoutSessionEntries, generateWeekWorkouts } from './src/services/workoutService';
+import { fetchWorkoutSessionEntries } from './src/services/workoutService';
 import { supabase } from './src/lib/supabaseClient';
 import { deleteAccount as deleteAccountService } from './src/services/accountService';
 
@@ -88,7 +88,6 @@ type OnboardingStep =
   | 'quick_plan'
   | 'current_physique'
   | 'target_physique'
-  | 'preview'
   | 'complete';
 
 const mapDaysPerWeekToSplit = (daysPerWeek: number): User['trainingSplit'] => {
@@ -440,19 +439,6 @@ function AppContent() {
   const [startPlanConfirmVisible, setStartPlanConfirmVisible] = useState(false);
   const previousPhaseIdRef = useRef<string | null>(null);
 
-  const previewSession = useMemo(() => {
-    if (!state?.currentPhase) return null;
-    const phaseId = state.currentPhase.id;
-    const sessions = state.workoutSessions.filter((session) => session.phasePlanId === phaseId);
-    if (!sessions.length) return null;
-    const todayKey = formatLocalDateYMD(new Date());
-    const upcoming = sessions
-      .filter((session) => session.date >= todayKey)
-      .sort((a, b) => a.date.localeCompare(b.date));
-    if (upcoming.length) return upcoming[0];
-    return [...sessions].sort((a, b) => a.date.localeCompare(b.date))[0];
-  }, [state?.currentPhase, state?.workoutSessions]);
-
   const closeProfileSheet = () => {
     setProfileVisible(false);
     if (navigationRef.isReady()) {
@@ -514,7 +500,7 @@ function AppContent() {
   useEffect(() => {
     const handleDeepLink = async (url: string | null) => {
       if (!url) return;
-      const parsed = Linking.parse(url);
+      const parsed = ExpoLinking.parse(url);
       const code = parsed.queryParams?.code as string | undefined;
       const accessToken = parsed.queryParams?.access_token as string | undefined;
       const refreshToken = parsed.queryParams?.refresh_token as string | undefined;
@@ -663,7 +649,7 @@ function AppContent() {
     setIsCreatingPlan(true);
 
     try {
-      console.log('🎯 Creating plan with workouts...');
+      console.log('🎯 Creating plan...');
       
       if (state.currentPhase) {
         await completeRemotePhase(state.currentPhase.id);
@@ -672,25 +658,13 @@ function AppContent() {
       const selectedGoal =
         goalType ??
         mapGoalToPhaseGoalType(tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal);
-      const remotePhase = await createPhaseWithWorkouts(
-        authUser.id,
-        state.user.trainingSplit,
-        {
-          name: `Arc ${new Date().getFullYear()}`,
-          goalType: selectedGoal,
-          startDate: formatLocalDateYMD(new Date()),
-          currentLevelId: currentLevel,
-          targetLevelId,
-        },
-        {
-          daysPerWeek:
-            tempPlanPreferences?.daysPerWeek ?? state.user.planPreferences?.daysPerWeek,
-          equipmentLevel:
-            tempPlanPreferences?.equipmentLevel ?? state.user.planPreferences?.equipmentLevel,
-          primaryGoal:
-            tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal,
-        }
-      );
+      const remotePhase = await createPhase(authUser.id, {
+        name: `Arc ${new Date().getFullYear()}`,
+        goalType: selectedGoal,
+        startDate: formatLocalDateYMD(new Date()),
+        currentLevelId: currentLevel,
+        targetLevelId,
+      });
 
       console.log('✅ Plan created:', remotePhase.id);
 
@@ -702,37 +676,12 @@ function AppContent() {
       }
       // Meal entries are generated on demand via the generate-meals edge function.
       await loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id);
-      const planned = await loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id);
-      if (!planned || planned.length === 0) {
-        const startDate = new Date(remotePhase.startDate);
-        const totalDays = Math.max(remotePhase.expectedWeeks, 1) * 7;
-        await generateWeekWorkouts(
-          authUser.id,
-          remotePhase.id,
-          state.user.trainingSplit,
-          startDate,
-          totalDays,
-          {
-            eatingMode: state.user.eatingMode,
-            experienceLevel: state.user.experienceLevel,
-          },
-          undefined,
-          {
-            daysPerWeek:
-              tempPlanPreferences?.daysPerWeek ?? state.user.planPreferences?.daysPerWeek,
-            equipmentLevel:
-              tempPlanPreferences?.equipmentLevel ?? state.user.planPreferences?.equipmentLevel,
-            primaryGoal:
-              tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal,
-          }
-        );
-        await loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id);
-      }
+      await loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id);
       await loadMealPlansFromSupabase(authUser.id, remotePhase.id);
       
       console.log('✅ Sessions loaded successfully');
       
-      setOnboardingStep('preview');
+      setOnboardingStep('complete');
       setPhotoCaptureVisible(false);
     } catch (error) {
       console.error('❌ Failed to create plan:', error);
@@ -746,20 +695,6 @@ function AppContent() {
     const goalType = mapGoalToPhaseGoalType(tempPlanPreferences?.primaryGoal);
     await handleStartNewArc(targetLevelId, goalType);
   };
-
-  const handleFinishPreview = useCallback(() => {
-    setOnboardingStep('complete');
-    if (navigationRef.isReady()) {
-      navigationRef.navigate('Home');
-    }
-  }, [navigationRef]);
-
-  const handleViewWeekFromPreview = useCallback(() => {
-    setOnboardingStep('complete');
-    if (navigationRef.isReady()) {
-      navigationRef.navigate('Progress');
-    }
-  }, [navigationRef]);
 
   const handleProfileSetupComplete = async (profileData: {
     name: string;
@@ -841,29 +776,7 @@ function AppContent() {
 
           if (homeData.phase?.id) {
             await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);
-            const planned = await loadPlannedWorkoutsFromSupabase(authUser.id, homeData.phase.id);
-            if ((!planned || planned.length === 0) && remoteProfile) {
-              const startDate = new Date(homeData.phase.startDate);
-              const totalDays = Math.max(homeData.phase.expectedWeeks, 1) * 7;
-              await generateWeekWorkouts(
-                authUser.id,
-                homeData.phase.id,
-                remoteProfile.trainingSplit,
-                startDate,
-                totalDays,
-                {
-                  eatingMode: remoteProfile.eatingMode,
-                  experienceLevel: remoteProfile.experienceLevel,
-                },
-                undefined,
-                {
-                  daysPerWeek: remoteProfile.planPreferences?.daysPerWeek,
-                  equipmentLevel: remoteProfile.planPreferences?.equipmentLevel,
-                  primaryGoal: remoteProfile.planPreferences?.primaryGoal,
-                }
-              );
-              await loadPlannedWorkoutsFromSupabase(authUser.id, homeData.phase.id);
-            }
+            await loadPlannedWorkoutsFromSupabase(authUser.id, homeData.phase.id);
             await loadMealPlansFromSupabase(authUser.id, homeData.phase.id);
           }
           setOnboardingStep('complete');
@@ -1091,7 +1004,7 @@ function AppContent() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#6C63FF" />
-        <Text style={styles.loadingText}>Building your plan…</Text>
+        <Text style={styles.loadingText}>Matching your program…</Text>
         <StatusBar style="light" />
       </View>
     );
@@ -1102,8 +1015,7 @@ function AppContent() {
     onboardingStep === 'main_focus' ||
     onboardingStep === 'quick_plan' ||
     onboardingStep === 'current_physique' ||
-    onboardingStep === 'target_physique' ||
-    onboardingStep === 'preview';
+    onboardingStep === 'target_physique';
 
   if (shouldShowOnboarding) {
     if (onboardingStep === 'profile' || !state?.user) {
@@ -1170,18 +1082,6 @@ function AppContent() {
       );
     }
 
-    if (onboardingStep === 'preview') {
-      return (
-        <View style={styles.container}>
-          <FirstWorkoutPreviewScreen
-            session={previewSession}
-            onStartWorkout={handleFinishPreview}
-            onViewFullWeek={handleViewWeekFromPreview}
-          />
-          <StatusBar style="light" />
-        </View>
-      );
-    }
   }
 
   if (isPhotoCaptureVisible && photoCapturePhaseId) {

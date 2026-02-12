@@ -1,7 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
-import { EquipmentLevel, PhasePlan, PrimaryGoal, User } from '../types/domain';
-import { generateWeekWorkouts, hasExistingWorkouts } from './workoutService';
-import { fetchUserProfile } from './userProfileService';
+import { PhasePlan } from '../types/domain';
 
 type PhaseRow = {
   id: string;
@@ -94,54 +92,6 @@ export const createPhase = async (userId: string, input: CreatePhaseInput = {}) 
   }
 
   return mapPhaseRow(data as PhaseRow);
-};
-
-/**
- * Creates a phase and automatically generates workout sessions for the week
- * This is the recommended way to create phases for new users
- */
-export const createPhaseWithWorkouts = async (
-  userId: string,
-  trainingSplit: User['trainingSplit'],
-  input: CreatePhaseInput = {},
-  options?: {
-    daysPerWeek?: 3 | 4 | 5 | 6;
-    equipmentLevel?: EquipmentLevel;
-    primaryGoal?: PrimaryGoal;
-  }
-): Promise<PhasePlan> => {
-  console.log('📋 Creating phase with auto-generated workouts...');
-  
-  // 1. Create the phase
-  const phase = await createPhase(userId, input);
-  console.log(`✅ Phase created: ${phase.id}`);
-  
-  // 2. Check if workouts already exist (prevent duplicates)
-  const alreadyHasWorkouts = await hasExistingWorkouts(userId, phase.id);
-  
-  if (alreadyHasWorkouts) {
-    console.log('ℹ️ Workouts already exist for this phase, skipping generation');
-    return phase;
-  }
-  
-  // 3. Auto-generate workout sessions for the plan length
-  const startDate = new Date(phase.startDate);
-  const totalDays = Math.max(phase.expectedWeeks, 1) * 7;
-  
-  try {
-    const profile = await fetchUserProfile(userId);
-    await generateWeekWorkouts(userId, phase.id, trainingSplit, startDate, totalDays, {
-      eatingMode: profile?.eatingMode,
-      experienceLevel: profile?.experienceLevel,
-    }, undefined, options);
-    console.log('🎉 Phase created with workouts successfully');
-  } catch (error) {
-    console.error('⚠️ Phase created but workout generation failed:', error);
-    // Don't throw - phase is still valid even if workout generation fails
-    // User can manually create workouts
-  }
-  
-  return phase;
 };
 
 export const completePhase = async (phaseId: string, endDate?: string) => {
