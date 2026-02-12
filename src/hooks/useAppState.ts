@@ -25,11 +25,11 @@ import { formatLocalDateYMD } from '../utils/date';
 import { fetchMealPlansForRange } from '../services/mealService';
 import { supabase } from '../lib/supabaseClient';
 import {
-  fetchPlanWorkoutsForRange,
+  fetchPlanRange,
   replacePlanExercisesForDate,
   deletePlanExercise,
   ensurePlanWorkoutForDate,
-} from '../services/planSnapshotService';
+} from '../services/planRuntimeService';
 
 const upsertMealPlan = (plans: DailyMealPlan[], plan: DailyMealPlan): DailyMealPlan[] => {
   const index = plans.findIndex(
@@ -195,7 +195,7 @@ export const useAppState = () => {
         end.setDate(end.getDate() + 14);
         const startKey = formatLocalDateYMD(start);
         const endKey = formatLocalDateYMD(end);
-        const planned = await fetchPlanWorkoutsForRange(userId, planId, startKey, endKey);
+        const planned = await fetchPlanRange(userId, planId, startKey, endKey);
         setState((prev) => {
           if (!prev) return prev;
           return {

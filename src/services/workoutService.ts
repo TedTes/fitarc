@@ -3,12 +3,9 @@ import { User, WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry, Mus
 import { mapSessionRow } from '../utils/workoutSessionMapper';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
-import {
-  type AdaptationMode,
-} from './planningRules';
-import { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
+import type { AdaptationMode } from './planningRules';
 export { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
-import { replacePlanExercisesForDate } from './planSnapshotService';
+import { replacePlanExercisesForDate } from './planRuntimeService';
 
 type WorkoutTemplateExerciseRow = {
   id: string;
@@ -972,6 +969,188 @@ type GenerationAdaptation = {
   reasons: string[];
 };
 
+type NormalizedWorkoutTemplate = Omit<WorkoutTemplateRow, 'goal_tags' | 'exercises'> & {
+  goal_tags: string[];
+  exercises: Array<WorkoutTemplateExerciseRow & { exercise_id: string }>;
+};
+
+const normalizeKey = (value?: string | null): string =>
+  (value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+
+const normalizeEquipmentLevel = (value?: string | null): GenerationPreferences['equipmentLevel'] | null => {
+  const key = normalizeKey(value);
+  if (!key) return null;
+  if (key === 'full_gym' || key === 'gym') return 'full_gym';
+  if (key === 'dumbbells' || key === 'dumbbell') return 'dumbbells';
+  if (key === 'bodyweight' || key === 'body_weight') return 'bodyweight';
+  return null;
+};
+
+const EQUIPMENT_RANK: Record<NonNullable<GenerationPreferences['equipmentLevel']>, number> = {
+  bodyweight: 0,
+  dumbbells: 1,
+  full_gym: 2,
+};
+
+const DIFFICULTY_RANK: Record<User['experienceLevel'], number> = {
+  beginner: 0,
+  intermediate: 1,
+  advanced: 2,
+};
+
+const GOAL_TAG_ALIASES: Record<NonNullable<GenerationPreferences['primaryGoal']>, string[]> = {
+  build_muscle: ['hypertrophy', 'build_muscle', 'muscle', 'general'],
+  get_stronger: ['strength', 'get_stronger', 'power', 'general'],
+  lose_fat: ['fat_loss', 'lose_fat', 'conditioning', 'general_fitness', 'general'],
+  endurance: ['endurance', 'conditioning', 'general_fitness'],
+  general_fitness: ['general', 'general_fitness', 'conditioning', 'full_body'],
+};
+
+const resolveGoalAliases = (goal?: GenerationPreferences['primaryGoal']): string[] =>
+  goal ? GOAL_TAG_ALIASES[goal] ?? [goal] : [];
+
+const resolveRotationTags = (split: User['trainingSplit']): string[] => {
+  switch (split) {
+    case 'push_pull_legs':
+      return ['push', 'pull', 'legs'];
+    case 'upper_lower':
+      return ['upper', 'lower'];
+    case 'bro_split':
+      return ['chest', 'back', 'shoulders', 'arms', 'legs'];
+    case 'full_body':
+    default:
+      return ['full_body'];
+  }
+};
+
+const shouldScheduleOnDate = (
+  date: Date,
+  daysPerWeek?: GenerationPreferences['daysPerWeek']
+): boolean => {
+  if (!daysPerWeek || daysPerWeek >= 7) return true;
+  const day = date.getDay();
+  if (daysPerWeek === 6) return day !== 0;
+  if (daysPerWeek === 5) return day >= 1 && day <= 5;
+  if (daysPerWeek === 4) return day === 1 || day === 2 || day === 4 || day === 6;
+  return day === 1 || day === 3 || day === 5;
+};
+
+const buildScheduleDates = (
+  startDate: Date,
+  totalDays: number,
+  preferences?: GenerationPreferences
+): string[] => {
+  const dates: string[] = [];
+  for (let dayOffset = 0; dayOffset < totalDays; dayOffset += 1) {
+    const workoutDate = new Date(startDate);
+    workoutDate.setDate(startDate.getDate() + dayOffset);
+    if (!shouldScheduleOnDate(workoutDate, preferences?.daysPerWeek)) continue;
+    dates.push(formatLocalDateYMD(workoutDate));
+  }
+  return dates;
+};
+
+const normalizeTemplatesForGeneration = (
+  templates: WorkoutTemplateRow[]
+): NormalizedWorkoutTemplate[] =>
+  templates.map((template) => {
+    const orderedExercises = [...(template.exercises ?? [])].sort(
+      (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
+    );
+    const validExercises = orderedExercises.filter((exercise): exercise is WorkoutTemplateExerciseRow & { exercise_id: string } => {
+      if (exercise.exercise_id) return true;
+      console.warn(
+        `⚠️ Template "${template.title}" has exercise without exercise_id: ${exercise.exercise_name}`
+      );
+      return false;
+    });
+
+    return {
+      ...template,
+      goal_tags: (template.goal_tags ?? []).map((tag) => normalizeKey(tag)),
+      exercises: validExercises,
+    };
+  });
+
+const buildTemplatesByTag = (
+  templates: NormalizedWorkoutTemplate[],
+  rotationTags: string[]
+): Map<string, NormalizedWorkoutTemplate[]> => {
+  const byTag = new Map<string, NormalizedWorkoutTemplate[]>();
+  rotationTags.forEach((tag) => {
+    byTag.set(
+      tag,
+      templates.filter((template) => template.goal_tags.includes(tag))
+    );
+  });
+  return byTag;
+};
+
+const matchesGoal = (template: NormalizedWorkoutTemplate, goalAliases: string[]): boolean => {
+  if (!goalAliases.length) return true;
+  return template.goal_tags.some((tag) => goalAliases.includes(tag));
+};
+
+const matchesEquipment = (
+  template: NormalizedWorkoutTemplate,
+  equipmentLevel?: GenerationPreferences['equipmentLevel']
+): boolean => {
+  if (!equipmentLevel) return true;
+  const templateLevel = normalizeEquipmentLevel(template.equipment_level);
+  if (!templateLevel) return true;
+  return EQUIPMENT_RANK[templateLevel] <= EQUIPMENT_RANK[equipmentLevel];
+};
+
+const matchesDifficulty = (
+  template: NormalizedWorkoutTemplate,
+  experienceLevel?: User['experienceLevel']
+): boolean => {
+  if (!experienceLevel) return true;
+  const templateDifficulty = normalizeKey(template.difficulty) as User['experienceLevel'];
+  if (!(templateDifficulty in DIFFICULTY_RANK)) return true;
+  return Math.abs(DIFFICULTY_RANK[templateDifficulty] - DIFFICULTY_RANK[experienceLevel]) <= 1;
+};
+
+const selectTemplateCandidatesForTag = (
+  tag: string,
+  byTag: Map<string, NormalizedWorkoutTemplate[]>,
+  allTemplates: NormalizedWorkoutTemplate[],
+  profile?: { experienceLevel?: User['experienceLevel'] },
+  preferences?: GenerationPreferences
+): NormalizedWorkoutTemplate[] => {
+  const tagPool = byTag.get(tag) ?? [];
+  const basePool = tagPool.length ? tagPool : allTemplates;
+  const goalAliases = resolveGoalAliases(preferences?.primaryGoal);
+
+  const tiers: Array<(template: NormalizedWorkoutTemplate) => boolean> = [
+    (template) =>
+      matchesGoal(template, goalAliases) &&
+      matchesEquipment(template, preferences?.equipmentLevel) &&
+      matchesDifficulty(template, profile?.experienceLevel),
+    (template) =>
+      matchesGoal(template, goalAliases) &&
+      matchesEquipment(template, preferences?.equipmentLevel),
+    (template) => matchesGoal(template, goalAliases),
+    (template) =>
+      matchesEquipment(template, preferences?.equipmentLevel) &&
+      matchesDifficulty(template, profile?.experienceLevel),
+    (template) => matchesEquipment(template, preferences?.equipmentLevel),
+    (template) => matchesDifficulty(template, profile?.experienceLevel),
+  ];
+
+  for (const tier of tiers) {
+    const matched = basePool.filter(tier);
+    if (matched.length) return matched;
+  }
+
+  if (goalAliases.length) {
+    const anyGoal = allTemplates.filter((template) => matchesGoal(template, goalAliases));
+    if (anyGoal.length) return anyGoal;
+  }
+
+  return basePool.length ? basePool : allTemplates;
+};
+
 export const generateWeekWorkouts = async (
   userId: string,
   phaseId: string,
@@ -982,7 +1161,7 @@ export const generateWeekWorkouts = async (
     eatingMode?: User['eatingMode'];
     experienceLevel?: User['experienceLevel'];
   },
-  adaptation?: GenerationAdaptation,
+  _adaptation?: GenerationAdaptation,
   preferences?: GenerationPreferences
 ): Promise<void> => {
   try {
@@ -994,74 +1173,25 @@ export const generateWeekWorkouts = async (
       return;
     }
 
-    const tagForSplit = (split: User['trainingSplit']): string[] => {
-      switch (split) {
-        case 'push_pull_legs':
-          return ['push', 'pull', 'legs'];
-        case 'upper_lower':
-          return ['upper', 'lower'];
-        case 'bro_split':
-          return ['chest', 'back', 'shoulders', 'arms', 'legs'];
-        case 'full_body':
-        default:
-          return ['full_body'];
-      }
-    };
-
-    const shouldTrainOn = (date: Date) => {
-      const daysPerWeek = preferences?.daysPerWeek;
-      if (!daysPerWeek || daysPerWeek >= 7) return true;
-      const day = date.getDay();
-      if (daysPerWeek === 6) return day !== 0;
-      if (daysPerWeek === 5) return day >= 1 && day <= 5;
-      if (daysPerWeek === 4) return day === 1 || day === 2 || day === 4 || day === 6;
-      return day === 1 || day === 3 || day === 5;
-    };
-
-    const scheduleDates: string[] = [];
-    for (let dayOffset = 0; dayOffset < totalDays; dayOffset += 1) {
-      const workoutDate = new Date(startDate);
-      workoutDate.setDate(startDate.getDate() + dayOffset);
-      if (!shouldTrainOn(workoutDate)) continue;
-      scheduleDates.push(formatLocalDateYMD(workoutDate));
-    }
-
-    const rotationTags = tagForSplit(trainingSplit);
-    const normalizedTemplates = templates.map((template) => {
-      const orderedExercises = [...(template.exercises ?? [])].sort(
-        (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
-      );
-      const validExercises = orderedExercises.filter((exercise) => {
-        if (exercise.exercise_id) return true;
-        console.warn(
-          `⚠️ Template "${template.title}" has exercise without exercise_id: ${exercise.exercise_name}`
-        );
-        return false;
-      });
-
-      return {
-        ...template,
-        goal_tags: (template.goal_tags ?? []).map((tag) => tag.toLowerCase()),
-        exercises: validExercises,
-      };
-    });
-
-    const byTag = new Map<string, WorkoutTemplateRow[]>();
-    rotationTags.forEach((tag) => {
-      const list = normalizedTemplates.filter((template) =>
-        template.goal_tags?.includes(tag)
-      );
-      byTag.set(tag, list);
-    });
+    const scheduleDates = buildScheduleDates(startDate, totalDays, preferences);
+    const rotationTags = resolveRotationTags(trainingSplit);
+    const normalizedTemplates = normalizeTemplatesForGeneration(templates);
+    const byTag = buildTemplatesByTag(normalizedTemplates, rotationTags);
 
     let successCount = 0;
     for (let index = 0; index < scheduleDates.length; index += 1) {
       const date = scheduleDates[index];
       const tag = rotationTags[index % rotationTags.length];
-      const candidates = byTag.get(tag) ?? normalizedTemplates;
+      const candidates = selectTemplateCandidatesForTag(
+        tag,
+        byTag,
+        normalizedTemplates,
+        profile,
+        preferences
+      );
       const template = candidates.length
         ? candidates[index % candidates.length]
-        : normalizedTemplates[index % normalizedTemplates.length];
+        : null;
 
       if (!template || !template.exercises.length) continue;
 
