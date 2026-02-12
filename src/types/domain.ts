@@ -74,6 +74,37 @@ export type WorkoutSessionEntry = {
   completed?: boolean; 
 };
 
+export type PlanWorkoutExercise = {
+  id: string;
+  planWorkoutId: string;
+  exerciseId: string;
+  name: string;
+  bodyParts: MuscleGroup[];
+  movementPattern?: MovementPattern;
+  sets?: number;
+  reps?: string;
+  displayOrder?: number;
+  notes?: string;
+  sourceTemplateExerciseId?: string | null;
+};
+
+export type PlanWorkout = {
+  id: string;
+  planDayId: string;
+  title?: string | null;
+  sourceTemplateId?: string | null;
+  sourceType?: string | null;
+  exercises: PlanWorkoutExercise[];
+};
+
+export type PlanDay = {
+  id: string;
+  planId: string;
+  userId: string;
+  date: string;
+  workout: PlanWorkout | null;
+};
+
 export type MealPlanMeal = {
   title: string;
   items: string[];
@@ -190,7 +221,7 @@ export type HabitLog = {
   habits: Record<HabitType, boolean>;
 };
 
-export const APP_STATE_VERSION = 2;
+export const APP_STATE_VERSION = 3;
 
 export type AppState = {
   user: User | null;
@@ -199,6 +230,7 @@ export type AppState = {
   workoutLogs: WorkoutLog[];
   strengthSnapshots: StrengthSnapshot[];
   workoutSessions: WorkoutSessionEntry[];
+  plannedWorkouts: PlanDay[];
   mealPlans: DailyMealPlan[];
   nextPhotoReminder: string | null;
   progressEstimate: ProgressEstimate | null;
@@ -214,6 +246,7 @@ export const createEmptyAppState = (): AppState => ({
   workoutLogs: [],
   strengthSnapshots: [],
   workoutSessions: [],
+  plannedWorkouts: [],
   mealPlans: [],
   nextPhotoReminder: null,
   progressEstimate: null,

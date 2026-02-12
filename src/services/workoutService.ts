@@ -1,21 +1,77 @@
 import { supabase } from '../lib/supabaseClient';
-import { User, WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry } from '../types/domain';
+import { User, WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry, MuscleGroup } from '../types/domain';
 import { mapSessionRow } from '../utils/workoutSessionMapper';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
 import {
   type AdaptationMode,
-  EATING_MODE_OFFSETS,
-  EXPERIENCE_OFFSETS,
-  TARGET_EXERCISES_BOUNDS,
-  isCompoundPattern,
-  resolveScoringWeights,
-  resolveSlotPlan,
-  type ScoringWeights,
-  type SlotPlan,
 } from './planningRules';
 import { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
 export { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
+import { replacePlanExercisesForDate } from './planSnapshotService';
+
+type WorkoutTemplateExerciseRow = {
+  id: string;
+  exercise_id: string | null;
+  exercise_name: string;
+  movement_pattern: string | null;
+  body_parts: string[] | null;
+  sets: number | null;
+  reps: string | null;
+  display_order: number | null;
+  notes: string | null;
+};
+
+type WorkoutTemplateRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  difficulty: string | null;
+  equipment_level: string | null;
+  estimated_time_minutes: number | null;
+  goal_tags: string[] | null;
+  created_by: string | null;
+  is_public: boolean;
+  is_deprecated: boolean;
+  exercises: WorkoutTemplateExerciseRow[];
+};
+
+export const fetchWorkoutTemplates = async (
+  userId: string
+): Promise<WorkoutTemplateRow[]> => {
+  const { data, error } = await supabase
+    .from('fitarc_workout_templates')
+    .select(
+      `
+      id,
+      title,
+      description,
+      difficulty,
+      equipment_level,
+      estimated_time_minutes,
+      goal_tags,
+      created_by,
+      is_public,
+      is_deprecated,
+      exercises:fitarc_workout_template_exercises (
+        id,
+        exercise_id,
+        exercise_name,
+        movement_pattern,
+        body_parts,
+        sets,
+        reps,
+        display_order,
+        notes
+      )
+    `
+    )
+    .eq('is_deprecated', false)
+    .or(`is_public.eq.true,created_by.eq.${userId}`);
+
+  if (error) throw error;
+  return (data ?? []) as WorkoutTemplateRow[];
+};
 
 export type ExerciseDefaultRecord = {
   id: string;
@@ -155,6 +211,7 @@ export const createWorkoutSession = async ({
       plan_id: planId,
       performed_at: performedAt,
       split_day_id: splitDayId,
+      planned_date: normalizeDate(date),
     })
     .select('id, user_id, plan_id, performed_at, notes, complete')
     .single();
@@ -169,6 +226,55 @@ export const createWorkoutSession = async ({
     planId,
     getAppTimeZone()
   );
+};
+
+type CreateSessionFromPlanInput = {
+  userId: string;
+  planId: string;
+  date: string;
+  exercises: WorkoutSessionExercise[];
+  splitDayId?: string | null;
+};
+
+export const createSessionFromPlanWorkout = async ({
+  userId,
+  planId,
+  date,
+  exercises,
+  splitDayId = null,
+}: CreateSessionFromPlanInput): Promise<string> => {
+  const existingRes = await supabase
+    .from('fitarc_workout_sessions')
+    .select('id')
+    .eq('plan_id', planId)
+    .eq('planned_date', normalizeDate(date))
+    .maybeSingle();
+  if (existingRes.error) throw existingRes.error;
+  if (existingRes.data?.id) return existingRes.data.id;
+
+  const { data, error } = await supabase
+    .from('fitarc_workout_sessions')
+    .insert({
+      user_id: userId,
+      plan_id: planId,
+      performed_at: normalizeDate(date),
+      planned_date: normalizeDate(date),
+      split_day_id: splitDayId,
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+
+  for (let index = 0; index < exercises.length; index += 1) {
+    const exercise = exercises[index];
+    await addExerciseToSession({
+      sessionId: data.id,
+      exercise,
+      displayOrder: exercise.displayOrder ?? index + 1,
+    });
+  }
+
+  return data.id;
 };
 
 export type WorkoutSessionRow = {
@@ -854,519 +960,16 @@ export const fetchPhaseWorkoutSessions = async (
   return (data || []).map((row: any) => mapSessionRow(row, planId, timeZone));
 };
 
-type DayBlueprint = {
-  key: string;
-  title: string;
-  primaryMuscles: string[];
-  accessoryMuscles?: string[];
-  secondaryFocus?: string[];
-  targetExercises?: number;
-  splitDayId?: string | null;
-};
-
-type SplitDayRow = {
-  id: string;
-  day_index: number;
-  day_key: string;
-  title: string;
-  target_exercises: number | null;
-  muscles: {
-    role: string | null;
-    sort_order: number | null;
-    muscle: { name: string | null } | null;
-  }[];
-};
-
-const fetchSplitBlueprints = async (
-  splitKey: User['trainingSplit']
-): Promise<DayBlueprint[]> => {
-  const { data, error } = await supabase
-    .from('fitarc_training_splits')
-    .select(
-      `
-      id,
-      split_days:fitarc_split_days (
-        id,
-        day_index,
-        day_key,
-        title,
-        target_exercises,
-        muscles:fitarc_split_day_muscles (
-          role,
-          sort_order,
-          muscle:fitarc_muscle_groups ( name )
-        )
-      )
-    `
-    )
-    .eq('split_key', splitKey)
-    .eq('is_active', true)
-    .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.error('Failed to load split blueprint:', error);
-    return [];
-  }
-
-  const days = ((data?.split_days as SplitDayRow[]) || []).sort(
-    (a, b) => (a.day_index ?? 0) - (b.day_index ?? 0)
-  );
-
-  return days.map((day) => {
-    const primary: string[] = [];
-    const accessory: string[] = [];
-
-    (day.muscles || [])
-      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-      .forEach((link) => {
-        const name = link.muscle?.name;
-        if (!name) return;
-        if ((link.role || '').toLowerCase() === 'primary') {
-          primary.push(name);
-        } else {
-          accessory.push(name);
-        }
-      });
-
-    return {
-      key: day.day_key,
-      title: day.title,
-      primaryMuscles: primary,
-      accessoryMuscles: accessory,
-      targetExercises: day.target_exercises ?? undefined,
-      splitDayId: day.id,
-    };
-  });
-};
-
-const normalizeMuscle = (name?: string | null) =>
-  (name || '').toLowerCase().trim();
-
-type MuscleIndex = Record<string, ExerciseCatalogEntry[]>;
-
-const buildMuscleIndex = (catalog: ExerciseCatalogEntry[]): MuscleIndex => {
-  const index: MuscleIndex = {};
-  catalog.forEach((exercise) => {
-    exercise.primaryMuscles.forEach((muscle) => {
-      const key = normalizeMuscle(muscle);
-      if (!key) return;
-      if (!index[key]) {
-        index[key] = [];
-      }
-      index[key].push(exercise);
-    });
-  });
-  Object.keys(index).forEach((key) => {
-    index[key].sort((a, b) => a.name.localeCompare(b.name));
-  });
-  return index;
-};
-
-const clampNumber = (value: number, min: number, max: number) =>
-  Math.min(Math.max(value, min), max);
-
-const resolveTargetExercises = (
-  blueprint: DayBlueprint,
-  profile?: {
-    eatingMode?: User['eatingMode'];
-    experienceLevel?: User['experienceLevel'];
-  }
-): number => {
-  const base = blueprint.targetExercises ?? 5;
-  const offset =
-    EATING_MODE_OFFSETS[profile?.eatingMode ?? 'maintenance'] +
-    EXPERIENCE_OFFSETS[profile?.experienceLevel ?? 'intermediate'];
-  return clampNumber(base + offset, TARGET_EXERCISES_BOUNDS.min, TARGET_EXERCISES_BOUNDS.max);
-};
-
-type SessionSkeletonDay = {
-  date: string;
-  blueprint: DayBlueprint;
-  targetExercises: number;
-  slotPlan: SlotPlan;
-};
-
 type GenerationPreferences = {
   daysPerWeek?: 3 | 4 | 5 | 6;
   equipmentLevel?: 'bodyweight' | 'dumbbells' | 'full_gym';
   primaryGoal?: 'build_muscle' | 'get_stronger' | 'lose_fat' | 'endurance' | 'general_fitness';
 };
 
-type SmartFillContext = {
-  blueprint: DayBlueprint;
-  slotPlan: SlotPlan;
-  scoringWeights: ScoringWeights;
-  usedInWeek: Set<string>;
-  previousDay: Set<string>;
-  daySeed: number;
-  preferences?: GenerationPreferences;
-};
-
-const buildWeekSkeleton = (
-  blueprints: DayBlueprint[],
-  startDate: Date,
-  totalDays: number,
-  profile?: {
-    eatingMode?: User['eatingMode'];
-    experienceLevel?: User['experienceLevel'];
-  },
-  targetExerciseOffset = 0,
-  daysPerWeek?: number,
-  preferences?: GenerationPreferences
-): SessionSkeletonDay[] => {
-  const skeleton: SessionSkeletonDay[] = [];
-  const shouldTrainOn = (date: Date) => {
-    if (!daysPerWeek || daysPerWeek >= 7) return true;
-    const day = date.getDay();
-    if (daysPerWeek === 6) return day !== 0;
-    if (daysPerWeek === 5) return day >= 1 && day <= 5;
-    if (daysPerWeek === 4) return day === 1 || day === 2 || day === 4 || day === 6;
-    return day === 1 || day === 3 || day === 5;
-  };
-  for (let dayOffset = 0; dayOffset < totalDays; dayOffset += 1) {
-    const workoutDate = new Date(startDate);
-    workoutDate.setDate(startDate.getDate() + dayOffset);
-    if (!shouldTrainOn(workoutDate)) {
-      continue;
-    }
-    const date = formatLocalDateYMD(workoutDate);
-    const blueprint = blueprints[dayOffset % blueprints.length];
-    const targetExercises = clampNumber(
-      resolveTargetExercises(blueprint, profile) + targetExerciseOffset,
-      TARGET_EXERCISES_BOUNDS.min,
-      TARGET_EXERCISES_BOUNDS.max
-    );
-    const baseSlotPlan = resolveSlotPlan(targetExercises);
-    const slotPlan = { ...baseSlotPlan };
-    if (preferences?.primaryGoal === 'get_stronger') {
-      slotPlan.compound = Math.min(slotPlan.compound + 1, targetExercises - 1);
-      slotPlan.accessory = Math.max(1, targetExercises - slotPlan.compound);
-    }
-    if (preferences?.primaryGoal === 'endurance') {
-      slotPlan.compound = Math.max(1, slotPlan.compound - 1);
-      slotPlan.accessory = Math.max(1, targetExercises - slotPlan.compound);
-    }
-    skeleton.push({
-      date,
-      blueprint,
-      targetExercises,
-      slotPlan,
-    });
-  }
-  return skeleton;
-};
-
-const getExerciseMuscles = (exercise: ExerciseCatalogEntry): Set<string> =>
-  new Set(
-    [...exercise.primaryMuscles, ...exercise.secondaryMuscles]
-      .map((muscle) => normalizeMuscle(muscle))
-      .filter(Boolean)
-  );
-
-const countMuscleMatches = (
-  exercise: ExerciseCatalogEntry,
-  targetMuscles: string[] | undefined
-): number => {
-  if (!targetMuscles?.length) return 0;
-  const muscles = getExerciseMuscles(exercise);
-  return targetMuscles.reduce((count, muscle) => {
-    if (muscles.has(normalizeMuscle(muscle))) {
-      return count + 1;
-    }
-    return count;
-  }, 0);
-};
-
-const deterministicSeed = (value: string): number => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-  }
-  return hash;
-};
-
-const buildCandidatePool = (
-  blueprint: DayBlueprint,
-  muscleIndex: MuscleIndex,
-  catalog: ExerciseCatalogEntry[],
-  equipmentLevel?: GenerationPreferences['equipmentLevel']
-): ExerciseCatalogEntry[] => {
-  const allowsEquipment = (equipment?: string | null) => {
-    if (!equipmentLevel || equipmentLevel === 'full_gym') return true;
-    const value = (equipment || '').toLowerCase();
-    if (equipmentLevel === 'bodyweight') {
-      return !value || value.includes('bodyweight');
-    }
-    if (equipmentLevel === 'dumbbells') {
-      return !value || value.includes('bodyweight') || value.includes('dumbbell');
-    }
-    return true;
-  };
-  const pool: ExerciseCatalogEntry[] = [];
-  const seen = new Set<string>();
-  const addBucket = (muscles?: string[]) => {
-    if (!muscles?.length) return;
-    muscles.forEach((muscle) => {
-      const bucket = muscleIndex[normalizeMuscle(muscle)] ?? [];
-      bucket.forEach((exercise) => {
-        if (!allowsEquipment(exercise.equipment)) return;
-        if (seen.has(exercise.id)) return;
-        seen.add(exercise.id);
-        pool.push(exercise);
-      });
-    });
-  };
-  addBucket(blueprint.primaryMuscles);
-  addBucket(blueprint.accessoryMuscles);
-  addBucket(blueprint.secondaryFocus);
-  catalog.forEach((exercise) => {
-    if (!allowsEquipment(exercise.equipment)) return;
-    if (seen.has(exercise.id)) return;
-    seen.add(exercise.id);
-    pool.push(exercise);
-  });
-  return pool;
-};
-
-const scoreExercise = (
-  exercise: ExerciseCatalogEntry,
-  usedInSession: Set<string>,
-  movementPatterns: Set<string>,
-  context: SmartFillContext,
-  slotType: 'compound' | 'accessory'
-): number => {
-  if (usedInSession.has(exercise.id)) {
-    return Number.NEGATIVE_INFINITY;
-  }
-  if (slotType === 'compound' && !isCompoundPattern(exercise.movementPattern)) {
-    return Number.NEGATIVE_INFINITY;
-  }
-  if (slotType === 'accessory' && isCompoundPattern(exercise.movementPattern)) {
-    return -5;
-  }
-
-  const primaryMatches = countMuscleMatches(exercise, context.blueprint.primaryMuscles);
-  const accessoryMatches = countMuscleMatches(exercise, context.blueprint.accessoryMuscles);
-  const movementKey = (exercise.movementPattern || '').toLowerCase();
-  const weights = context.scoringWeights;
-
-  let score = 0;
-  score += primaryMatches * weights.primaryMuscleMatch;
-  score += accessoryMatches * weights.accessoryMuscleMatch;
-  if (movementKey && !movementPatterns.has(movementKey)) {
-    score += weights.noMovementDuplication;
-  } else if (movementKey) {
-    score += weights.movementDuplicationPenalty;
-  }
-  score += context.usedInWeek.has(exercise.id)
-    ? weights.weekRepeatPenalty
-    : weights.weekNoveltyBonus;
-  if (context.previousDay.has(exercise.id)) {
-    score += weights.previousDayPenalty;
-  }
-  score +=
-    deterministicSeed(`${exercise.id}:${context.daySeed}`) *
-    weights.deterministicTiebreakScale;
-  return score;
-};
-
-const smartFillExercises = (
-  catalog: ExerciseCatalogEntry[],
-  muscleIndex: MuscleIndex,
-  context: SmartFillContext,
-  target: number
-): ExerciseCatalogEntry[] => {
-  if (target <= 0) return [];
-  const candidates = buildCandidatePool(
-    context.blueprint,
-    muscleIndex,
-    catalog,
-    context.preferences?.equipmentLevel
-  );
-  if (!candidates.length) return [];
-  const usedInSession = new Set<string>();
-  const movementPatterns = new Set<string>();
-  const selection: ExerciseCatalogEntry[] = [];
-
-  const pickBest = (slotType: 'compound' | 'accessory'): ExerciseCatalogEntry | null => {
-    let best: ExerciseCatalogEntry | null = null;
-    let bestScore = Number.NEGATIVE_INFINITY;
-    for (const candidate of candidates) {
-      const score = scoreExercise(candidate, usedInSession, movementPatterns, context, slotType);
-      if (score > bestScore) {
-        best = candidate;
-        bestScore = score;
-      }
-    }
-    return best;
-  };
-
-  const slotOrder: Array<'compound' | 'accessory'> = [
-    ...Array.from({ length: context.slotPlan.compound }, () => 'compound' as const),
-    ...Array.from({ length: context.slotPlan.accessory }, () => 'accessory' as const),
-  ];
-
-  for (let i = 0; i < slotOrder.length && selection.length < target; i += 1) {
-    const slotType = slotOrder[i];
-    let pick: ExerciseCatalogEntry | null = pickBest(slotType);
-    if (!pick) {
-      pick = pickBest('accessory');
-    }
-    if (!pick) break;
-    const selected = pick;
-    usedInSession.add(selected.id);
-    context.usedInWeek.add(selected.id);
-    if (selected.movementPattern) {
-      movementPatterns.add(selected.movementPattern.toLowerCase());
-    }
-    selection.push(selected);
-  }
-
-  if (selection.length < target) {
-    for (let i = 0; i < candidates.length && selection.length < target; i += 1) {
-      const candidate = candidates[(i + context.daySeed) % candidates.length];
-      if (usedInSession.has(candidate.id)) continue;
-      usedInSession.add(candidate.id);
-      context.usedInWeek.add(candidate.id);
-      selection.push(candidate);
-    }
-  }
-
-  return selection;
-};
-
-const buildGenericBlueprints = (catalog: ExerciseCatalogEntry[]): DayBlueprint[] => {
-  const muscleSet = new Set<string>();
-  catalog.forEach((exercise) => {
-    exercise.primaryMuscles.forEach((muscle) => {
-      const key = normalizeMuscle(muscle);
-      if (key) {
-        muscleSet.add(key);
-      }
-    });
-  });
-
-  const muscles = Array.from(muscleSet);
-  if (!muscles.length) {
-    return [];
-  }
-
-  const chunkSize = Math.max(3, Math.floor(muscles.length / 3));
-  const chunks: string[][] = [];
-  for (let i = 0; i < muscles.length; i += chunkSize) {
-    chunks.push(muscles.slice(i, i + chunkSize));
-  }
-
-  return chunks.slice(0, 4).map((group, idx) => ({
-    key: `auto_${idx + 1}`,
-    title: `Session ${idx + 1}`,
-    primaryMuscles: group,
-    targetExercises: 5,
-  }));
-};
-
-const createWorkoutSessionInDB = async (
-  userId: string,
-  phaseId: string,
-  date: string,
-  exercises: ExerciseCatalogEntry[],
-  splitDayId?: string
-): Promise<void> => {
-  const { data: session, error: sessionError } = await supabase
-    .from('fitarc_workout_sessions')
-    .insert({
-      user_id: userId,
-      plan_id: phaseId,
-      performed_at: date,
-      split_day_id: splitDayId ?? null,
-    })
-    .select('id')
-    .single();
-
-  if (sessionError) {
-    console.error('Session creation error:', sessionError);
-    throw sessionError;
-  }
-
-  if (!session) {
-    throw new Error('Failed to create session - no data returned');
-  }
-
-  const sessionExercises = exercises.map((exercise, index) => ({
-    session_id: session.id,
-    exercise_id: exercise.id,
-    display_order: index + 1,
-  }));
-
-  const { error: exercisesError } = await supabase
-    .from('fitarc_workout_session_exercises')
-    .insert(sessionExercises);
-
-  if (exercisesError) {
-    console.error('Session exercises creation error:', exercisesError);
-    throw exercisesError;
-  }
-};
-
 type GenerationAdaptation = {
   targetExerciseOffset: number;
   scoringMode: AdaptationMode;
   reasons: string[];
-};
-
-const analyzeRecentPhasePerformance = async (
-  userId: string,
-  planId: string,
-  timeZone: string
-): Promise<GenerationAdaptation> => {
-  const sessions = await fetchPhaseWorkoutSessions(userId, planId, 28, timeZone);
-  const todayKey = formatLocalDateYMD(new Date());
-  const completedSessions = sessions.filter((session) => {
-    if (session.date > todayKey) return false;
-    if (session.completed !== undefined) return !!session.completed;
-    if (!session.exercises.length) return false;
-    return session.exercises.every((exercise) => exercise.completed === true);
-  });
-
-  if (sessions.length < 4) {
-    return {
-      targetExerciseOffset: 0,
-      scoringMode: 'balanced',
-      reasons: ['insufficient_history'],
-    };
-  }
-
-  const totalExercises = sessions.reduce((sum, session) => sum + session.exercises.length, 0);
-  const completedExercises = sessions.reduce(
-    (sum, session) =>
-      sum + session.exercises.filter((exercise) => exercise.completed === true).length,
-    0
-  );
-  const sessionCompletionRate = completedSessions.length / sessions.length;
-  const exerciseCompletionRate =
-    totalExercises > 0 ? completedExercises / totalExercises : sessionCompletionRate;
-
-  if (sessionCompletionRate >= 0.75 && exerciseCompletionRate >= 0.85) {
-    return {
-      targetExerciseOffset: 1,
-      scoringMode: 'progressive',
-      reasons: ['high_completion_rate'],
-    };
-  }
-  if (sessionCompletionRate <= 0.55 || exerciseCompletionRate <= 0.65) {
-    return {
-      targetExerciseOffset: -1,
-      scoringMode: 'recovery',
-      reasons: ['low_completion_rate'],
-    };
-  }
-  return {
-    targetExerciseOffset: 0,
-    scoringMode: 'balanced',
-    reasons: ['stable_completion_rate'],
-  };
 };
 
 export const generateWeekWorkouts = async (
@@ -1383,113 +986,113 @@ export const generateWeekWorkouts = async (
   preferences?: GenerationPreferences
 ): Promise<void> => {
   try {
-    console.log(`🏋️ Generating workouts for phase ${phaseId}, split: ${trainingSplit}`);
+    console.log(`🏋️ Generating workouts from templates for phase ${phaseId}, split: ${trainingSplit}`);
 
-    const exerciseCatalog = await fetchExerciseCatalog();
-
-    if (exerciseCatalog.length === 0) {
-      console.warn('⚠️ Exercise catalog is empty - cannot generate workouts');
+    const templates = await fetchWorkoutTemplates(userId);
+    if (!templates.length) {
+      console.warn('⚠️ No workout templates available - cannot generate workouts');
       return;
     }
 
-    let blueprints = await fetchSplitBlueprints(trainingSplit);
-    if (!blueprints.length) {
-      console.warn(`⚠️ No DB blueprint for ${trainingSplit}, using fallback.`);
-      blueprints = buildGenericBlueprints(exerciseCatalog);
-    }
-    if (!blueprints.length) {
-      console.warn('⚠️ No blueprint available - cannot create workouts');
-      return;
-    }
-    const muscleIndex = buildMuscleIndex(exerciseCatalog);
+    const tagForSplit = (split: User['trainingSplit']): string[] => {
+      switch (split) {
+        case 'push_pull_legs':
+          return ['push', 'pull', 'legs'];
+        case 'upper_lower':
+          return ['upper', 'lower'];
+        case 'bro_split':
+          return ['chest', 'back', 'shoulders', 'arms', 'legs'];
+        case 'full_body':
+        default:
+          return ['full_body'];
+      }
+    };
 
-    const sessionsToCreate: Array<{
-      date: string;
-      exercises: ExerciseCatalogEntry[];
-      title: string;
-      splitDayId?: string | null;
-    }> = [];
-    let resolvedAdaptation = adaptation;
-    if (!resolvedAdaptation) {
-      try {
-        resolvedAdaptation = await analyzeRecentPhasePerformance(
-          userId,
-          phaseId,
-          getAppTimeZone()
+    const shouldTrainOn = (date: Date) => {
+      const daysPerWeek = preferences?.daysPerWeek;
+      if (!daysPerWeek || daysPerWeek >= 7) return true;
+      const day = date.getDay();
+      if (daysPerWeek === 6) return day !== 0;
+      if (daysPerWeek === 5) return day >= 1 && day <= 5;
+      if (daysPerWeek === 4) return day === 1 || day === 2 || day === 4 || day === 6;
+      return day === 1 || day === 3 || day === 5;
+    };
+
+    const scheduleDates: string[] = [];
+    for (let dayOffset = 0; dayOffset < totalDays; dayOffset += 1) {
+      const workoutDate = new Date(startDate);
+      workoutDate.setDate(startDate.getDate() + dayOffset);
+      if (!shouldTrainOn(workoutDate)) continue;
+      scheduleDates.push(formatLocalDateYMD(workoutDate));
+    }
+
+    const rotationTags = tagForSplit(trainingSplit);
+    const normalizedTemplates = templates.map((template) => {
+      const orderedExercises = [...(template.exercises ?? [])].sort(
+        (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
+      );
+      const validExercises = orderedExercises.filter((exercise) => {
+        if (exercise.exercise_id) return true;
+        console.warn(
+          `⚠️ Template "${template.title}" has exercise without exercise_id: ${exercise.exercise_name}`
         );
-      } catch (err) {
-        console.warn('Failed to analyze recent phase performance:', err);
-      }
-    }
-    if (!resolvedAdaptation) {
-      resolvedAdaptation = {
-        targetExerciseOffset: 0,
-        scoringMode: 'balanced',
-        reasons: ['default'],
-      };
-    }
-    console.log('🧭 Workout generation adaptation', resolvedAdaptation);
-    const scoringWeights = resolveScoringWeights(resolvedAdaptation.scoringMode);
-    const skeleton = buildWeekSkeleton(
-      blueprints,
-      startDate,
-      totalDays,
-      profile,
-      resolvedAdaptation.targetExerciseOffset,
-      preferences?.daysPerWeek,
-      preferences
-    );
-    const usedInWeek = new Set<string>();
-    let previousDaySelection = new Set<string>();
-
-    skeleton.forEach((day, dayOffset) => {
-      const exercises = smartFillExercises(exerciseCatalog, muscleIndex, {
-        blueprint: day.blueprint,
-        slotPlan: day.slotPlan,
-        scoringWeights,
-        usedInWeek,
-        previousDay: previousDaySelection,
-        daySeed: dayOffset,
-        preferences,
-      }, day.targetExercises);
-
-      if (!exercises.length) {
-        console.warn(`⚠️ No exercises found for blueprint ${day.blueprint.title}`);
-        return;
-      }
-
-      sessionsToCreate.push({
-        date: day.date,
-        exercises,
-        title: day.blueprint.title,
-        splitDayId: day.blueprint.splitDayId ?? null,
+        return false;
       });
-      previousDaySelection = new Set(exercises.map((exercise) => exercise.id));
+
+      return {
+        ...template,
+        goal_tags: (template.goal_tags ?? []).map((tag) => tag.toLowerCase()),
+        exercises: validExercises,
+      };
     });
 
-    if (sessionsToCreate.length === 0) {
-      console.warn('⚠️ No sessions to create');
-      return;
-    }
+    const byTag = new Map<string, WorkoutTemplateRow[]>();
+    rotationTags.forEach((tag) => {
+      const list = normalizedTemplates.filter((template) =>
+        template.goal_tags?.includes(tag)
+      );
+      byTag.set(tag, list);
+    });
 
     let successCount = 0;
-    for (const session of sessionsToCreate) {
+    for (let index = 0; index < scheduleDates.length; index += 1) {
+      const date = scheduleDates[index];
+      const tag = rotationTags[index % rotationTags.length];
+      const candidates = byTag.get(tag) ?? normalizedTemplates;
+      const template = candidates.length
+        ? candidates[index % candidates.length]
+        : normalizedTemplates[index % normalizedTemplates.length];
+
+      if (!template || !template.exercises.length) continue;
+
+      const planExercises = template.exercises.map((exercise, idx) => ({
+        exerciseId: exercise.exercise_id!,
+        name: exercise.exercise_name,
+        bodyParts: (exercise.body_parts ?? []) as MuscleGroup[],
+        movementPattern: exercise.movement_pattern ?? null,
+        sets: exercise.sets ?? 4,
+        reps: exercise.reps ?? '8-12',
+        displayOrder: exercise.display_order ?? idx + 1,
+        notes: exercise.notes ?? null,
+      }));
+
       try {
-        await createWorkoutSessionInDB(
+        await replacePlanExercisesForDate(
           userId,
           phaseId,
-          session.date,
-          session.exercises,
-          session.splitDayId ?? undefined
+          date,
+          planExercises,
+          template.id,
+          template.title
         );
         successCount++;
-        console.log(`✅ Created ${session.title} for ${session.date}`);
+        console.log(`✅ Created ${template.title} for ${date}`);
       } catch (err) {
-        console.error(`❌ Failed to create session for ${session.date}:`, err);
+        console.error(`❌ Failed to create planned workout for ${date}:`, err);
       }
     }
 
-    console.log(`🎉 Successfully generated ${successCount}/${sessionsToCreate.length} workout sessions`);
+    console.log(`🎉 Successfully generated ${successCount}/${scheduleDates.length} planned workouts`);
   } catch (error) {
     console.error('❌ Failed to generate week workouts:', error);
     throw error;
@@ -1501,7 +1104,7 @@ export const hasExistingWorkouts = async (
   phaseId: string
 ): Promise<boolean> => {
   const { data, error } = await supabase
-    .from('fitarc_workout_sessions')
+    .from('fitarc_plan_days')
     .select('id')
     .eq('user_id', userId)
     .eq('plan_id', phaseId)
@@ -1525,12 +1128,12 @@ export const hasWorkoutsInRange = async (
   const endKey = formatLocalDateYMD(endDate);
 
   const { data, error } = await supabase
-    .from('fitarc_workout_sessions')
+    .from('fitarc_plan_days')
     .select('id')
     .eq('user_id', userId)
     .eq('plan_id', phaseId)
-    .gte('performed_at', startKey)
-    .lt('performed_at', endKey)
+    .gte('day_date', startKey)
+    .lt('day_date', endKey)
     .limit(1);
 
   if (error) {
@@ -1539,31 +1142,4 @@ export const hasWorkoutsInRange = async (
   }
 
   return (data?.length ?? 0) > 0;
-};
-
-export const ensureRollingWeekWorkouts = async (
-  userId: string,
-  phaseId: string,
-  trainingSplit: User['trainingSplit'],
-  referenceDate: Date = new Date(),
-  profile?: {
-    eatingMode?: User['eatingMode'];
-    experienceLevel?: User['experienceLevel'];
-  }
-): Promise<void> => {
-  const startDate = new Date(referenceDate);
-  const endDate = new Date(referenceDate);
-  endDate.setDate(endDate.getDate() + 7);
-
-  const hasWorkouts = await hasWorkoutsInRange(userId, phaseId, startDate, endDate);
-  if (hasWorkouts) return;
-
-  let adaptation: GenerationAdaptation | undefined;
-  try {
-    adaptation = await analyzeRecentPhasePerformance(userId, phaseId, getAppTimeZone());
-  } catch (error) {
-    console.warn('Failed to adapt generation from recent performance:', error);
-  }
-
-  await generateWeekWorkouts(userId, phaseId, trainingSplit, startDate, 7, profile, adaptation);
 };

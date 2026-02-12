@@ -10,6 +10,8 @@ import {
   Modal,
   Animated,
   Easing,
+  Pressable,
+  Alert,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,9 +21,11 @@ import {
   WorkoutSessionEntry,
   WorkoutSessionExercise,
   MuscleGroup,
+  PlanDay,
 } from '../types/domain';
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
+import { useWorkoutTemplates } from '../hooks/useWorkoutTemplates';
 import { useFabAction } from '../contexts/FabActionContext';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import { Calendar } from 'react-native-calendars';
@@ -49,6 +53,9 @@ const COLORS = {
   borderLight: 'rgba(108, 99, 255, 0.15)',
   overlay: 'rgba(255, 255, 255, 0.08)',
   overlayLight: 'rgba(255, 255, 255, 0.25)',
+  surface: '#0C1021',
+  elevated: '#151A2E',
+  borderSubtle: 'rgba(255,255,255,0.06)',
 } as const;
 
 // Muscle group color mapping with gradients
@@ -97,13 +104,12 @@ const MUSCLE_COLORS: Record<string, {
 };
 
 const ACTIVITY_TOTAL_DAYS_FALLBACK = 182;
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const ACTIVITY_SECTION_HEIGHT = Math.min(320, Math.max(240, Math.round(SCREEN_HEIGHT * 0.20)));
-
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
 
-// 🎨 Enhanced Template System
+// 🎨 Enhanced Template System (Supabase-driven)
 type TemplateExercise = {
+  id: string;
+  exerciseId: string;
   name: string;
   bodyParts: string[];
   sets: number;
@@ -111,73 +117,47 @@ type TemplateExercise = {
   movementPattern?: string;
 };
 
+type TemplateDifficulty = 'beginner' | 'intermediate' | 'advanced';
+
 type WorkoutTemplate = {
   id: string;
   title: string;
-  meta: string;
+  subtitle: string;
   description: string;
-  gradient: readonly string[];
   icon: string;
   exercises: TemplateExercise[];
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  estimatedTime: string;
+  difficulty: TemplateDifficulty;
+  estimatedTime: number; // minutes
+  totalSets: number;
+  featured?: boolean;
+  goalTags: string[];
+  isPublic: boolean;
 };
 
-const TEMPLATE_LIBRARY: WorkoutTemplate[] = [
-  {
-    id: 'tmpl-upper',
-    title: 'Upper Body Power',
-    meta: '45-55 min • Strength',
-    description: 'Build explosive upper body strength with compound movements',
-    gradient: ['rgba(108, 99, 255, 0.35)', 'rgba(72, 63, 200, 0.25)', 'rgba(50, 40, 150, 0.15)'] as const,
-    icon: '💪',
-    difficulty: 'intermediate',
-    estimatedTime: '50 min',
-    exercises: [
-      { name: 'Barbell Bench Press', bodyParts: ['chest', 'shoulders', 'arms'], sets: 4, reps: '6-8', movementPattern: 'horizontal_push' },
-      { name: 'Weighted Pull-ups', bodyParts: ['back', 'arms'], sets: 4, reps: '6-8', movementPattern: 'vertical_pull' },
-      { name: 'Overhead Press', bodyParts: ['shoulders', 'arms'], sets: 4, reps: '8-10', movementPattern: 'vertical_push' },
-      { name: 'Barbell Rows', bodyParts: ['back', 'arms'], sets: 3, reps: '8-10', movementPattern: 'horizontal_pull' },
-      { name: 'Dumbbell Curls', bodyParts: ['arms'], sets: 3, reps: '10-12' },
-      { name: 'Tricep Dips', bodyParts: ['arms', 'chest'], sets: 3, reps: '10-12' },
-    ],
+const TEMPLATE_ICON_BY_TAG: Record<string, string> = {
+  push: '🔥',
+  pull: '🎯',
+  legs: '🦵',
+  upper: '💪',
+  lower: '🏋️',
+  full_body: '⚡',
+};
+
+// Difficulty badge colors - SUBTLE
+const DIFFICULTY_COLORS: Record<TemplateDifficulty, { bg: string; text: string }> = {
+  beginner: {
+    bg: 'rgba(16, 185, 129, 0.15)',
+    text: '#6EE7B7',
   },
-  {
-    id: 'tmpl-lower',
-    title: 'Lower Body Builder',
-    meta: '40-50 min • Hypertrophy',
-    description: 'Comprehensive leg development with high volume training',
-    gradient: ['rgba(0, 245, 160, 0.35)', 'rgba(0, 180, 120, 0.25)', 'rgba(0, 140, 90, 0.15)'] as const,
-    icon: '🦵',
-    difficulty: 'intermediate',
-    estimatedTime: '45 min',
-    exercises: [
-      { name: 'Back Squat', bodyParts: ['legs'], sets: 4, reps: '8-12', movementPattern: 'squat' },
-      { name: 'Romanian Deadlift', bodyParts: ['legs', 'back'], sets: 4, reps: '8-12', movementPattern: 'hinge' },
-      { name: 'Bulgarian Split Squats', bodyParts: ['legs'], sets: 3, reps: '10-12', movementPattern: 'lunge' },
-      { name: 'Leg Press', bodyParts: ['legs'], sets: 3, reps: '12-15', movementPattern: 'squat' },
-      { name: 'Leg Curls', bodyParts: ['legs'], sets: 3, reps: '12-15' },
-      { name: 'Calf Raises', bodyParts: ['legs'], sets: 4, reps: '15-20' },
-    ],
+  intermediate: {
+    bg: 'rgba(234, 179, 8, 0.15)',
+    text: '#FDE047',
   },
-  {
-    id: 'tmpl-full',
-    title: 'Full Body Express',
-    meta: '30-40 min • Conditioning',
-    description: 'Efficient full-body workout for busy schedules',
-    gradient: ['rgba(255, 196, 66, 0.35)', 'rgba(200, 140, 20, 0.25)', 'rgba(160, 100, 0, 0.15)'] as const,
-    icon: '⚡',
-    difficulty: 'beginner',
-    estimatedTime: '35 min',
-    exercises: [
-      { name: 'Goblet Squat', bodyParts: ['legs'], sets: 3, reps: '12-15', movementPattern: 'squat' },
-      { name: 'Push-ups', bodyParts: ['chest', 'arms', 'shoulders'], sets: 3, reps: '12-15', movementPattern: 'horizontal_push' },
-      { name: 'Dumbbell Rows', bodyParts: ['back', 'arms'], sets: 3, reps: '12-15', movementPattern: 'horizontal_pull' },
-      { name: 'Lunges', bodyParts: ['legs'], sets: 3, reps: '10-12', movementPattern: 'lunge' },
-      { name: 'Plank', bodyParts: ['core'], sets: 3, reps: '30-60s' },
-    ],
+  advanced: {
+    bg: 'rgba(239, 68, 68, 0.15)',
+    text: '#FCA5A5',
   },
-];
+};
 
 // 🎨 Progress Ring Component
 const ProgressRing: React.FC<{
@@ -418,14 +398,13 @@ type DashboardScreenProps = {
   user: User;
   phase: PhasePlan | null;
   workoutSessions: WorkoutSessionEntry[];
+  plannedWorkouts: PlanDay[];
   onProfilePress?: () => void;
   onStartPhase?: () => void;
   onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
-  onCreateSession?: (date: string) => void;
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
-  onDeleteSession?: (date: string) => void;
-  onAddExercise?: (sessionId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
-  onDeleteExercise?: (sessionId: string, sessionExerciseId: string) => Promise<void>;
+  onAddExercise?: (planWorkoutId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
+  onDeleteExercise?: (planWorkoutId: string, planExerciseId: string) => Promise<void>;
 };
 
 const EMPTY_EXERCISES: WorkoutSessionEntry['exercises'] = [];
@@ -434,17 +413,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   user,
   phase,
   workoutSessions,
+  plannedWorkouts,
   onProfilePress,
   onStartPhase,
   onToggleWorkoutExercise,
-  onCreateSession: _onCreateSession,
   onSaveCustomSession,
-  onDeleteSession,
   onAddExercise,
   onDeleteExercise,
 }) => {
   const { setFabAction } = useFabAction();
-  const { headerStyle, contentStyle } = useScreenAnimation();
+  const { headerStyle } = useScreenAnimation();
   const { data: homeData, isLoading: isHomeLoading } = useHomeScreenData(user.id);
   const derivedPhaseId = phase?.id ?? homeData?.phase?.id;
   const { sessions: phaseSessions, isLoading: isSessionsLoading } = useWorkoutSessions(
@@ -469,11 +447,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [dashboardTab, setDashboardTab] = useState<'plans' | 'templates'>('plans');
   
   // 🎨 Template system state
-  const [activeTemplate, setActiveTemplate] = useState<WorkoutTemplate | null>(null);
   const [lastAddedTemplate, setLastAddedTemplate] = useState<WorkoutTemplate | null>(null);
-  const [selectedTemplateExerciseIndexes, setSelectedTemplateExerciseIndexes] = useState<
-    Record<string, boolean>
-  >({});
+  const [templateTagFilter, setTemplateTagFilter] = useState<string>('all');
+  const [selectedTemplateModal, setSelectedTemplateModal] = useState<WorkoutTemplate | null>(null);
+  const [templateExercisesAdded, setTemplateExercisesAdded] = useState<Set<string>>(new Set());
+  const [selectedTemplateExerciseKeys, setSelectedTemplateExerciseKeys] = useState<Set<string>>(
+    new Set()
+  );
   
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -488,6 +468,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const calendarExpandAnim = useRef(new Animated.Value(0)).current;
   const templateCardScales = useRef<Map<string, Animated.Value>>(new Map());
   const templateBannerAnim = useRef(new Animated.Value(0)).current;
+  const templateModalSlideAnim = useRef(new Animated.Value(300)).current;
   
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
@@ -504,12 +485,95 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!derivedPhaseId) return preferredSessions;
     return preferredSessions.filter((session) => session.phasePlanId === derivedPhaseId);
   }, [derivedPhaseId, homeData?.recentSessions, phaseSessions, workoutSessions]);
+  const resolvedPlannedWorkouts = useMemo(() => {
+    if (!derivedPhaseId) return plannedWorkouts;
+    return plannedWorkouts.filter((day) => day.planId === derivedPhaseId);
+  }, [derivedPhaseId, plannedWorkouts]);
 
   const today = new Date();
   const todayStr = formatLocalDateYMD(today);
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const selectedSession =
     resolvedSessions.find((session) => session.date === selectedDate) || null;
+  const selectedPlanDay =
+    resolvedPlannedWorkouts.find((day) => day.date === selectedDate) || null;
+
+  const {
+    templates: remoteTemplates,
+    isLoading: templatesLoading,
+    error: templatesError,
+  } = useWorkoutTemplates(user.id);
+
+  const templates = useMemo<WorkoutTemplate[]>(() => {
+    const formatDifficulty = (value?: string | null): TemplateDifficulty => {
+      const normalized = (value ?? '').toLowerCase();
+      if (normalized === 'intermediate' || normalized === 'advanced' || normalized === 'beginner') {
+        return normalized as TemplateDifficulty;
+      }
+      return 'beginner';
+    };
+    const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+    return remoteTemplates.map((template) => {
+      const totalSets = template.exercises.reduce((sum, ex) => sum + (ex.sets ?? 0), 0);
+      const estimatedTime =
+        template.estimatedTimeMinutes ?? Math.max(20, template.exercises.length * 8);
+      const primaryTag = template.goalTags.find((tag) => TEMPLATE_ICON_BY_TAG[tag]);
+      const icon = primaryTag ? TEMPLATE_ICON_BY_TAG[primaryTag] : '💪';
+      const difficulty = formatDifficulty(template.difficulty);
+      const subtitle = `${capitalize(difficulty)} • ${estimatedTime} min`;
+      const featured = template.isPublic && template.goalTags.includes('full_body');
+
+      return {
+        id: template.id,
+        title: template.title,
+        subtitle,
+        description: template.description ?? 'Workout template',
+        icon,
+        exercises: template.exercises.map((exercise) => ({
+          id: exercise.id,
+          exerciseId: exercise.exerciseId,
+          name: exercise.name,
+          bodyParts: exercise.bodyParts,
+          sets: exercise.sets ?? 4,
+          reps: exercise.reps ?? '8-12',
+          movementPattern: exercise.movementPattern ?? undefined,
+        })),
+        difficulty,
+        estimatedTime,
+        totalSets,
+        featured,
+        goalTags: template.goalTags,
+        isPublic: template.isPublic,
+      };
+    });
+  }, [remoteTemplates]);
+
+  const availableTemplateTags = useMemo(() => {
+    const tags = new Set<string>();
+    templates.forEach((template) => {
+      template.goalTags.forEach((tag) => tags.add(tag));
+    });
+    return ['all', ...Array.from(tags).sort()];
+  }, [templates]);
+
+  useEffect(() => {
+    if (templateTagFilter === 'all') return;
+    if (availableTemplateTags.includes(templateTagFilter)) return;
+    setTemplateTagFilter('all');
+  }, [availableTemplateTags, templateTagFilter]);
+
+  // Filter templates by tag
+  const filteredTemplates = useMemo(() => {
+    if (templateTagFilter === 'all') return templates;
+    return templates.filter((t) => t.goalTags.includes(templateTagFilter));
+  }, [templateTagFilter, templates]);
+
+  // Featured templates
+  const featuredTemplates = useMemo(
+    () => filteredTemplates.filter((t) => t.featured),
+    [filteredTemplates]
+  );
 
   useEffect(() => {
     if (!lastAddedTemplate) return;
@@ -521,24 +585,32 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }).start();
   }, [lastAddedTemplate, selectedDate, templateBannerAnim]);
 
-  // When template changes, default-select all its exercises
   useEffect(() => {
-    if (!activeTemplate) {
-      setSelectedTemplateExerciseIndexes({});
-      return;
-    }
-    const next: Record<string, boolean> = {};
-    activeTemplate.exercises.forEach((_, idx) => {
-      next[String(idx)] = true;
-    });
-    setSelectedTemplateExerciseIndexes(next);
-  }, [activeTemplate]);
+    setTemplateExercisesAdded(new Set());
+  }, [selectedDate]);
 
-  const displayExercises = selectedSession?.exercises ?? EMPTY_EXERCISES;
-  const selectedTemplateCount = useMemo(
-    () => Object.values(selectedTemplateExerciseIndexes).filter(Boolean).length,
-    [selectedTemplateExerciseIndexes]
-  );
+  const plannedExercisesForSelectedDate = useMemo(() => {
+    if (selectedSession?.exercises?.length || !selectedPlanDay?.workout?.exercises?.length) {
+      return EMPTY_EXERCISES;
+    }
+    return selectedPlanDay.workout.exercises.map((exercise) => ({
+      id: exercise.id,
+      exerciseId: exercise.exerciseId,
+      name: exercise.name,
+      bodyParts: exercise.bodyParts,
+      movementPattern: exercise.movementPattern,
+      sets: exercise.sets ?? 4,
+      reps: exercise.reps ?? '8-12',
+      completed: false,
+      displayOrder: exercise.displayOrder,
+      notes: exercise.notes,
+    }));
+  }, [selectedPlanDay, selectedSession]);
+
+  const displayExercises =
+    selectedSession?.exercises?.length
+      ? selectedSession.exercises
+      : plannedExercisesForSelectedDate ?? EMPTY_EXERCISES;
   
   const getExerciseKey = (exercise: WorkoutSessionEntry['exercises'][number]) => {
     if (exercise.id) return exercise.id;
@@ -565,77 +637,60 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return templateCardScales.current.get(templateId)!;
   }, []);
 
-  // 🎨 Handle template modal open
-  const handleTemplatePress = useCallback(
-    (template: WorkoutTemplate) => {
-      const scale = getTemplateCardScale(template.id);
+  // 🎨 Open template details modal
+  const handleOpenTemplateModal = useCallback((template: WorkoutTemplate) => {
+    templateModalSlideAnim.setValue(300);
+    setSelectedTemplateModal(template);
+  }, [templateModalSlideAnim]);
 
-      // Haptic-style card animation
-      Animated.sequence([
-        Animated.timing(scale, {
-          toValue: 0.98,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-        Animated.spring(scale, {
-          toValue: 1,
-          ...ANIMATION_CONFIG.bounce,
-          useNativeDriver: true,
-        }),
-      ]).start();
-      setActiveTemplate(template);
-    },
-    [getTemplateCardScale]
-  );
 
   /**
-   * 🎨 Apply a template to today's workout plan.
-   *
-   * - 'replace': use the template as the entire workout for the selected date
-   * - 'append': keep existing exercises and add the template on top
-   *
-   * This uses `onSaveCustomSession` so we always work at the "plan" level:
-   * existing history is preserved; we only rewrite the session for the selected day.
+   * 🎨 Apply selected template exercises to today's plan
    */
-  const handleApplyTemplateToToday = useCallback(
-    async (template: WorkoutTemplate, mode: 'replace' | 'append') => {
-      if (!onSaveCustomSession) {
-        return;
-      }
-
-      const selectedTemplateExercises = template.exercises.filter((_, index) =>
-        selectedTemplateExerciseIndexes[String(index)]
-      );
-
-      if (!selectedTemplateExercises.length) {
+  const handleApplyTemplateExercises = useCallback(
+    async (template: WorkoutTemplate, exercises: TemplateExercise[]) => {
+      if (!onSaveCustomSession) return;
+      if (!exercises.length) return;
+      const missing = exercises.filter((ex) => !ex.exerciseId);
+      if (missing.length) {
+        console.error('Template exercises missing exerciseId:', missing.map((ex) => ex.name));
+        Alert.alert('Missing exercise IDs', 'One or more template exercises are missing IDs.');
         return;
       }
 
       const baseExercises: WorkoutSessionExercise[] =
-        mode === 'append' && selectedSession
-          ? selectedSession.exercises ?? []
-          : [];
-
+        plannedExercisesForSelectedDate ?? selectedSession?.exercises ?? [];
       const startOrder = baseExercises.length;
-      const templateExercises: WorkoutSessionExercise[] = selectedTemplateExercises.map(
-        (ex, index) => ({
-          name: ex.name,
-          bodyParts: ex.bodyParts as MuscleGroup[],
-          sets: ex.sets,
-          reps: ex.reps,
-          movementPattern: ex.movementPattern,
-          displayOrder: startOrder + index + 1,
-          completed: false,
-        })
-      );
+
+      const templateExercises: WorkoutSessionExercise[] = exercises.map((ex, index) => ({
+        exerciseId: ex.exerciseId,
+        name: ex.name,
+        bodyParts: ex.bodyParts as MuscleGroup[],
+        sets: ex.sets,
+        reps: ex.reps,
+        movementPattern: ex.movementPattern,
+        displayOrder: startOrder + index + 1,
+        completed: false,
+      }));
 
       const nextExercises = [...baseExercises, ...templateExercises];
+      try {
+        await onSaveCustomSession(selectedDate, nextExercises);
+      } catch (error) {
+        console.error('Failed to save template exercises', error);
+        Alert.alert('Add failed', 'Could not save template exercises. Check console for details.');
+        return;
+      }
 
-      await onSaveCustomSession(selectedDate, nextExercises);
+      setTemplateExercisesAdded((prev) => {
+        const next = new Set(prev);
+        exercises.forEach((ex) => {
+          next.add(`${template.id}-${ex.exerciseId}`);
+        });
+        return next;
+      });
 
       setLastAddedTemplate(template);
-      setActiveTemplate(null);
-
       Animated.spring(templateBannerAnim, {
         toValue: 1,
         ...ANIMATION_CONFIG.spring,
@@ -644,8 +699,42 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
       setDashboardTab('plans');
     },
-    [onSaveCustomSession, selectedSession, selectedDate, selectedTemplateExerciseIndexes, templateBannerAnim]
+    [onSaveCustomSession, plannedExercisesForSelectedDate, selectedSession, selectedDate, templateBannerAnim]
   );
+
+  const toggleTemplateExerciseSelection = useCallback(
+    (exerciseKey: string, disabled?: boolean) => {
+      if (disabled) return;
+      setSelectedTemplateExerciseKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(exerciseKey)) {
+          next.delete(exerciseKey);
+        } else {
+          next.add(exerciseKey);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (selectedTemplateModal) {
+      const nextKeys = new Set(
+        selectedTemplateModal.exercises.map((ex) => `${selectedTemplateModal.id}-${ex.exerciseId}`)
+      );
+      setSelectedTemplateExerciseKeys(nextKeys);
+      Animated.spring(templateModalSlideAnim, {
+        toValue: 0,
+        tension: 60,
+        friction: 8,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      templateModalSlideAnim.setValue(300);
+      setSelectedTemplateExerciseKeys(new Set());
+    }
+  }, [selectedTemplateModal, templateModalSlideAnim]);
 
   useEffect(() => {
     setLocalCompletionOverrides({});
@@ -827,6 +916,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (!calendarRange) return {};
     const marks: Record<string, { customStyles: { container: object; text: object } }> = {};
     const sessionDates = new Set(resolvedSessions.map((session) => session.date).filter(Boolean));
+    const plannedDates = new Set(
+      resolvedPlannedWorkouts
+        .filter((day) => day.workout && day.workout.exercises.length > 0)
+        .map((day) => day.date)
+    );
     phaseDates.forEach((dateKey) => {
       const serverComplete = (completedSessionsByDate.get(dateKey) || 0) > 0;
       const isComplete =
@@ -834,7 +928,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           ? selectedSessionComplete
           : serverComplete;
       const isToday = dateKey === todayStr;
-      const hasPlannedWorkout = sessionDates.has(dateKey);
+      const hasPlannedWorkout = sessionDates.has(dateKey) || plannedDates.has(dateKey);
       marks[dateKey] = {
         customStyles: getCalendarDateStyles(isComplete, isToday, hasPlannedWorkout),
       };
@@ -845,6 +939,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     completedSessionsByDate,
     displayExercises.length,
     phaseDates,
+    resolvedPlannedWorkouts,
     resolvedSessions,
     selectedDate,
     selectedSessionComplete,
@@ -924,9 +1019,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       };
     }
     if (hasActivePlan) {
+      if (!displayExercises.length) {
+        return {
+          ...baseConfig,
+          label: 'Add Workout',
+          icon: '+',
+          onPress: () => setDashboardTab('templates'),
+        };
+      }
       return {
         ...baseConfig,
-        label: 'Workout',
+        label: 'Add Exercise',
         icon: '+',
         onPress: () => setExercisePickerNonce((prev) => prev + 1),
       };
@@ -936,7 +1039,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     shouldCreatePlan,
     onStartPhase,
     hasActivePlan,
-    sortedWorkoutCards,
+    displayExercises.length,
   ]);
 
   useEffect(() => {
@@ -1224,50 +1327,66 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     </View>
   );
 
-  // 🎨 Render template card
+  // 🎨 Render template card - SUBTLE VERSION
   const renderTemplateCard = (template: WorkoutTemplate) => {
     const scale = getTemplateCardScale(template.id);
+    const difficultyColors = DIFFICULTY_COLORS[template.difficulty];
 
     return (
-      <Animated.View key={template.id} style={{ transform: [{ scale }], marginBottom: 16 }}>
+      <Animated.View key={template.id} style={{ transform: [{ scale }], marginBottom: 12 }}>
         <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => handleTemplatePress(template)}
+          activeOpacity={0.7}
+          onPress={() => handleOpenTemplateModal(template)}
         >
-          <LinearGradient
-            colors={template.gradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.templateCard}
-          >
+          <View style={styles.templateCard}>
+            {/* Header */}
             <View style={styles.templateHeader}>
               <View style={styles.templateIconBadge}>
                 <Text style={styles.templateIcon}>{template.icon}</Text>
               </View>
               <View style={styles.templateHeaderText}>
                 <Text style={styles.templateTitle}>{template.title}</Text>
-                <Text style={styles.templateMeta}>{template.meta}</Text>
+                <Text style={styles.templateSubtitle}>{template.subtitle}</Text>
               </View>
-              <View style={styles.templateChevron}>
-                <Text style={styles.templateChevronText}>+</Text>
+              <View style={[styles.difficultyBadge, { backgroundColor: difficultyColors.bg }]}>
+                <Text style={[styles.difficultyBadgeText, { color: difficultyColors.text }]}>
+                  {template.difficulty.charAt(0).toUpperCase() + template.difficulty.slice(1)}
+                </Text>
               </View>
             </View>
-            
+
+            {/* Description */}
             <Text style={styles.templateDescription}>{template.description}</Text>
-            
-            <View style={styles.templateFooter}>
-              <View style={styles.templateBadge}>
-                <Text style={styles.templateBadgeText}>
-                  {template.exercises.length} exercises
-                </Text>
+
+            {/* Stats Row */}
+            <View style={styles.templateStatsRow}>
+              <View style={styles.templateStat}>
+                <Text style={styles.templateStatValue}>{template.exercises.length}</Text>
+                <Text style={styles.templateStatLabel}>exercises</Text>
               </View>
-              <View style={styles.templateBadge}>
-                <Text style={styles.templateBadgeText}>
-                  {template.difficulty}
-                </Text>
+              <View style={styles.templateStatDivider} />
+              <View style={styles.templateStat}>
+                <Text style={styles.templateStatValue}>{template.totalSets}</Text>
+                <Text style={styles.templateStatLabel}>sets</Text>
+              </View>
+              <View style={styles.templateStatDivider} />
+              <View style={styles.templateStat}>
+                <Text style={styles.templateStatValue}>{template.estimatedTime}</Text>
+                <Text style={styles.templateStatLabel}>min</Text>
               </View>
             </View>
-          </LinearGradient>
+
+            {/* Quick Add Button */}
+            <TouchableOpacity
+              style={styles.quickAddButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleApplyTemplateExercises(template, template.exercises);
+              }}
+            >
+              <Text style={styles.quickAddButtonText}>+ Add All to Today</Text>
+            </TouchableOpacity>
+          </View>
         </TouchableOpacity>
       </Animated.View>
     );
@@ -1283,6 +1402,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       const scaleAnim = getExerciseCardAnimation(cardKey);
       const completedSets = workoutSetProgress[exerciseKey]?.completedSets ?? 0;
       const setProgress = targetSets > 0 ? (completedSets / targetSets) * 100 : 0;
+
+      // Check if this exercise came from a template
+      const templateMatchKey = exercise.exerciseId ? exercise.exerciseId : exercise.name;
+      const isFromTemplate = Array.from(templateExercisesAdded).some((key) =>
+        key.endsWith(`-${templateMatchKey}`)
+      );
 
       // Get primary muscle color
       const primaryMuscle = exercise.bodyParts[0]?.toLowerCase() || 'core';
@@ -1312,8 +1437,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 styles.exerciseCard,
                 !canLogWorkouts && styles.exerciseCardDisabled,
                 isMarked && styles.exerciseCardCompleted,
+                isFromTemplate && styles.exerciseCardFromTemplate,
               ]}
             >
+              {isFromTemplate && (
+                <View style={styles.templateBadge}>
+                  <Text style={styles.templateBadgeText}>📋 Template</Text>
+                </View>
+              )}
               <View style={styles.exerciseCardRow}>
                 {/* Left Side: Progress Ring + Checkbox */}
                 <View style={styles.exerciseLeftSection}>
@@ -1467,8 +1598,72 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
         {dashboardTab === 'templates' ? (
           <View style={styles.templateList}>
-        
-            {TEMPLATE_LIBRARY.map(renderTemplateCard)}
+            {templatesLoading && (
+              <Text style={styles.templateLoadingText}>Loading templates…</Text>
+            )}
+
+            {!templatesLoading && templatesError && (
+              <Text style={styles.templateLoadingText}>Failed to load templates.</Text>
+            )}
+
+            {/* Featured Section */}
+            {!templatesLoading && featuredTemplates.length > 0 && (
+              <>
+                <View style={styles.templateSectionHeader}>
+                  <Text style={styles.templateSectionTitle}>⭐ Featured</Text>
+                </View>
+                {featuredTemplates.map(renderTemplateCard)}
+              </>
+            )}
+
+            {!templatesLoading && availableTemplateTags.length > 1 && (
+              <View style={styles.templateFilterRow}>
+                {availableTemplateTags.map((tag) => (
+                  <TouchableOpacity
+                    key={tag}
+                    style={[
+                      styles.templateFilterButton,
+                      templateTagFilter === tag && styles.templateFilterButtonActive,
+                    ]}
+                    onPress={() => setTemplateTagFilter(tag)}
+                  >
+                    <Text
+                      style={[
+                        styles.templateFilterText,
+                        templateTagFilter === tag && styles.templateFilterTextActive,
+                      ]}
+                    >
+                      {tag === 'all'
+                        ? 'All'
+                        : tag.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* All Templates */}
+            {!templatesLoading && filteredTemplates.filter((t) => !t.featured).length > 0 && (
+              <>
+                <View style={styles.templateSectionHeader}>
+                  <Text style={styles.templateSectionTitle}>All Templates</Text>
+                  <Text style={styles.templateSectionCount}>
+                    {filteredTemplates.filter((t) => !t.featured).length} templates
+                  </Text>
+                </View>
+                {filteredTemplates.filter((t) => !t.featured).map(renderTemplateCard)}
+              </>
+            )}
+
+            {!templatesLoading && filteredTemplates.length === 0 && (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyEmoji}>📦</Text>
+                <Text style={styles.emptyTitle}>No templates yet</Text>
+                <Text style={styles.emptyText}>
+                  Add templates in the admin console to populate this library.
+                </Text>
+              </View>
+            )}
           </View>
         ) : null}
 
@@ -1508,12 +1703,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   },
                 ]}
               >
-                <LinearGradient
-                  colors={lastAddedTemplate.gradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.templateSourceGradient}
-                >
+                <View style={styles.templateSourceCard}>
                   <View style={styles.templateSourceContent}>
                     <View style={styles.templateSourceIconSmall}>
                       <Text style={styles.templateSourceIconText}>{lastAddedTemplate.icon}</Text>
@@ -1535,7 +1725,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                       <Text style={styles.templateSourceCloseText}>×</Text>
                     </TouchableOpacity>
                   </View>
-                </LinearGradient>
+                </View>
               </Animated.View>
             )}
 
@@ -1543,8 +1733,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               user={user}
               phase={phase}
               workoutSessions={workoutSessions}
+              plannedWorkouts={plannedWorkouts}
               onSaveCustomSession={onSaveCustomSession}
-              onDeleteSession={onDeleteSession}
               onAddExercise={onAddExercise}
               onDeleteExercise={onDeleteExercise}
               embedded
@@ -1557,8 +1747,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <Text style={styles.emptyEmoji}>📭</Text>
             <Text style={styles.emptyTitle}>No workout scheduled</Text>
             <Text style={styles.emptyText}>
-              Your workout for today will appear here once scheduled.
+              Add a template or build a custom workout to get started.
             </Text>
+            <TouchableOpacity
+              style={styles.templateCtaButton}
+              onPress={() => setDashboardTab('templates')}
+            >
+              <Text style={styles.templateCtaText}>Browse Templates</Text>
+            </TouchableOpacity>
           </View>
         ) : dashboardTab === 'plans' ? (
           <View style={styles.verticalList}>
@@ -1584,17 +1780,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const handleSelectDate = useCallback(
     (dateKey: string) => {
       setSelectedDate(dateKey);
-      if (!resolvedSessions.find((session) => session.date === dateKey)) {
-        if (_onCreateSession) {
-          _onCreateSession(dateKey);
-        }
-      }
       if (calendarExpanded) {
         runLayoutAnimation();
         setCalendarExpanded(false);
       }
     },
-    [calendarExpanded, resolvedSessions, _onCreateSession]
+    [calendarExpanded]
   );
 
   const expandedCalendarHeight = Math.min(
@@ -1766,172 +1957,146 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
           {renderWorkoutsSection()}
         </ScrollView>
-        
-        {/* 🎨 Template Modal */}
-        <Modal
-          visible={!!activeTemplate}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setActiveTemplate(null)}
-        >
-          <View style={styles.templateModalOverlay}>
-            <TouchableOpacity
-              style={styles.templateModalBackdrop}
-              activeOpacity={1}
-              onPress={() => setActiveTemplate(null)}
-            />
-            {activeTemplate && (
-              <View style={styles.templateModalCard}>
-                <View style={styles.templateModalHeader}>
-                  <View style={styles.templateIconBadge}>
-                    <Text style={styles.templateIcon}>{activeTemplate.icon}</Text>
+      </LinearGradient>
+
+      {/* 🎨 Template Details Modal */}
+      <Modal
+        transparent
+        animationType="none"
+        visible={selectedTemplateModal !== null}
+        onRequestClose={() => setSelectedTemplateModal(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            style={styles.modalBackdropPress}
+            onPress={() => setSelectedTemplateModal(null)}
+          />
+          <Animated.View
+            style={[
+              styles.templateModalSheet,
+              {
+                transform: [{ translateY: templateModalSlideAnim }],
+              },
+            ]}
+          >
+            <View style={styles.sheetHandle} />
+            {selectedTemplateModal && (
+              <>
+                {/* Compact Header */}
+                <View style={styles.templateModalHeaderCompact}>
+                  <View style={styles.templateModalIconSmall}>
+                    <Text style={styles.templateModalIconSmallText}>{selectedTemplateModal.icon}</Text>
                   </View>
-                  <View style={styles.templateHeaderText}>
-                    <Text style={styles.templateTitle}>{activeTemplate.title}</Text>
-                    <Text style={styles.templateMeta}>{activeTemplate.meta}</Text>
+                  <View style={styles.templateModalHeaderTextCompact}>
+                    <Text style={styles.templateModalTitleCompact}>{selectedTemplateModal.title}</Text>
+                    <View style={styles.templateModalMetaRow}>
+                      <View style={[
+                        styles.difficultyBadgeSmall,
+                        { backgroundColor: DIFFICULTY_COLORS[selectedTemplateModal.difficulty].bg }
+                      ]}>
+                        <Text style={[
+                          styles.difficultyBadgeSmallText,
+                          { color: DIFFICULTY_COLORS[selectedTemplateModal.difficulty].text }
+                        ]}>
+                          {selectedTemplateModal.difficulty.charAt(0).toUpperCase() + selectedTemplateModal.difficulty.slice(1)}
+                        </Text>
+                      </View>
+                      <Text style={styles.templateModalQuickStats}>
+                        {selectedTemplateModal.exercises.length} exercises • {selectedTemplateModal.totalSets} sets • {selectedTemplateModal.estimatedTime} min
+                      </Text>
+                    </View>
                   </View>
                   <TouchableOpacity
-                    style={styles.templateModalClose}
-                    onPress={() => setActiveTemplate(null)}
+                    style={styles.modalCloseButtonCompact}
+                    onPress={() => setSelectedTemplateModal(null)}
                   >
-                    <Text style={styles.templateModalCloseText}>×</Text>
+                    <Text style={styles.modalCloseButtonText}>×</Text>
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.templateDescription}>{activeTemplate.description}</Text>
-
-                <View style={styles.templateSelectionRow}>
-                  <Text style={styles.templateSelectionCount}>
-                    {selectedTemplateCount}/{activeTemplate.exercises.length} selected
-                  </Text>
-                  <View style={styles.templateSelectionActions}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const next: Record<string, boolean> = {};
-                        activeTemplate.exercises.forEach((_, idx) => {
-                          next[String(idx)] = true;
-                        });
-                        setSelectedTemplateExerciseIndexes(next);
-                      }}
-                    >
-                      <Text style={styles.templateSelectionActionText}>Select all</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setSelectedTemplateExerciseIndexes({})}
-                    >
-                      <Text style={styles.templateSelectionActionText}>Clear</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <ScrollView
-                  style={styles.templateModalScroll}
-                  contentContainerStyle={styles.templateExercisesList}
+                {/* Exercise List - FIRST! */}
+                <ScrollView 
+                  style={styles.templateModalExerciseListTop} 
                   showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.templateModalExerciseListContent}
                 >
-                  {activeTemplate.exercises.map((ex, idx) => {
-                    const primaryMuscle = ex.bodyParts[0]?.toLowerCase() || 'core';
-                    const muscleColor = MUSCLE_COLORS[primaryMuscle] || MUSCLE_COLORS.core;
-                    const isSelected = !!selectedTemplateExerciseIndexes[String(idx)];
-                    
+                  {selectedTemplateModal.exercises.map((ex, idx) => {
+                    const muscleKey = ex.bodyParts[0]?.toLowerCase() || 'core';
+                    const colors = MUSCLE_COLORS[muscleKey] || MUSCLE_COLORS.core;
+                    const exerciseKey = `${selectedTemplateModal.id}-${ex.exerciseId}`;
+                    const wasAdded = templateExercisesAdded.has(exerciseKey);
+                    const isSelected = selectedTemplateExerciseKeys.has(exerciseKey);
+
                     return (
                       <TouchableOpacity
                         key={idx}
                         style={[
-                          styles.templateExercisePreview,
-                          isSelected && styles.templateExercisePreviewSelected,
+                          styles.templateModalExerciseRow,
+                          (isSelected || wasAdded) && styles.templateModalExerciseRowSelected,
                         ]}
-                        activeOpacity={0.8}
-                        onPress={() =>
-                          setSelectedTemplateExerciseIndexes((prev) => ({
-                            ...prev,
-                            [String(idx)]: !prev[String(idx)],
-                          }))
-                        }
+                        activeOpacity={0.85}
+                        onPress={() => toggleTemplateExerciseSelection(exerciseKey, wasAdded)}
+                        disabled={wasAdded}
                       >
-                        <LinearGradient
-                          colors={muscleColor.gradient}
-                          style={styles.templateExerciseIcon}
-                        >
-                          <Text style={styles.templateExerciseNumber}>{idx + 1}</Text>
-                        </LinearGradient>
-                        <View style={styles.templateExerciseInfo}>
-                          <Text style={styles.templateExerciseName}>{ex.name}</Text>
-                          <View style={styles.templateExerciseMuscles}>
-                            {ex.bodyParts.slice(0, 2).map((muscle, i) => {
-                              const colors =
-                                MUSCLE_COLORS[muscle.toLowerCase()] || MUSCLE_COLORS.core;
-                              return (
-                                <View
-                                  key={i}
-                                  style={[
-                                    styles.templateMuscleTag,
-                                    { backgroundColor: colors.bg, borderColor: colors.border },
-                                  ]}
-                                >
-                                  <Text style={[styles.templateMuscleTagText, { color: colors.text }]}>
-                                    {getBodyPartLabel(muscle)}
-                                  </Text>
-                                </View>
-                              );
-                            })}
-                          </View>
+                        <View style={[styles.templateModalExerciseDot, { backgroundColor: colors.text }]} />
+                        <View style={styles.templateModalExerciseInfo}>
+                          <Text style={styles.templateModalExerciseName}>{ex.name}</Text>
+                          <Text style={styles.templateModalExerciseMeta}>
+                            {ex.sets}×{ex.reps} • {ex.bodyParts.slice(0, 2).map(getBodyPartLabel).join(', ')}
+                          </Text>
                         </View>
-                        <Text style={styles.templateExerciseSets}>
-                          {ex.sets}×{ex.reps}
-                        </Text>
+                        <View
+                          style={[
+                            styles.templateModalExerciseCheck,
+                            (isSelected || wasAdded) && styles.templateModalExerciseCheckActive,
+                          ]}
+                        >
+                          {(isSelected || wasAdded) && (
+                            <Text style={styles.templateModalExerciseCheckText}>✓</Text>
+                          )}
+                        </View>
                       </TouchableOpacity>
                     );
                   })}
                 </ScrollView>
 
-                {onSaveCustomSession && (
-                  <View style={styles.templateActionsRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.addToTodayButton,
-                        styles.addToTodayButtonSecondary,
-                        styles.templateActionHalf,
-                      ]}
-                      onPress={() => setActiveTemplate(null)}
-                    >
-                      <View style={styles.addToTodaySecondaryInner}>
-                        <Text style={styles.addToTodaySecondaryText}>Cancel</Text>
-                      </View>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.addToTodayButton, styles.templateActionHalf]}
-                      disabled={selectedTemplateCount === 0}
-                      onPress={() =>
-                        handleApplyTemplateToToday(
-                          activeTemplate,
-                          selectedSession ? 'append' : 'replace'
-                        )
-                      }
-                    >
-                      <LinearGradient
-                        colors={selectedTemplateCount === 0 ? ['#4A4F73', '#3A3F63'] : ['#6C63FF', '#4C3BFF']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.addToTodayGradient}
+                {/* Bottom Actions */}
+                <View style={styles.templateModalFooter}>
+                  {(() => {
+                    const addableExercises = selectedTemplateModal.exercises.filter((ex) => {
+                      const key = `${selectedTemplateModal.id}-${ex.exerciseId}`;
+                      return selectedTemplateExerciseKeys.has(key) && !templateExercisesAdded.has(key);
+                    });
+                    const addableCount = addableExercises.length;
+                    const totalCount = selectedTemplateModal.exercises.length;
+                    const label =
+                      addableCount === 0
+                        ? 'Add (0)'
+                        : addableCount === totalCount
+                          ? `Add (${totalCount} workouts)`
+                          : `Add (${addableCount})`;
+                    return (
+                      <TouchableOpacity
+                        style={[
+                          styles.templateModalAddAllButton,
+                          addableCount === 0 && styles.templateModalAddAllButtonDisabled,
+                        ]}
+                        onPress={async () => {
+                          setSelectedTemplateModal(null);
+                          await handleApplyTemplateExercises(selectedTemplateModal, addableExercises);
+                        }}
+                        disabled={addableCount === 0}
                       >
-                        <Text style={styles.addToTodayButtonText}>
-                          {selectedTemplateCount === 0
-                            ? 'Select exercises first'
-                            : selectedTemplateCount === activeTemplate.exercises.length
-                              ? 'Add (All)'
-                              : `Add (${selectedTemplateCount})`}
-                        </Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
+                        <Text style={styles.templateModalAddAllText}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })()}
+                </View>
+              </>
             )}
-          </View>
-        </Modal>
-      </LinearGradient>
+          </Animated.View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1954,7 +2119,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     paddingHorizontal: 20,
     paddingTop: 60,
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
   headerLeft: {
     flex: 1,
@@ -2013,17 +2178,18 @@ const styles = StyleSheet.create({
   // ========================================
   calendarSection: {
     paddingHorizontal: 20,
-    marginBottom: 10,
+    marginBottom: 16,
   },
   calendarCard: {
     borderRadius: 24,
     padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.25)',
+    backgroundColor: COLORS.card,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.2,
     shadowRadius: 12,
     elevation: 4,
   },
@@ -2176,39 +2342,47 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentScrollContent: {
-    paddingHorizontal: 20,
     paddingTop: 0,
     paddingBottom: 160,
   },
   section: {
     position: 'relative',
+    paddingHorizontal: 20,
   },
   progressMainColumn: {
     flex: 1,
-    gap: 8,
+    gap: 6,
   },
 
   // ========================================
   // TABS
   // ========================================
   tabsStickyWrapper: {
-    paddingBottom: 2,
+    paddingBottom: 16,
+    paddingTop: 4,
+    paddingHorizontal: 20,
   },
   dashboardTabRow: {
     flexDirection: 'row',
     gap: 14,
     justifyContent: 'space-between',
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: COLORS.borderSubtle,
   },
   dashboardTabButton: {
     flex: 1,
-    paddingVertical: 6,
+    paddingVertical: 10,
     paddingHorizontal: 2,
     alignItems: 'center',
     backgroundColor: 'transparent',
+    borderRadius: 12,
   },
   dashboardTabButtonActive: {
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.accent,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderWidth: 0,
   },
   dashboardTabText: {
     fontSize: 13,
@@ -2222,36 +2396,22 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
-  // SECTION TITLES
-  // ========================================
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: COLORS.textPrimary,
-    marginBottom: 8,
-    letterSpacing: -0.3,
-  },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: COLORS.textMuted,
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-
-  // ========================================
-  // 🎨 TEMPLATE SOURCE BANNER (NEW!)
+  // 🎨 TEMPLATE SOURCE BANNER
   // ========================================
   templateSourceBanner: {
     marginBottom: 16,
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
   },
-  templateSourceGradient: {
+  templateSourceCard: {
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+    backgroundColor: COLORS.card,
     padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 2,
   },
   templateSourceContent: {
     flexDirection: 'row',
@@ -2262,11 +2422,11 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   templateSourceIconText: {
     fontSize: 20,
@@ -2275,311 +2435,493 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   templateSourceLabel: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontWeight: '600',
+    fontSize: 10,
+    color: COLORS.textMuted,
+    fontWeight: '700',
     marginBottom: 2,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   templateSourceTitle: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '800',
+    fontSize: 15,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
     letterSpacing: -0.2,
   },
   templateSourceClose: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   templateSourceCloseText: {
     fontSize: 20,
-    color: '#FFFFFF',
+    color: COLORS.textSecondary,
     fontWeight: '700',
     marginTop: -2,
   },
 
   // ========================================
-  // TEMPLATES
+  // 🎨 TEMPLATES - SUBTLE VERSION
   // ========================================
   templateList: {
-    marginTop: 10,
-    gap: 4,
+    marginTop: 0,
+    gap: 0,
+  },
+  templateSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+    marginTop: 16,
+    paddingHorizontal: 4,
+  },
+  templateSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    letterSpacing: -0.2,
+  },
+  templateSectionCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+  },
+  templateFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  templateFilterButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: COLORS.card,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+  },
+  templateFilterButtonActive: {
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    borderColor: 'rgba(108, 99, 255, 0.4)',
+  },
+  templateFilterText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  templateFilterTextActive: {
+    color: COLORS.accent,
+  },
+  templateLoadingText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+    marginBottom: 10,
+  },
+  templateCtaButton: {
+    marginTop: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.35)',
+  },
+  templateCtaText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   templateCard: {
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 10,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: COLORS.card,
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
   },
   templateHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   templateIconBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   templateIcon: {
-    fontSize: 28,
+    fontSize: 22,
   },
   templateHeaderText: {
     flex: 1,
   },
   templateTitle: {
-    fontSize: 20,
+    fontSize: 16,
     color: COLORS.textPrimary,
-    fontWeight: '800',
-    marginBottom: 4,
-    letterSpacing: -0.3,
+    fontWeight: '700',
+    marginBottom: 2,
+    letterSpacing: -0.2,
   },
-  templateMeta: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.8)',
+  templateSubtitle: {
+    fontSize: 12,
+    color: COLORS.textMuted,
     fontWeight: '600',
   },
-  templateChevron: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+  difficultyBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
   },
-  templateChevronText: {
-    fontSize: 18,
-    color: COLORS.textPrimary,
+  difficultyBadgeText: {
+    fontSize: 10,
     fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   templateDescription: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.85)',
-    marginBottom: 18,
-    lineHeight: 21,
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 14,
+    lineHeight: 19,
   },
-  templateFooter: {
+  templateStatsRow: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderSubtle,
   },
-  templateBadge: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  templateBadgeText: {
-    fontSize: 12,
-    color: COLORS.textPrimary,
-    fontWeight: '700',
-    textTransform: 'capitalize',
-  },
-
-  // ========================================
-  // TEMPLATE MODAL
-  // ========================================
-  templateModalOverlay: {
+  templateStat: {
     flex: 1,
-    backgroundColor: 'rgba(8, 10, 24, 0.7)',
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
   },
-  templateModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  templateModalCard: {
-    width: '100%',
-    maxHeight: '80%',
-    borderRadius: 22,
-    padding: 20,
-    backgroundColor: 'rgba(18, 22, 48, 0.95)',
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.35)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.35,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  templateModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  templateModalClose: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  templateModalCloseText: {
-    fontSize: 20,
+  templateStatValue: {
+    fontSize: 16,
     fontWeight: '800',
     color: COLORS.textPrimary,
-    marginTop: -1,
-  },
-  templateSelectionRow: {
-    marginTop: 6,
     marginBottom: 2,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
-  templateSelectionCount: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
+  templateStatLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  templateSelectionActions: {
-    flexDirection: 'row',
-    gap: 14,
+  templateStatDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: COLORS.borderSubtle,
   },
-  templateSelectionActionText: {
-    color: COLORS.accent,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  templateModalScroll: {
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  templateExercisesList: {
-    paddingVertical: 8,
-  },
-  templateExercisePreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  quickAddButton: {
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
-    gap: 12,
-  },
-  templateExercisePreviewSelected: {
-    backgroundColor: 'rgba(108, 99, 255, 0.14)',
+    paddingHorizontal: 16,
     borderRadius: 12,
-    paddingHorizontal: 8,
-  },
-  templateExerciseIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.4)',
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
+    marginBottom: 6,
+    shadowColor: COLORS.accent,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.15,
     shadowRadius: 4,
+    elevation: 2,
   },
-  templateExerciseNumber: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFFFFF',
+  quickAddButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.accent,
+    letterSpacing: 0.2,
+  },
+  templateExerciseList: {
+    overflow: 'hidden',
+  },
+  templateExerciseDivider: {
+    height: 1,
+    backgroundColor: COLORS.borderSubtle,
+    marginVertical: 12,
+  },
+  templateExerciseScroll: {
+    maxHeight: 240,
+  },
+  templateExerciseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 10,
+  },
+  templateExerciseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   templateExerciseInfo: {
     flex: 1,
   },
   templateExerciseName: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
     color: COLORS.textPrimary,
-    marginBottom: 6,
+    marginBottom: 3,
   },
-  templateExerciseMuscles: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  templateMuscleTag: {
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  templateMuscleTagText: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'capitalize',
-  },
-  templateExerciseSets: {
-    fontSize: 13,
-    fontWeight: '700',
+  templateExerciseMeta: {
+    fontSize: 11,
+    fontWeight: '600',
     color: COLORS.textMuted,
   },
-  addToTodayButton: {
-    marginTop: 16,
-    borderRadius: 14,
-    overflow: 'hidden',
-    shadowColor: '#6C63FF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-  },
-  addToTodayGradient: {
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  addToTodayButtonText: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-  },
-
-  templateActionsRow: {
-    marginTop: 16,
-    flexDirection: 'row',
-    gap: 12,
-  },
-  templateActionHalf: {
-    flex: 1,
-    marginTop: 0,
-  },
-  addToTodayButtonSecondary: {
-    shadowOpacity: 0,
-    shadowRadius: 0,
-  },
-  addToTodayButtonSecondaryDisabled: {
-    opacity: 0.65,
-  },
-  addToTodaySecondaryInner: {
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
+  templateExerciseAddButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
-    backgroundColor: 'rgba(10,14,39,0.9)',
+    borderColor: 'rgba(108, 99, 255, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addToTodaySecondaryText: {
+  templateExerciseAddButtonAdded: {
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    borderColor: 'rgba(0, 245, 160, 0.3)',
+  },
+  templateExerciseAddText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.accent,
+  },
+  templateExerciseAddTextAdded: {
+    color: COLORS.success,
+    fontSize: 14,
+  },
+
+  // ========================================
+  // 🎨 TEMPLATE MODAL - COMPACT LAYOUT
+  // ========================================
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'flex-end',
+  },
+  modalBackdropPress: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  templateModalSheet: {
+    backgroundColor: '#0E1229',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 12,
+    paddingBottom: 20,
+    minHeight: '80%',
+    maxHeight: '90%',
+    borderTopWidth: 2,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    elevation: 20,
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 2,
+    marginBottom: 16,
+  },
+  
+  // Compact Header
+  templateModalHeaderCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 8,
+  },
+  templateModalIconSmall: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  templateModalIconSmallText: {
+    fontSize: 20,
+  },
+  templateModalHeaderTextCompact: {
+    flex: 1,
+  },
+  templateModalTitleCompact: {
+    fontSize: 17,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+    marginBottom: 4,
+    letterSpacing: -0.3,
+  },
+  templateModalMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  difficultyBadgeSmall: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  difficultyBadgeSmallText: {
+    fontSize: 9,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  templateModalQuickStats: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  modalCloseButtonCompact: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseButtonText: {
+    fontSize: 24,
+    color: COLORS.textSecondary,
+    fontWeight: '300',
+    marginTop: -2,
+  },
+  
+  // Exercise List - Takes Most Space
+  templateModalExerciseListTop: {
+    flex: 1,
+    paddingHorizontal: 20,
+  },
+  templateModalExerciseListContent: {
+    paddingBottom: 12,
+  },
+  templateModalExerciseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    gap: 10,
+  },
+  templateModalExerciseRowSelected: {
+    backgroundColor: 'rgba(108, 99, 255, 0.18)',
+    borderColor: 'rgba(108, 99, 255, 0.35)',
+  },
+  templateModalExerciseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  templateModalExerciseInfo: {
+    flex: 1,
+  },
+  templateModalExerciseName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: COLORS.textPrimary,
+    marginBottom: 3,
+    letterSpacing: -0.2,
+  },
+  templateModalExerciseMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+  },
+  templateModalExerciseCheck: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  templateModalExerciseCheckActive: {
+    backgroundColor: 'rgba(0, 245, 160, 0.18)',
+    borderColor: 'rgba(0, 245, 160, 0.5)',
+  },
+  templateModalExerciseCheckText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.success,
+  },
+  
+  // Footer with Add All Button
+  templateModalFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  templateModalAddAllButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    backgroundColor: COLORS.accent,
+    alignItems: 'center',
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  templateModalAddAllButtonDisabled: {
+    backgroundColor: '#4A4F73',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  templateModalAddAllText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    letterSpacing: 0.3,
   },
 
   // ========================================
@@ -2589,9 +2931,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1.5,
     borderColor: 'rgba(0, 245, 160, 0.3)',
-    backgroundColor: 'rgba(0, 245, 160, 0.1)',
+    backgroundColor: 'rgba(0, 245, 160, 0.08)',
     paddingVertical: 14,
     paddingHorizontal: 16,
+    marginBottom: 12,
     shadowColor: '#00F5A0',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.15,
@@ -2612,11 +2955,12 @@ const styles = StyleSheet.create({
   },
   checklistCard: {
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: 'rgba(255, 196, 66, 0.35)',
-    backgroundColor: 'rgba(255, 196, 66, 0.09)',
+    backgroundColor: 'rgba(255, 196, 66, 0.08)',
     paddingVertical: 12,
     paddingHorizontal: 14,
+    marginBottom: 12,
   },
   checklistTitle: {
     fontSize: 13,
@@ -2637,15 +2981,16 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     borderRadius: 24,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: 'rgba(108, 99, 255, 0.25)',
     padding: 36,
     alignItems: 'center',
-    backgroundColor: 'rgba(108, 99, 255, 0.08)',
+    backgroundColor: COLORS.card,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.15,
     shadowRadius: 12,
+    elevation: 3,
   },
   emptyEmoji: {
     fontSize: 56,
@@ -2685,28 +3030,55 @@ const styles = StyleSheet.create({
   },
 
   // ========================================
+  // 🎨 TEMPLATE BADGE (for exercises from templates)
+  // ========================================
+  templateBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.4)',
+    zIndex: 10,
+  },
+  templateBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.accent,
+    letterSpacing: 0.3,
+  },
+
+  // ========================================
   // EXERCISE CARDS
   // ========================================
   verticalList: {
-    marginTop: 6,
-    gap: 12,
+    marginTop: 0,
+    gap: 10,
   },
   exerciseCard: {
     borderRadius: 20,
     padding: 18,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: 'rgba(108, 99, 255, 0.25)',
+    backgroundColor: COLORS.card,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 4,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 5,
   },
   exerciseCardCompleted: {
     borderColor: 'rgba(0, 245, 160, 0.4)',
     shadowColor: '#00F5A0',
     shadowOpacity: 0.2,
+  },
+  exerciseCardFromTemplate: {
+    borderColor: 'rgba(108, 99, 255, 0.4)',
+    borderWidth: 1.5,
   },
   exerciseCardDisabled: {
     opacity: 0.6,

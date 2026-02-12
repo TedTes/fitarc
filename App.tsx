@@ -51,7 +51,7 @@ import {
   createPhaseWithWorkouts,
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
-import { fetchWorkoutSessionEntries } from './src/services/workoutService';
+import { fetchWorkoutSessionEntries, generateWeekWorkouts } from './src/services/workoutService';
 import { supabase } from './src/lib/supabaseClient';
 import { deleteAccount as deleteAccountService } from './src/services/accountService';
 
@@ -366,16 +366,15 @@ function AppContent() {
     addPhotoCheckin,
     startPhase,
     toggleWorkoutExercise,
-    createWorkoutSession,
     clearAllData,
     resetWorkoutData,
     loadWorkoutSessionsFromSupabase,
+    loadPlannedWorkoutsFromSupabase,
     hydrateFromRemote,
     loadMealPlansFromSupabase,
     saveCustomWorkoutSession,
     addWorkoutExercise,
     deleteWorkoutExercise,
-    deleteWorkoutSession,
   } = useAppState();
   
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
@@ -703,6 +702,32 @@ function AppContent() {
       }
       // Meal entries are generated on demand via the generate-meals edge function.
       await loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id);
+      const planned = await loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id);
+      if (!planned || planned.length === 0) {
+        const startDate = new Date(remotePhase.startDate);
+        const totalDays = Math.max(remotePhase.expectedWeeks, 1) * 7;
+        await generateWeekWorkouts(
+          authUser.id,
+          remotePhase.id,
+          state.user.trainingSplit,
+          startDate,
+          totalDays,
+          {
+            eatingMode: state.user.eatingMode,
+            experienceLevel: state.user.experienceLevel,
+          },
+          undefined,
+          {
+            daysPerWeek:
+              tempPlanPreferences?.daysPerWeek ?? state.user.planPreferences?.daysPerWeek,
+            equipmentLevel:
+              tempPlanPreferences?.equipmentLevel ?? state.user.planPreferences?.equipmentLevel,
+            primaryGoal:
+              tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal,
+          }
+        );
+        await loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id);
+      }
       await loadMealPlansFromSupabase(authUser.id, remotePhase.id);
       
       console.log('✅ Sessions loaded successfully');
@@ -816,6 +841,29 @@ function AppContent() {
 
           if (homeData.phase?.id) {
             await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);
+            const planned = await loadPlannedWorkoutsFromSupabase(authUser.id, homeData.phase.id);
+            if ((!planned || planned.length === 0) && remoteProfile) {
+              const startDate = new Date(homeData.phase.startDate);
+              const totalDays = Math.max(homeData.phase.expectedWeeks, 1) * 7;
+              await generateWeekWorkouts(
+                authUser.id,
+                homeData.phase.id,
+                remoteProfile.trainingSplit,
+                startDate,
+                totalDays,
+                {
+                  eatingMode: remoteProfile.eatingMode,
+                  experienceLevel: remoteProfile.experienceLevel,
+                },
+                undefined,
+                {
+                  daysPerWeek: remoteProfile.planPreferences?.daysPerWeek,
+                  equipmentLevel: remoteProfile.planPreferences?.equipmentLevel,
+                  primaryGoal: remoteProfile.planPreferences?.primaryGoal,
+                }
+              );
+              await loadPlannedWorkoutsFromSupabase(authUser.id, homeData.phase.id);
+            }
             await loadMealPlansFromSupabase(authUser.id, homeData.phase.id);
           }
           setOnboardingStep('complete');
@@ -846,6 +894,7 @@ function AppContent() {
     updateUser,
     hydrateFromRemote,
     loadWorkoutSessionsFromSupabase,
+    loadPlannedWorkoutsFromSupabase,
     loadMealPlansFromSupabase,
   ]);
 
@@ -1175,12 +1224,11 @@ function AppContent() {
                   user={state.user}
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
+                  plannedWorkouts={state.plannedWorkouts}
                   onProfilePress={() => setProfileVisible(true)}
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
-                  onCreateSession={createWorkoutSession}
                   onSaveCustomSession={saveCustomWorkoutSession}
-                  onDeleteSession={deleteWorkoutSession}
                   onAddExercise={addWorkoutExercise}
                   onDeleteExercise={deleteWorkoutExercise}
                 />

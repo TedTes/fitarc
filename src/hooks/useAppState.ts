@@ -10,6 +10,7 @@ import {
   WorkoutSessionEntry,
   WorkoutSessionExercise,
   DailyMealPlan,
+  PlanDay,
 } from '../types/domain';
 import {
   sessionToWorkoutLog,
@@ -17,19 +18,22 @@ import {
 import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
 import {
   fetchWorkoutSessionEntries,
-  createWorkoutSession,
+  createSessionFromPlanWorkout,
   deleteWorkoutSessionRemote,
   toggleExerciseAndCheckSession, 
   markAllExercisesComplete,
   ensureSetsForExercises,
-  addExerciseToSession,
-  updateSessionExercises,
-  deleteWorkoutSessionExercise,
-  ensureRollingWeekWorkouts,
 } from '../services/workoutService';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
 import { fetchMealPlansForRange } from '../services/mealService';
+import { supabase } from '../lib/supabaseClient';
+import {
+  fetchPlanWorkoutsForRange,
+  replacePlanExercisesForDate,
+  deletePlanExercise,
+  ensurePlanWorkoutForDate,
+} from '../services/planSnapshotService';
 
 const upsertWorkoutLog = (logs: WorkoutLog[], log: WorkoutLog): WorkoutLog[] => {
   const index = logs.findIndex(
@@ -101,6 +105,7 @@ export const useAppState = () => {
       user?: User | null;
       phase?: PhasePlan | null;
       workoutSessions?: WorkoutSessionEntry[];
+      plannedWorkouts?: PlanDay[];
       mealPlans?: DailyMealPlan[];
     }) => {
       updateState((prev) => {
@@ -118,6 +123,8 @@ export const useAppState = () => {
           user: payload.user !== undefined ? payload.user : prev.user,
           currentPhase: nextPhase,
           workoutSessions: nextSessions,
+          plannedWorkouts:
+            payload.plannedWorkouts !== undefined ? payload.plannedWorkouts : prev.plannedWorkouts,
           workoutLogs: phaseChanged ? [] : prev.workoutLogs,
           strengthSnapshots: phaseChanged ? [] : prev.strengthSnapshots,
           workoutDataVersion: phaseChanged ? nextWorkoutVersion(prev) : prev.workoutDataVersion,
@@ -140,6 +147,7 @@ export const useAppState = () => {
       ...prev,
       currentPhase: phase,
       workoutSessions: [],
+      plannedWorkouts: [],
       workoutLogs: [],
       strengthSnapshots: [],
       workoutDataVersion: nextWorkoutVersion(prev),
@@ -172,45 +180,64 @@ export const useAppState = () => {
       };
     });
   }, [updateState]);
+  const refreshWorkoutSessions = useCallback(
+    async (userId: string, planId?: string) => {
+      const remoteSessions = await fetchWorkoutSessionEntries(
+        userId,
+        planId,
+        getAppTimeZone()
+      );
+      const analytics = buildWorkoutAnalytics(remoteSessions);
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          workoutSessions: remoteSessions,
+          workoutLogs: analytics.workoutLogs,
+          strengthSnapshots: analytics.strengthSnapshots,
+          workoutDataVersion: nextWorkoutVersion(prev),
+        };
+      });
+      return remoteSessions;
+    },
+    []
+  );
+
   const loadWorkoutSessionsFromSupabase = useCallback(
     async (userId: string, planId?: string) => {
       try {
-        const current = stateRef.current;
-        if (planId && current?.currentPhase && current?.user) {
-          try {
-            await ensureRollingWeekWorkouts(
-              userId,
-              planId,
-              current.user.trainingSplit,
-              new Date(),
-              {
-                eatingMode: current.user.eatingMode,
-                experienceLevel: current.user.experienceLevel,
-              }
-            );
-          } catch (err) {
-            console.warn('Failed to ensure rolling workouts:', err);
-          }
-        }
-        const remoteSessions = await fetchWorkoutSessionEntries(
-          userId,
-          planId,
-          getAppTimeZone()
-        );
-        const analytics = buildWorkoutAnalytics(remoteSessions);
+        await refreshWorkoutSessions(userId, planId);
+      } catch (err) {
+        console.error('Failed to load workouts from Supabase:', err);
+        setError('Failed to load workouts from Supabase');
+      }
+    },
+    [refreshWorkoutSessions]
+  );
+
+  const loadPlannedWorkoutsFromSupabase = useCallback(
+    async (userId: string, planId?: string | null) => {
+      if (!planId) return;
+      try {
+        const today = new Date();
+        const start = new Date(today);
+        start.setDate(start.getDate() - 14);
+        const end = new Date(today);
+        end.setDate(end.getDate() + 14);
+        const startKey = formatLocalDateYMD(start);
+        const endKey = formatLocalDateYMD(end);
+        const planned = await fetchPlanWorkoutsForRange(userId, planId, startKey, endKey);
         setState((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
-            workoutSessions: remoteSessions,
-            workoutLogs: analytics.workoutLogs,
-            strengthSnapshots: analytics.strengthSnapshots,
-            workoutDataVersion: nextWorkoutVersion(prev),
+            plannedWorkouts: planned,
           };
         });
+        return planned;
       } catch (err) {
-        console.error('Failed to load workouts from Supabase:', err);
-        setError('Failed to load workouts from Supabase');
+        console.error('Failed to load planned workouts from Supabase:', err);
+        return [];
       }
     },
     []
@@ -251,14 +278,49 @@ export const useAppState = () => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
       
-      const session = current.workoutSessions.find(
+      let session = current.workoutSessions.find(
         (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
       );
       
       if (!session) {
-        console.error('No session found for date:', date);
-        return;
+        const planned = current.plannedWorkouts.find(
+          (day) => day.planId === current.currentPhase!.id && day.date === date
+        );
+        const plannedExercises = planned?.workout?.exercises ?? [];
+        if (!plannedExercises.length) {
+          console.error('No planned workout found for date:', date);
+          return;
+        }
+
+        const exercisesForSession: WorkoutSessionExercise[] = plannedExercises.map((exercise) => ({
+          id: undefined,
+          exerciseId: exercise.exerciseId,
+          name: exercise.name,
+          bodyParts: exercise.bodyParts,
+          movementPattern: exercise.movementPattern,
+          sets: exercise.sets ?? 4,
+          reps: exercise.reps ?? '8-12',
+          completed: false,
+          displayOrder: exercise.displayOrder,
+          notes: exercise.notes,
+        }));
+
+        await createSessionFromPlanWorkout({
+          userId: current.user.id,
+          planId: current.currentPhase.id,
+          date,
+          exercises: exercisesForSession,
+        });
+
+        const refreshed = await refreshWorkoutSessions(
+          current.user.id,
+          current.currentPhase.id
+        );
+        session = refreshed.find(
+          (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+        );
       }
+      if (!session) return;
   
       const exercise = session.exercises.find((ex) => ex.name === exerciseName);
       
@@ -278,12 +340,12 @@ export const useAppState = () => {
           exercise.completed || false
         );
         
-        await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
+        await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
       } catch (error) {
         console.error('Failed to toggle exercise:', error);
         throw error;
       }
-    },[loadWorkoutSessionsFromSupabase]);
+    },[refreshWorkoutSessions]);
 
   const markAllWorkoutsComplete = useCallback(
     async (date: string) => {
@@ -302,13 +364,13 @@ export const useAppState = () => {
       try {
         await ensureSetsForExercises(session.exercises);
         await markAllExercisesComplete(session.id);
-        await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
+        await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
       } catch (error) {
         console.error('Failed to mark all complete:', error);
         throw error;
       }
     },
-    [loadWorkoutSessionsFromSupabase]);
+    [refreshWorkoutSessions]);
 
   const toggleMealCompletion = useCallback(
     async (date: string, mealTitle: string) => {
@@ -357,98 +419,32 @@ export const useAppState = () => {
         reps: exercise.reps ?? '8-12',
         displayOrder: exercise.displayOrder ?? index + 1,
       }));
-      let session = current.workoutSessions.find(
-        (entry) => entry.phasePlanId === current.currentPhase!.id && entry.date === date
-      );
-      if (!session) {
-        session = await createWorkoutSession({
-          userId: current.user.id,
-          planId: current.currentPhase.id,
-          date,
-        });
+      const missingIds = normalizedExercises.filter((exercise) => !exercise.exerciseId);
+      if (missingIds.length) {
+        console.error(
+          'Cannot save plan exercise without exerciseId. Missing ids:',
+          missingIds.map((exercise) => exercise.name)
+        );
+        return;
       }
-
-      const refreshedSessions = await fetchWorkoutSessionEntries(
+      await replacePlanExercisesForDate(
         current.user.id,
         current.currentPhase.id,
-        getAppTimeZone()
+        date,
+        normalizedExercises.map((exercise) => ({
+          exerciseId: exercise.exerciseId!,
+          name: exercise.name,
+          bodyParts: exercise.bodyParts,
+          movementPattern: exercise.movementPattern ?? null,
+          sets: exercise.sets ?? null,
+          reps: exercise.reps ?? null,
+          displayOrder: exercise.displayOrder ?? null,
+          notes: exercise.notes ?? null,
+        }))
       );
-      const existingSession = refreshedSessions.find((entry) => entry.id === session.id);
-      const exerciseIdToSessionId = new Map<string, string>();
-      const exerciseNameToSessionId = new Map<string, string>();
-      existingSession?.exercises.forEach((entry) => {
-        if (entry.exerciseId && entry.id) {
-          exerciseIdToSessionId.set(entry.exerciseId, entry.id);
-        }
-        if (entry.name && entry.id) {
-          exerciseNameToSessionId.set(entry.name.toLowerCase(), entry.id);
-        }
-      });
-
-      const validSessionExerciseIds = new Set([
-        ...exerciseIdToSessionId.values(),
-        ...exerciseNameToSessionId.values(),
-      ]);
-      const exercisesWithIds = await Promise.all(
-        normalizedExercises.map(async (exercise, index) => {
-          if (exercise.exerciseId && exerciseIdToSessionId.has(exercise.exerciseId)) {
-            return { ...exercise, id: exerciseIdToSessionId.get(exercise.exerciseId)! };
-          }
-          const nameKey = exercise.name?.toLowerCase();
-          if (nameKey && exerciseNameToSessionId.has(nameKey)) {
-            return { ...exercise, id: exerciseNameToSessionId.get(nameKey)! };
-          }
-          try {
-            const sessionExerciseId = await addExerciseToSession({
-              sessionId: session!.id,
-              exercise,
-              displayOrder: exercise.displayOrder ?? index + 1,
-            });
-            validSessionExerciseIds.add(sessionExerciseId);
-            return { ...exercise, id: sessionExerciseId };
-          } catch (err) {
-            if (err instanceof Error && err.message === 'duplicate_exercise') {
-              if (exercise.exerciseId && exerciseIdToSessionId.has(exercise.exerciseId)) {
-                return { ...exercise, id: exerciseIdToSessionId.get(exercise.exerciseId)! };
-              }
-              if (nameKey && exerciseNameToSessionId.has(nameKey)) {
-                return { ...exercise, id: exerciseNameToSessionId.get(nameKey)! };
-              }
-              return exercise;
-            }
-            throw err;
-          }
-        })
-      );
-
-      const exercisesForUpdate = exercisesWithIds.filter(
-        (exercise) => exercise.id && validSessionExerciseIds.has(exercise.id)
-      );
-
-      await updateSessionExercises({
-        sessionId: session.id,
-        exercises: exercisesForUpdate.length ? exercisesForUpdate : exercisesWithIds,
-      });
-
-      const updatedSession: WorkoutSessionEntry = {
-        ...session,
-        exercises: exercisesWithIds,
-      };
-
-      const latestSessions = await fetchWorkoutSessionEntries(
-        current.user.id,
-        current.currentPhase.id,
-        getAppTimeZone()
-      );
-
-      updateState((prev) => ({
-        ...prev,
-        workoutSessions: latestSessions,
-        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(updatedSession)),
-        workoutDataVersion: nextWorkoutVersion(prev),
-      }));
+      await loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id);
     },
-    [updateState]
+    [loadPlannedWorkoutsFromSupabase]
   );
 
   const createWorkoutSessionForDate = useCallback(
@@ -460,47 +456,78 @@ export const useAppState = () => {
       );
       if (existing) return;
 
-      const created = await createWorkoutSession({
+      const planned = current.plannedWorkouts.find(
+        (day) => day.planId === current.currentPhase!.id && day.date === date
+      );
+      const plannedExercises = planned?.workout?.exercises ?? [];
+      if (!plannedExercises.length) {
+        await ensurePlanWorkoutForDate(current.user.id, current.currentPhase.id, date);
+        await loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id);
+        return;
+      }
+
+      const exercisesForSession: WorkoutSessionExercise[] = plannedExercises.map((exercise) => ({
+        id: undefined,
+        exerciseId: exercise.exerciseId,
+        name: exercise.name,
+        bodyParts: exercise.bodyParts,
+        movementPattern: exercise.movementPattern,
+        sets: exercise.sets ?? 4,
+        reps: exercise.reps ?? '8-12',
+        completed: false,
+        displayOrder: exercise.displayOrder,
+        notes: exercise.notes,
+      }));
+
+      await createSessionFromPlanWorkout({
         userId: current.user.id,
         planId: current.currentPhase.id,
         date,
+        exercises: exercisesForSession,
       });
-
-      updateState((prev) => ({
-        ...prev,
-        workoutSessions: upsertWorkoutSession(prev.workoutSessions, created),
-        workoutLogs: upsertWorkoutLog(prev.workoutLogs, sessionToWorkoutLog(created)),
-        workoutDataVersion: nextWorkoutVersion(prev),
-      }));
+      await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
     },
-    [updateState]
+    [loadPlannedWorkoutsFromSupabase, refreshWorkoutSessions]
   );
 
   const addWorkoutExercise = useCallback(
-    async (sessionId: string, exercise: WorkoutSessionExercise) => {
+    async (planWorkoutId: string, exercise: WorkoutSessionExercise) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
-      const session = current.workoutSessions.find((entry) => entry.id === sessionId);
-      const displayOrder = exercise.displayOrder ?? (session?.exercises.length ?? 0) + 1;
-      const sessionExerciseId = await addExerciseToSession({
-        sessionId,
-        exercise,
-        displayOrder,
-      });
-      await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
-      return sessionExerciseId;
+      if (!exercise.exerciseId) {
+        throw new Error('exercise_id_required');
+      }
+      const displayOrder = exercise.displayOrder ?? 1;
+      const { data, error } = await supabase
+        .from('fitarc_plan_exercises')
+        .insert({
+          plan_workout_id: planWorkoutId,
+          exercise_id: exercise.exerciseId,
+          exercise_name: exercise.name,
+          movement_pattern: exercise.movementPattern ?? null,
+          body_parts: exercise.bodyParts ?? [],
+          sets: exercise.sets ?? null,
+          reps: exercise.reps ?? null,
+          display_order: displayOrder,
+          notes: exercise.notes ?? null,
+        })
+        .select('id')
+        .single();
+      if (error) throw error;
+      await loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id);
+      return data?.id;
     },
-    [loadWorkoutSessionsFromSupabase]
+    [loadPlannedWorkoutsFromSupabase]
   );
 
   const deleteWorkoutExercise = useCallback(
-    async (_sessionId: string, sessionExerciseId: string) => {
+    async (_planWorkoutId: string, planExerciseId: string) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
-      await deleteWorkoutSessionExercise(sessionExerciseId);
-      await loadWorkoutSessionsFromSupabase(current.user.id, current.currentPhase.id);
+      await deletePlanExercise(planExerciseId);
+      await loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id);
     },
-    [loadWorkoutSessionsFromSupabase]
+    [loadPlannedWorkoutsFromSupabase]
   );
 
   const deleteWorkoutSession = useCallback(
@@ -538,6 +565,7 @@ export const useAppState = () => {
     updateState((prev) => ({
       ...prev,
       workoutSessions: [],
+      plannedWorkouts: [],
       workoutLogs: [],
       strengthSnapshots: [],
       workoutDataVersion: nextWorkoutVersion(prev),
@@ -558,6 +586,7 @@ export const useAppState = () => {
     schedulePhotoReminder,
     toggleMealCompletion,
     loadWorkoutSessionsFromSupabase,
+    loadPlannedWorkoutsFromSupabase,
     loadMealPlansFromSupabase,
     saveCustomWorkoutSession,
     createWorkoutSession: createWorkoutSessionForDate,
