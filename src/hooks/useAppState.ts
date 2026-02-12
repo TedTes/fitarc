@@ -16,9 +16,11 @@ import {
   fetchWorkoutSessionEntries,
   createSessionFromPlanWorkout,
   deleteWorkoutSessionRemote,
-  toggleExerciseAndCheckSession, 
+  toggleExerciseAndCheckSession,
   markAllExercisesComplete,
   ensureSetsForExercises,
+  sessionHasLoggedProgress,
+  addExerciseToSession,
 } from '../services/workoutService';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
@@ -243,42 +245,52 @@ export const useAppState = () => {
   );
 
   const toggleWorkoutExercise = useCallback(
-    async (date: string, exerciseName: string) => {
+    async (
+      date: string,
+      exerciseName: string,
+      exerciseId?: string,
+      currentExercises?: WorkoutSessionExercise[]
+    ) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
-      
+
       let session = current.workoutSessions.find(
         (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
       );
-      
+
       if (!session) {
+        // Build exercises for session creation: prefer currentExercises (live UI state),
+        // fall back to plannedWorkouts from state
         const planned = current.plannedWorkouts.find(
           (day) => day.planId === current.currentPhase!.id && day.date === date
         );
         const plannedExercises = planned?.workout?.exercises ?? [];
-        if (!plannedExercises.length) {
-          console.error('No planned workout found for date:', date);
+        const sourceExercises: WorkoutSessionExercise[] =
+          currentExercises?.length
+            ? currentExercises
+            : plannedExercises.map((exercise) => ({
+                id: undefined,
+                exerciseId: exercise.exerciseId,
+                name: exercise.name,
+                bodyParts: exercise.bodyParts,
+                movementPattern: exercise.movementPattern,
+                sets: exercise.sets ?? 4,
+                reps: exercise.reps ?? '8-12',
+                completed: false,
+                displayOrder: exercise.displayOrder,
+                notes: exercise.notes,
+              }));
+
+        if (!sourceExercises.length) {
+          console.error('No exercises available to create session for date:', date);
           return;
         }
-
-        const exercisesForSession: WorkoutSessionExercise[] = plannedExercises.map((exercise) => ({
-          id: undefined,
-          exerciseId: exercise.exerciseId,
-          name: exercise.name,
-          bodyParts: exercise.bodyParts,
-          movementPattern: exercise.movementPattern,
-          sets: exercise.sets ?? 4,
-          reps: exercise.reps ?? '8-12',
-          completed: false,
-          displayOrder: exercise.displayOrder,
-          notes: exercise.notes,
-        }));
 
         await createSessionFromPlanWorkout({
           userId: current.user.id,
           planId: current.currentPhase.id,
           date,
-          exercises: exercisesForSession,
+          exercises: sourceExercises,
         });
 
         const refreshed = await refreshWorkoutSessions(
@@ -290,14 +302,19 @@ export const useAppState = () => {
         );
       }
       if (!session) return;
-  
-      const exercise = session.exercises.find((ex) => ex.name === exerciseName);
-      
+
+      // Find by exerciseId first (reliable), fall back to name match
+      const exercise =
+        (exerciseId ? session.exercises.find((ex) => ex.exerciseId === exerciseId) : undefined) ??
+        session.exercises.find(
+          (ex) => ex.name.toLowerCase().trim() === exerciseName.toLowerCase().trim()
+        );
+
       if (!exercise || !exercise.id) {
-        console.error('Exercise not found or missing ID:', exerciseName);
+        console.error('Exercise not found in session:', exerciseName, exerciseId, session.exercises.map(e => e.name));
         return;
       }
-  
+
       try {
         const willComplete = !(exercise.completed ?? false);
         if (willComplete) {
@@ -308,7 +325,7 @@ export const useAppState = () => {
           exercise.id,
           exercise.completed || false
         );
-        
+
         await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
       } catch (error) {
         console.error('Failed to toggle exercise:', error);
@@ -536,6 +553,151 @@ export const useAppState = () => {
     [updateState]
   );
 
+  /**
+   * Replace today's workout session entirely with template exercises.
+   * Returns { hasProgress: true } if the current session has logged data (caller should warn).
+   * Pass force=true to skip the progress check and proceed anyway.
+   */
+  const replaceSessionWithTemplate = useCallback(
+    async (
+      date: string,
+      exercises: WorkoutSessionExercise[],
+      force = false
+    ): Promise<{ hasProgress: boolean }> => {
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return { hasProgress: false };
+
+      const existingSession = current.workoutSessions.find(
+        (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+      );
+
+      if (!force && existingSession?.id) {
+        const hasProgress = await sessionHasLoggedProgress(existingSession.id);
+        if (hasProgress) return { hasProgress: true };
+      }
+
+      // Delete existing session + child rows
+      await deleteWorkoutSessionRemote({
+        userId: current.user.id,
+        planId: current.currentPhase.id,
+        date,
+      });
+
+      const normalizedExercises = exercises.map((ex, idx) => ({
+        exerciseId: ex.exerciseId!,
+        name: ex.name,
+        bodyParts: ex.bodyParts ?? [],
+        movementPattern: ex.movementPattern ?? null,
+        sets: ex.sets ?? null,
+        reps: ex.reps ?? null,
+        displayOrder: ex.displayOrder ?? idx + 1,
+        notes: ex.notes ?? null,
+        sourceTemplateExerciseId: null,
+      }));
+
+      // Replace plan overrides
+      await replacePlanExercisesForDate(
+        current.user.id,
+        current.currentPhase.id,
+        date,
+        normalizedExercises
+      );
+
+      // Create new session with template exercises
+      await createSessionFromPlanWorkout({
+        userId: current.user.id,
+        planId: current.currentPhase.id,
+        date,
+        exercises: exercises.map((ex, idx) => ({
+          id: undefined,
+          exerciseId: ex.exerciseId,
+          name: ex.name,
+          bodyParts: ex.bodyParts,
+          movementPattern: ex.movementPattern,
+          sets: ex.sets ?? 4,
+          reps: ex.reps ?? '8-12',
+          completed: false,
+          displayOrder: ex.displayOrder ?? idx + 1,
+          notes: ex.notes,
+        })),
+      });
+
+      await Promise.all([
+        loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id),
+        refreshWorkoutSessions(current.user.id, current.currentPhase.id),
+      ]);
+
+      updateState((prev) => ({
+        ...prev,
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
+
+      return { hasProgress: false };
+    },
+    [loadPlannedWorkoutsFromSupabase, refreshWorkoutSessions, updateState]
+  );
+
+  /**
+   * Append selected exercises to today's plan overrides and, if a session exists, to the session.
+   */
+  const appendExercisesToSession = useCallback(
+    async (date: string, exercises: WorkoutSessionExercise[]): Promise<void> => {
+      const current = stateRef.current;
+      if (!current || !current.currentPhase || !current.user) return;
+
+      const planExerciseInputs = exercises.map((ex, idx) => ({
+        exerciseId: ex.exerciseId!,
+        name: ex.name,
+        bodyParts: ex.bodyParts ?? [],
+        movementPattern: ex.movementPattern ?? null,
+        sets: ex.sets ?? null,
+        reps: ex.reps ?? null,
+        displayOrder: ex.displayOrder ?? idx + 1,
+        notes: ex.notes ?? null,
+      }));
+
+      // Append to plan overrides
+      await appendPlanExercisesForDate(
+        current.user.id,
+        current.currentPhase.id,
+        date,
+        planExerciseInputs
+      );
+
+      // If session already exists, also append to session exercises
+      const existingSession = current.workoutSessions.find(
+        (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+      );
+      if (existingSession?.id) {
+        const currentCount = existingSession.exercises.length;
+        for (let i = 0; i < exercises.length; i++) {
+          const ex = exercises[i];
+          try {
+            await addExerciseToSession({
+              sessionId: existingSession.id,
+              exercise: ex,
+              displayOrder: currentCount + i + 1,
+            });
+          } catch (err: unknown) {
+            if (err instanceof Error && err.message === 'duplicate_exercise') continue;
+            throw err;
+          }
+        }
+      }
+
+      await Promise.all([
+        loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id),
+        refreshWorkoutSessions(current.user.id, current.currentPhase.id),
+      ]);
+
+      updateState((prev) => ({
+        ...prev,
+        workoutDataVersion: nextWorkoutVersion(prev),
+      }));
+    },
+    [loadPlannedWorkoutsFromSupabase, refreshWorkoutSessions, updateState]
+  );
+
   const clearAllData = useCallback(async () => {
     // Simply reset to empty state (no AsyncStorage to clear)
     setState(createEmptyAppState());
@@ -573,6 +735,8 @@ export const useAppState = () => {
     addWorkoutExercise,
     deleteWorkoutExercise,
     deleteWorkoutSession,
+    replaceSessionWithTemplate,
+    appendExercisesToSession,
     hydrateFromRemote,
     markAllWorkoutsComplete,
     resetWorkoutData,

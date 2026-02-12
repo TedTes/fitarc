@@ -26,8 +26,9 @@ import {
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
-  ProgressScreen, 
+  ProgressScreen,
   MenuScreen,
+  LibraryScreen,
   PhotoCaptureScreen,
   ProfileScreen,
   ProfileSetupScreen,
@@ -50,32 +51,42 @@ import {
   createPhase,
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
+import { linkPlanToMatchedTemplates } from './src/services/planRuntimeService';
 import { supabase } from './src/lib/supabaseClient';
 import { deleteAccount as deleteAccountService } from './src/services/accountService';
 
 type RootTabParamList = {
-  Home: undefined;
-  Menu: undefined;
+  Today: undefined;
+  Nutrition: undefined;
   Progress: undefined;
+  Library: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
 type IoniconName = keyof typeof Ionicons.glyphMap;
 
-const TAB_ICONS: Record<keyof RootTabParamList, { default: IoniconName; active: IoniconName }> = {
-  Home: { default: 'barbell-outline', active: 'barbell' },
-  Menu: { default: 'fast-food-outline', active: 'fast-food' },
-  Progress: { default: 'stats-chart-outline', active: 'stats-chart' },
+type TabConfig = {
+  icon: IoniconName;
+  activeIcon: IoniconName;
+  label: string;
+};
+
+const TAB_CONFIG: Record<keyof RootTabParamList, TabConfig> = {
+  Today:     { icon: 'today-outline',        activeIcon: 'today',           label: 'Today'     },
+  Nutrition: { icon: 'nutrition-outline',    activeIcon: 'nutrition',       label: 'Nutrition' },
+  Progress:  { icon: 'trending-up-outline',  activeIcon: 'trending-up',     label: 'Progress'  },
+  Library:   { icon: 'library-outline',      activeIcon: 'library',         label: 'Library'   },
 };
 
 const linking = {
   prefixes: ['fitarc://'],
   config: {
     screens: {
-      Home: 'home',
-      Menu: 'menu',
+      Today: 'today',
+      Nutrition: 'nutrition',
       Progress: 'progress',
+      Library: 'library',
     },
   },
 };
@@ -120,68 +131,41 @@ const TabPlaceholder: React.FC<{ title: string; subtitle: string }> = ({ title, 
   </View>
 );
 
-// Custom animated tab bar button
+// Custom animated tab bar button with label
 const AnimatedTabButton: React.FC<{
   focused: boolean;
   icon: IoniconName;
   activeIcon: IoniconName;
+  label: string;
   onPress: () => void;
-}> = ({ focused, icon, activeIcon, onPress }) => {
+}> = ({ focused, icon, activeIcon, label, onPress }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const indicatorScale = useRef(new Animated.Value(focused ? 1 : 0)).current;
+  const pillAnim = useRef(new Animated.Value(focused ? 1 : 0)).current;
   const popAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        friction: 8,
-        tension: 100,
-      }),
-      Animated.spring(indicatorScale, {
-        toValue: focused ? 1 : 0,
-        useNativeDriver: true,
-        friction: 6,
-        tension: 80,
-      }),
+      Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, friction: 8, tension: 100 }),
+      Animated.spring(pillAnim, { toValue: focused ? 1 : 0, useNativeDriver: false, friction: 6, tension: 80 }),
     ]).start();
   }, [focused]);
 
-  const handlePressIn = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 0.85,
-      useNativeDriver: true,
-      friction: 8,
-    }).start();
-  };
+  const handlePressIn = () =>
+    Animated.spring(scaleAnim, { toValue: 0.88, useNativeDriver: true, friction: 8 }).start();
 
-  const handlePressOut = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      useNativeDriver: true,
-      friction: 8,
-    }).start();
-  };
+  const handlePressOut = () =>
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, friction: 8 }).start();
 
   const handlePress = () => {
     popAnim.setValue(0);
     Animated.sequence([
-      Animated.spring(popAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        friction: 6,
-        tension: 120,
-      }),
-      Animated.spring(popAnim, {
-        toValue: 0,
-        useNativeDriver: true,
-        friction: 7,
-        tension: 110,
-      }),
+      Animated.spring(popAnim, { toValue: 1, useNativeDriver: true, friction: 6, tension: 120 }),
+      Animated.spring(popAnim, { toValue: 0, useNativeDriver: true, friction: 7, tension: 110 }),
     ]).start();
     onPress();
   };
+
+  const pillBg = pillAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(108,99,255,0)', 'rgba(108,99,255,0.18)'] });
 
   return (
     <TouchableOpacity
@@ -194,39 +178,17 @@ const AnimatedTabButton: React.FC<{
       <Animated.View
         style={[
           styles.tabButtonInner,
-          {
-            transform: [
-              {
-                scale: Animated.multiply(
-                  scaleAnim,
-                  popAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [1, 1.08],
-                  })
-                ),
-              },
-            ],
-          },
+          { transform: [{ scale: Animated.multiply(scaleAnim, popAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] })) }] },
         ]}
       >
-        <View>
+        <Animated.View style={[styles.tabPill, { backgroundColor: pillBg }]}>
           <Ionicons
             name={focused ? activeIcon : icon}
-            size={40}
-            color="rgba(255,255,255,0.6)"
+            size={22}
+            color={focused ? '#6C63FF' : 'rgba(255,255,255,0.45)'}
           />
-        </View>
-
-        {/* Round indicator dot below icon */}
-        <Animated.View
-          style={[
-            styles.activeIndicatorDot,
-            {
-              transform: [{ scale: indicatorScale }],
-              opacity: indicatorScale,
-            },
-          ]}
-        />
+          <Text style={[styles.tabLabel, focused && styles.tabLabelActive]} numberOfLines={1}>{label}</Text>
+        </Animated.View>
       </Animated.View>
     </TouchableOpacity>
   );
@@ -440,7 +402,7 @@ function AppContent() {
   const closeProfileSheet = () => {
     setProfileVisible(false);
     if (navigationRef.isReady()) {
-      navigationRef.navigate('Home');
+      navigationRef.navigate('Today');
     }
   };
 
@@ -471,8 +433,8 @@ function AppContent() {
   useEffect(() => {
     if (!navigationRef.isReady()) return;
     if (showPlanTabs) return;
-    if (currentRouteName === 'Menu') {
-      navigationRef.navigate('Home');
+    if (currentRouteName === 'Nutrition' || currentRouteName === 'Library') {
+      navigationRef.navigate('Today');
     }
   }, [currentRouteName, navigationRef, showPlanTabs]);
 
@@ -640,6 +602,11 @@ function AppContent() {
         currentLevelId: currentLevel,
         targetLevelId,
       });
+      try {
+        await linkPlanToMatchedTemplates(authUser.id, remotePhase.id);
+      } catch (linkError) {
+        console.warn('Unable to persist plan template map (fallback matching will be used):', linkError);
+      }
 
       console.log('✅ Plan created:', remotePhase.id);
 
@@ -893,7 +860,7 @@ function AppContent() {
     }
     setProfileVisible(false);
     if (navigationRef.isReady()) {
-      navigationRef.navigate('Home');
+      navigationRef.navigate('Today');
     }
     setOnboardingStep('profile');
   };
@@ -923,7 +890,7 @@ function AppContent() {
 
     setProfileVisible(false);
     if (navigationRef.isReady()) {
-      navigationRef.navigate('Home');
+      navigationRef.navigate('Today');
     }
     setOnboardingStep('profile');
   };
@@ -1078,22 +1045,11 @@ function AppContent() {
         onReady={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
         onStateChange={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
       >
-        <Tab.Navigator
-          screenOptions={{
-            headerShown: false,
-            lazy: false,
-            tabBarStyle: {
-              display: 'none',
-              backgroundColor: '#1E2340',
-              borderTopColor: '#2A2F4F',
-              borderTopWidth: 1,
-            },
-          }}
-        >
-          <Tab.Screen name="Home">
+        <Tab.Navigator screenOptions={{ headerShown: false, lazy: false, tabBarStyle: { display: 'none' } }}>
+          <Tab.Screen name="Today">
             {() =>
               state?.user ? (
-                <DashboardScreen 
+                <DashboardScreen
                   user={state.user}
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
@@ -1106,32 +1062,23 @@ function AppContent() {
                   onDeleteExercise={deleteWorkoutExercise}
                 />
               ) : (
-                <TabPlaceholder
-                  title="Welcome to FitArc"
-                  subtitle="Complete onboarding to unlock your dashboard."
-                />
+                <TabPlaceholder title="Welcome to FitArc" subtitle="Complete onboarding to get started." />
               )
             }
           </Tab.Screen>
-          <Tab.Screen name="Menu">
+          <Tab.Screen name="Nutrition">
             {() =>
               state?.user ? (
-                <MenuScreen
-                  user={state.user}
-                  phase={state.currentPhase}
-                />
+                <MenuScreen user={state.user} phase={state.currentPhase} />
               ) : (
-                <TabPlaceholder
-                  title="No active plan"
-                  subtitle="Create a plan to generate meals."
-                />
+                <TabPlaceholder title="Nutrition" subtitle="Create a plan to unlock your meal guide." />
               )
             }
           </Tab.Screen>
           <Tab.Screen name="Progress">
             {() =>
               state?.currentPhase && state?.user ? (
-                <ProgressScreen 
+                <ProgressScreen
                   user={state.user}
                   phase={state.currentPhase}
                   workoutDataVersion={state.workoutDataVersion}
@@ -1142,10 +1089,25 @@ function AppContent() {
                   onUpdateTrackingPreferences={handleUpdateTrackingPreferences}
                 />
               ) : (
-                <TabPlaceholder
-                  title="Track progress"
-                  subtitle="Create plan to unlock progress tracking."
+                <TabPlaceholder title="Progress" subtitle="Create a plan to unlock progress tracking." />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen name="Library">
+            {() =>
+              state?.user ? (
+                <LibraryScreen
+                  user={state.user}
+                  phase={state.currentPhase}
+                  plannedWorkouts={state.plannedWorkouts}
+                  workoutSessions={state.workoutSessions}
+                  onNavigateToToday={() => {
+                    setProfileVisible(false);
+                    navigationRef.navigate('Today');
+                  }}
                 />
+              ) : (
+                <TabPlaceholder title="Library" subtitle="Create a plan to explore workout templates." />
               )
             }
           </Tab.Screen>
@@ -1155,51 +1117,33 @@ function AppContent() {
         <View style={styles.customTabBar} pointerEvents="box-none">
           <View style={styles.tabBarBackground} pointerEvents="none">
             <LinearGradient
-              colors={['rgba(10, 14, 39, 0.96)', 'rgba(5, 7, 20, 0.99)']}
+              colors={['rgba(8,11,32,0.97)', 'rgba(4,6,18,0.99)']}
               style={styles.tabBarGradient}
             />
             <View style={styles.tabBarTopBorder} />
           </View>
-          
+
           <View style={styles.tabBarContent} pointerEvents="box-none">
-            <AnimatedTabButton
-              focused={currentRouteName === 'Home'}
-              icon={TAB_ICONS.Home.default}
-              activeIcon={TAB_ICONS.Home.active}
-              onPress={() => {
-                setProfileVisible(false);
-                triggerTabFabPop();
-                navigationRef.navigate('Home');
-              }}
-            />
-            {showPlanTabs && (
-              <AnimatedTabButton
-                focused={currentRouteName === 'Menu'}
-                icon={TAB_ICONS.Menu.default}
-                activeIcon={TAB_ICONS.Menu.active}
-                onPress={() => {
-                  setProfileVisible(false);
-                  triggerTabFabPop();
-                  navigationRef.navigate('Menu');
-                }}
-              />
-            )}
-            <AnimatedTabButton
-              focused={currentRouteName === 'Progress'}
-              icon={TAB_ICONS.Progress.default}
-              activeIcon={TAB_ICONS.Progress.active}
-              onPress={() => {
-                setProfileVisible(false);
-                triggerTabFabPop();
-                navigationRef.navigate('Progress');
-              }}
-            />
-            
-            {/* Spacer for FAB */}
-            <View style={styles.fabSpacer} />
+            {(Object.keys(TAB_CONFIG) as (keyof RootTabParamList)[]).map((name) => {
+              if (!showPlanTabs && name !== 'Today') return null;
+              const cfg = TAB_CONFIG[name];
+              return (
+                <AnimatedTabButton
+                  key={name}
+                  focused={currentRouteName === name}
+                  icon={cfg.icon}
+                  activeIcon={cfg.activeIcon}
+                  label={cfg.label}
+                  onPress={() => {
+                    setProfileVisible(false);
+                    triggerTabFabPop();
+                    navigationRef.navigate(name);
+                  }}
+                />
+              );
+            })}
           </View>
-          
-          {/* Animated FAB inside tab bar */}
+
           <AnimatedFAB config={fabConfig} popAnim={tabFabPop} />
         </View>
       </NavigationContainer>
@@ -1395,12 +1339,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     backgroundColor: 'transparent',
   },
-  activeIndicatorDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#6C63FF',
-    marginTop: 6,
+  tabPill: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    minWidth: 64,
+    borderRadius: 16,
+    gap: 3,
+  },
+  tabLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.4)',
+    letterSpacing: 0.1,
+  },
+  tabLabelActive: {
+    color: '#6C63FF',
+    fontWeight: '700',
   },
   fabSpacer: {
     width: 92,

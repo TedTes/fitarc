@@ -44,6 +44,7 @@ type PlansScreenProps = {
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
   onAddExercise?: (planWorkoutId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
   onDeleteExercise?: (planWorkoutId: string, planExerciseId: string) => Promise<void>;
+  onToggleComplete?: (date: string, exerciseName: string, exerciseId?: string, currentExercises?: WorkoutSessionExercise[]) => void | Promise<void>;
   embedded?: boolean;
   openExercisePickerSignal?: number;
   selectedDateOverride?: string;
@@ -117,11 +118,12 @@ const getPhaseWeek = (phase: PhasePlan) => {
 export const PlansScreen: React.FC<PlansScreenProps> = ({
   user,
   phase,
-  workoutSessions: _workoutSessions,
+  workoutSessions,
   plannedWorkouts,
   onSaveCustomSession,
   onAddExercise,
   onDeleteExercise,
+  onToggleComplete,
   embedded = false,
   openExercisePickerSignal,
   selectedDateOverride,
@@ -150,6 +152,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const exerciseCardsAnim = useRef<Map<string, Animated.Value>>(new Map()).current;
   const swipeCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const modalSlideAnim = useRef(new Animated.Value(300)).current;
+  const completionBannerAnim = useRef(new Animated.Value(0)).current;
+  const markAllHandleAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!selectedDateOverride) return;
@@ -258,10 +262,19 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       )
       .join('|') ?? '';
 
+  // Include session completion fingerprint so we re-hydrate when sessions load.
+  // Use 'dirty' when user has unsaved edits to avoid overwriting in-progress changes.
+  const sessionForPlanDate = selectedPlan
+    ? workoutSessions.find((s) => s.date === selectedPlan.dateStr && s.phasePlanId === phase?.id)
+    : undefined;
+  const sessionCompletionFingerprint = isDirty
+    ? 'dirty'
+    : (sessionForPlanDate?.exercises.map((ex) => `${ex.name}:${ex.completed ?? false}`).join(',') ?? 'none');
+
   const planSyncKey = selectedPlan
     ? selectedPlan.planDay?.workout
-      ? `plan-${selectedPlan.planDay.workout.id}-${planFingerprint}`
-      : `no-plan-${selectedPlan.dateStr}`
+      ? `plan-${selectedPlan.planDay.workout.id}-${planFingerprint}-${sessionCompletionFingerprint}`
+      : `no-plan-${selectedPlan.dateStr}-${sessionCompletionFingerprint}`
     : null;
 
   const persistSession = useCallback(
@@ -290,11 +303,18 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     // Load exercises from the plan snapshot if it exists
     if (selectedPlan.planDay?.workout && selectedPlan.planDay.workout.exercises.length > 0) {
       runLayoutAnimation();
+      // Look up existing session for this date to restore completion state
+      const existingSession = workoutSessions.find(
+        (s) => s.date === selectedPlan.dateStr && s.phasePlanId === phase?.id
+      );
+      const completionByName = new Map<string, boolean>(
+        existingSession?.exercises.map((ex) => [ex.name.toLowerCase(), ex.completed ?? false]) ?? []
+      );
       const mapped = selectedPlan.planDay.workout.exercises.map((exercise) => ({
         id: exercise.id,
         name: exercise.name,
         bodyParts: [...exercise.bodyParts],
-        completed: false,
+        completed: completionByName.get(exercise.name.toLowerCase()) ?? false,
         sets: exercise.sets ?? 4,
         reps: exercise.reps ?? '8-12',
         movementPattern: exercise.movementPattern,
@@ -319,7 +339,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     setEditingExercises([]);
     setIsDirty(false);
     lastSyncedKeyRef.current = planSyncKey;
-  }, [planSyncKey, selectedPlan]);
+  }, [planSyncKey, selectedPlan, workoutSessions, phase?.id]);
 
   const refreshCompletionMap = useCallback(() => {
     if (!user.id || !weekStart || !weekEnd) return;
@@ -641,6 +661,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   };
 
   const handleToggleExerciseCompleted = (index: number) => {
+    const exerciseName = editingExercisesRef.current[index]?.name;
+    const exerciseId = editingExercisesRef.current[index]?.exerciseId;
     setEditingExercises((prev) => {
       const next = [...prev];
       const current = next[index];
@@ -670,11 +692,58 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         refreshCompletionMap();
       }
     }, 200);
+    // Persist completion to session layer
+    if (exerciseName && onToggleComplete) {
+      void onToggleComplete(selectedDate, exerciseName, exerciseId, editingExercisesRef.current);
+    }
   };
 
- 
+  const handleMarkAllComplete = () => {
+    const incompleteExercises = editingExercisesRef.current.filter((ex) => !ex.completed);
+    setEditingExercises((prev) => {
+      const hasIncomplete = prev.some((ex) => !ex.completed);
+      if (!hasIncomplete) return prev;
+      const next = prev.map((ex) => ({ ...ex, completed: true }));
+      editingExercisesRef.current = next;
+      if (selectedPlan) {
+        setCompletionMap((prevMap) => ({ ...prevMap, [selectedPlan.dateStr]: true }));
+      }
+      return next;
+    });
+    if (selectedPlan) {
+      localEditsDateRef.current = selectedPlan.dateStr;
+    }
+    setIsDirty(true);
+    if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
+    autosaveTimeoutRef.current = setTimeout(() => {
+      if (selectedPlan) {
+        void enqueueSave(selectedPlan, editingExercisesRef.current);
+        setIsDirty(false);
+        refreshCompletionMap();
+      }
+    }, 200);
+    // Persist each completion to the session layer
+    if (onToggleComplete && incompleteExercises.length > 0) {
+      const snapshot = editingExercisesRef.current;
+      incompleteExercises.forEach((ex) => {
+        void onToggleComplete(selectedDate, ex.name, ex.exerciseId, snapshot);
+      });
+    }
+  };
 
-  
+  // Animate completion banner in/out
+  const allComplete =
+    editingExercises.length > 0 && editingExercises.every((ex) => ex.completed);
+
+  useEffect(() => {
+    Animated.spring(completionBannerAnim, {
+      toValue: allComplete ? 1 : 0,
+      tension: 60,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  }, [allComplete, completionBannerAnim]);
+
   const handleChangeSets = (index: number, value: string) => {
     const numeric = parseInt(value, 10);
     setEditingExercises((prev) => {
@@ -775,6 +844,28 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       .slice(0, MAX_LIBRARY_ITEMS);
   }, [exerciseCatalog, muscleFilter, exerciseSearch]);
 
+  const markAllPanResponder = PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) =>
+      gesture.dy < -8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onPanResponderMove: (_, gesture) => {
+      const progress = Math.min(1, Math.max(0, -gesture.dy / 60));
+      markAllHandleAnim.setValue(progress);
+    },
+    onPanResponderRelease: (_, gesture) => {
+      if (gesture.dy < -40) {
+        Animated.spring(markAllHandleAnim, { toValue: 1, tension: 200, friction: 12, useNativeDriver: true }).start(() => {
+          handleMarkAllComplete();
+          Animated.spring(markAllHandleAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }).start();
+        });
+      } else {
+        Animated.spring(markAllHandleAnim, { toValue: 0, tension: 150, friction: 12, useNativeDriver: true }).start();
+      }
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(markAllHandleAnim, { toValue: 0, tension: 150, friction: 12, useNativeDriver: true }).start();
+    },
+  });
+
   const renderSession = () => {
     if (!selectedPlan) {
       return (
@@ -797,6 +888,17 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         </View>
       );
     }
+
+    const handleScaleUp = markAllHandleAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.04],
+      extrapolate: 'clamp',
+    });
+    const handleLabelOpacity = markAllHandleAnim.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0.4, 0.8, 1],
+      extrapolate: 'clamp',
+    });
 
     return (
       <View style={styles.workoutCard}>
@@ -885,6 +987,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               <Animated.View
                 key={cardKey}
                 style={{
+                  opacity: isCompleted ? 0.5 : 1,
                   transform: [{ scale: scaleAnim }],
                 }}
               >
@@ -913,46 +1016,32 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                         setEditingExerciseIndex((prev) => (prev === idx ? null : idx))
                       }
                     >
-                      <View style={styles.exerciseCard}>
+                      <View style={[styles.exerciseCard, isCompleted && styles.exerciseCardDone]}>
                         <View style={styles.exerciseHeaderRow}>
+                          <TouchableOpacity
+                            style={[
+                              styles.completeRadio,
+                              isCompleted && styles.completeRadioChecked,
+                            ]}
+                            onPress={() => handleToggleExerciseCompleted(idx)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            {isCompleted && <Text style={styles.completeRadioCheck}>✓</Text>}
+                          </TouchableOpacity>
                           <View style={styles.exerciseHeaderInfo}>
-                            <Text style={styles.exerciseName}>
+                            <Text style={[styles.exerciseName, isCompleted && styles.exerciseNameDone]}>
                               {exercise.name}
                             </Text>
                             <Text style={styles.exerciseBodyParts}>
                               {formatBodyPartList(exercise.bodyParts)}
                             </Text>
                           </View>
-                          <View style={styles.exerciseHeaderActions}>
-                            <TouchableOpacity
-                              style={[
-                                styles.completeRadio,
-                                exercise.completed && styles.completeRadioChecked,
-                              ]}
-                              onPress={() => handleToggleExerciseCompleted(idx)}
-                            >
-                              {exercise.completed && <Text style={styles.completeRadioCheck}>✓</Text>}
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                        <View style={styles.exercisePills}>
                           <TouchableOpacity
+                            style={styles.setsRepsPill}
                             activeOpacity={0.7}
                             onPress={() => setEditingExerciseIndex(idx)}
                           >
-                            <View style={styles.pill}>
-                              <Text style={styles.pillLabel}>Sets</Text>
-                              <Text style={styles.pillValue}>{setsValue || '—'}</Text>
-                            </View>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            activeOpacity={0.7}
-                            onPress={() => setEditingExerciseIndex(idx)}
-                          >
-                            <View style={styles.pill}>
-                              <Text style={styles.pillLabel}>Reps</Text>
-                              <Text style={styles.pillValue}>{repsValue}</Text>
-                            </View>
+                            <Text style={styles.setsRepsPillText}>{setsValue}×{repsValue}</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -963,6 +1052,50 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
             );
           })}
         </View>
+
+        {/* Completion banner */}
+        {allComplete && (
+          <Animated.View
+            style={[
+              styles.completionBanner,
+              {
+                opacity: completionBannerAnim,
+                transform: [{ scale: completionBannerAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) }],
+              },
+            ]}
+          >
+            <LinearGradient
+              colors={['rgba(0,245,160,0.18)', 'rgba(108,99,255,0.22)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.completionBannerGradient}
+            >
+              <Text style={styles.completionBannerIcon}>🔥</Text>
+              <View style={styles.completionBannerText}>
+                <Text style={styles.completionBannerTitle}>Session Complete</Text>
+                <Text style={styles.completionBannerSub}>
+                  {editingExercises.length} exercise{editingExercises.length !== 1 ? 's' : ''} done
+                </Text>
+              </View>
+              <Text style={styles.completionBannerCheck}>✓</Text>
+            </LinearGradient>
+          </Animated.View>
+        )}
+
+        {/* Swipe-up handle: mark all complete */}
+        {!allComplete && editingExercises.length > 0 && (
+          <Animated.View
+            style={[styles.markAllHandle, { transform: [{ scale: handleScaleUp }] }]}
+            {...markAllPanResponder.panHandlers}
+          >
+            <Animated.Text style={[styles.markAllHandleChevrons, { opacity: handleLabelOpacity }]}>
+              ⌃
+            </Animated.Text>
+            <Animated.Text style={[styles.markAllHandleLabel, { opacity: handleLabelOpacity }]}>
+              Swipe up to finish
+            </Animated.Text>
+          </Animated.View>
+        )}
       </View>
     );
   };
@@ -1404,8 +1537,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.surface,
-    padding: 18,
-    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  exerciseCardDone: {
+    borderColor: 'rgba(0, 245, 160, 0.2)',
+    backgroundColor: 'rgba(0, 245, 160, 0.04)',
   },
   swipeContainer: {
     position: 'relative',
@@ -1459,6 +1596,61 @@ const styles = StyleSheet.create({
   pillValue: {
     fontSize: 13,
     color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  markAllHandle: {
+    marginTop: 12,
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 2,
+  },
+  markAllHandleChevrons: {
+    fontSize: 14,
+    color: COLORS.textTertiary,
+    fontWeight: '700',
+    lineHeight: 14,
+  },
+  markAllHandleLabel: {
+    fontSize: 11,
+    color: COLORS.textTertiary,
+    fontWeight: '500',
+    letterSpacing: 0.3,
+  },
+  completionBanner: {
+    marginTop: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  completionBannerGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    gap: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 160, 0.25)',
+  },
+  completionBannerIcon: {
+    fontSize: 28,
+  },
+  completionBannerText: {
+    flex: 1,
+  },
+  completionBannerTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  completionBannerSub: {
+    fontSize: 12,
+    color: COLORS.success,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  completionBannerCheck: {
+    fontSize: 20,
+    color: COLORS.success,
     fontWeight: '700',
   },
   editCenterCard: {
@@ -1561,38 +1753,55 @@ const styles = StyleSheet.create({
   },
   exerciseHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
     gap: 12,
   },
   exerciseHeaderInfo: {
     flex: 1,
   },
   exerciseName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: COLORS.textPrimary,
+    letterSpacing: 0.1,
+  },
+  exerciseNameDone: {
+    textDecorationLine: 'line-through',
+    color: COLORS.textTertiary,
   },
   exerciseBodyParts: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 4,
+    fontSize: 11,
+    color: COLORS.textTertiary,
+    marginTop: 2,
   },
   exerciseHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  setsRepsPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: COLORS.elevated,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  setsRepsPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+  },
   completeRadio: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.25)',
     backgroundColor: 'transparent',
+    flexShrink: 0,
   },
   completeRadioChecked: {
     backgroundColor: 'rgba(0, 245, 160, 0.15)',

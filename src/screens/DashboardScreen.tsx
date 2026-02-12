@@ -7,11 +7,8 @@ import {
   ScrollView,
   Image,
   Dimensions,
-  Modal,
   Animated,
   Easing,
-  Pressable,
-  Alert,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,12 +17,10 @@ import {
   PhasePlan,
   WorkoutSessionEntry,
   WorkoutSessionExercise,
-  MuscleGroup,
   PlanDay,
 } from '../types/domain';
 import { useHomeScreenData } from '../hooks/useHomeScreenData';
 import { useWorkoutSessions } from '../hooks/useWorkoutSessions';
-import { useWorkoutTemplates } from '../hooks/useWorkoutTemplates';
 import { useFabAction } from '../contexts/FabActionContext';
 import { useScreenAnimation } from '../hooks/useScreenAnimation';
 import { Calendar } from 'react-native-calendars';
@@ -107,59 +102,6 @@ const MUSCLE_COLORS: Record<string, {
 
 const ACTIVITY_TOTAL_DAYS_FALLBACK = 182;
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
-
-// 🎨 Enhanced Template System (Supabase-driven)
-type TemplateExercise = {
-  id: string;
-  exerciseId: string;
-  name: string;
-  bodyParts: string[];
-  sets: number;
-  reps: string;
-  movementPattern?: string;
-};
-
-type TemplateDifficulty = 'beginner' | 'intermediate' | 'advanced';
-
-type WorkoutTemplate = {
-  id: string;
-  title: string;
-  subtitle: string;
-  description: string;
-  icon: string;
-  exercises: TemplateExercise[];
-  difficulty: TemplateDifficulty;
-  estimatedTime: number; // minutes
-  totalSets: number;
-  featured?: boolean;
-  goalTags: string[];
-  isPublic: boolean;
-};
-
-const TEMPLATE_ICON_BY_TAG: Record<string, string> = {
-  push: '🔥',
-  pull: '🎯',
-  legs: '🦵',
-  upper: '💪',
-  lower: '🏋️',
-  full_body: '⚡',
-};
-
-// Difficulty badge colors - SUBTLE
-const DIFFICULTY_COLORS: Record<TemplateDifficulty, { bg: string; text: string }> = {
-  beginner: {
-    bg: 'rgba(16, 185, 129, 0.15)',
-    text: '#6EE7B7',
-  },
-  intermediate: {
-    bg: 'rgba(234, 179, 8, 0.15)',
-    text: '#FDE047',
-  },
-  advanced: {
-    bg: 'rgba(239, 68, 68, 0.15)',
-    text: '#FCA5A5',
-  },
-};
 
 // 🎨 Progress Ring Component
 const ProgressRing: React.FC<{
@@ -397,7 +339,7 @@ type DashboardScreenProps = {
   plannedWorkouts: PlanDay[];
   onProfilePress?: () => void;
   onStartPhase?: () => void;
-  onToggleWorkoutExercise?: (date: string, exerciseName: string) => void;
+  onToggleWorkoutExercise?: (date: string, exerciseName: string, exerciseId?: string, currentExercises?: WorkoutSessionExercise[]) => void;
   onSaveCustomSession?: (date: string, exercises: WorkoutSessionExercise[]) => void;
   onAddExercise?: (planWorkoutId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
   onDeleteExercise?: (planWorkoutId: string, planExerciseId: string) => Promise<void>;
@@ -440,17 +382,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [calendarCardWidth, setCalendarCardWidth] = useState(
     Dimensions.get('window').width - 40
   );
-  const [dashboardTab, setDashboardTab] = useState<'plans' | 'templates'>('plans');
-  
-  // 🎨 Template system state
-  const [lastAddedTemplate, setLastAddedTemplate] = useState<WorkoutTemplate | null>(null);
-  const [templateTagFilter, setTemplateTagFilter] = useState<string>('all');
-  const [selectedTemplateModal, setSelectedTemplateModal] = useState<WorkoutTemplate | null>(null);
-  const [templateExercisesAdded, setTemplateExercisesAdded] = useState<Set<string>>(new Set());
-  const [selectedTemplateExerciseKeys, setSelectedTemplateExerciseKeys] = useState<Set<string>>(
-    new Set()
-  );
-  
   const pendingToggleRef = useRef<Map<string, { name: string; count: number }>>(new Map());
   const toggleFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orderUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -462,9 +393,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const checkboxPulseAnim = useRef(new Animated.Value(1)).current;
   const createButtonPulse = useRef(new Animated.Value(1)).current;
   const calendarExpandAnim = useRef(new Animated.Value(0)).current;
-  const templateCardScales = useRef<Map<string, Animated.Value>>(new Map());
-  const templateBannerAnim = useRef(new Animated.Value(0)).current;
-  const templateModalSlideAnim = useRef(new Animated.Value(300)).current;
   
   const pendingOrderRef = useRef<string[]>([]);
   const completedOrderRef = useRef<string[]>([]);
@@ -494,96 +422,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const selectedPlanDay =
     resolvedPlannedWorkouts.find((day) => day.date === selectedDate) || null;
 
-  const {
-    templates: remoteTemplates,
-    isLoading: templatesLoading,
-    error: templatesError,
-  } = useWorkoutTemplates(user.id);
-
-  const templates = useMemo<WorkoutTemplate[]>(() => {
-    const formatDifficulty = (value?: string | null): TemplateDifficulty => {
-      const normalized = (value ?? '').toLowerCase();
-      if (normalized === 'intermediate' || normalized === 'advanced' || normalized === 'beginner') {
-        return normalized as TemplateDifficulty;
-      }
-      return 'beginner';
-    };
-    const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
-
-    return remoteTemplates.map((template) => {
-      const totalSets = template.exercises.reduce((sum, ex) => sum + (ex.sets ?? 0), 0);
-      const estimatedTime =
-        template.estimatedTimeMinutes ?? Math.max(20, template.exercises.length * 8);
-      const primaryTag = template.goalTags.find((tag) => TEMPLATE_ICON_BY_TAG[tag]);
-      const icon = primaryTag ? TEMPLATE_ICON_BY_TAG[primaryTag] : '💪';
-      const difficulty = formatDifficulty(template.difficulty);
-      const subtitle = `${capitalize(difficulty)} • ${estimatedTime} min`;
-      const featured = template.isPublic && template.goalTags.includes('full_body');
-
-      return {
-        id: template.id,
-        title: template.title,
-        subtitle,
-        description: template.description ?? 'Workout template',
-        icon,
-        exercises: template.exercises.map((exercise) => ({
-          id: exercise.id,
-          exerciseId: exercise.exerciseId,
-          name: exercise.name,
-          bodyParts: exercise.bodyParts,
-          sets: exercise.sets ?? 4,
-          reps: exercise.reps ?? '8-12',
-          movementPattern: exercise.movementPattern ?? undefined,
-        })),
-        difficulty,
-        estimatedTime,
-        totalSets,
-        featured,
-        goalTags: template.goalTags,
-        isPublic: template.isPublic,
-      };
-    });
-  }, [remoteTemplates]);
-
-  const availableTemplateTags = useMemo(() => {
-    const tags = new Set<string>();
-    templates.forEach((template) => {
-      template.goalTags.forEach((tag) => tags.add(tag));
-    });
-    return ['all', ...Array.from(tags).sort()];
-  }, [templates]);
-
-  useEffect(() => {
-    if (templateTagFilter === 'all') return;
-    if (availableTemplateTags.includes(templateTagFilter)) return;
-    setTemplateTagFilter('all');
-  }, [availableTemplateTags, templateTagFilter]);
-
-  // Filter templates by tag
-  const filteredTemplates = useMemo(() => {
-    if (templateTagFilter === 'all') return templates;
-    return templates.filter((t) => t.goalTags.includes(templateTagFilter));
-  }, [templateTagFilter, templates]);
-
-  // Featured templates
-  const featuredTemplates = useMemo(
-    () => filteredTemplates.filter((t) => t.featured),
-    [filteredTemplates]
-  );
-
-  useEffect(() => {
-    if (!lastAddedTemplate) return;
-    templateBannerAnim.setValue(0);
-    Animated.spring(templateBannerAnim, {
-      toValue: 1,
-      ...ANIMATION_CONFIG.spring,
-      useNativeDriver: true,
-    }).start();
-  }, [lastAddedTemplate, selectedDate, templateBannerAnim]);
-
-  useEffect(() => {
-    setTemplateExercisesAdded(new Set());
-  }, [selectedDate]);
 
   const plannedExercisesForSelectedDate = useMemo<WorkoutSessionExercise[]>(() => {
     if (selectedSession?.exercises?.length || !selectedPlanDay?.workout?.exercises?.length) {
@@ -625,112 +463,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     return parts.filter(Boolean).join('-');
   };
 
-  // 🎨 Template animation helpers
-  const getTemplateCardScale = useCallback((templateId: string) => {
-    if (!templateCardScales.current.has(templateId)) {
-      templateCardScales.current.set(templateId, new Animated.Value(1));
-    }
-    return templateCardScales.current.get(templateId)!;
-  }, []);
-
-  // 🎨 Open template details modal
-  const handleOpenTemplateModal = useCallback((template: WorkoutTemplate) => {
-    templateModalSlideAnim.setValue(300);
-    setSelectedTemplateModal(template);
-  }, [templateModalSlideAnim]);
 
 
-  /**
-   * 🎨 Apply selected template exercises to today's plan
-   */
-  const handleApplyTemplateExercises = useCallback(
-    async (template: WorkoutTemplate, exercises: TemplateExercise[]) => {
-      if (!onSaveCustomSession) return;
-      if (!exercises.length) return;
-      const missing = exercises.filter((ex) => !ex.exerciseId);
-      if (missing.length) {
-        console.error('Template exercises missing exerciseId:', missing.map((ex) => ex.name));
-        Alert.alert('Missing exercise IDs', 'One or more template exercises are missing IDs.');
-        return;
-      }
-
-      const baseExercises: WorkoutSessionExercise[] =
-        plannedExercisesForSelectedDate ?? selectedSession?.exercises ?? [];
-      const startOrder = baseExercises.length;
-
-      const templateExercises: WorkoutSessionExercise[] = exercises.map((ex, index) => ({
-        exerciseId: ex.exerciseId,
-        name: ex.name,
-        bodyParts: ex.bodyParts as MuscleGroup[],
-        sets: ex.sets,
-        reps: ex.reps,
-        movementPattern: ex.movementPattern,
-        displayOrder: startOrder + index + 1,
-        completed: false,
-      }));
-
-      const nextExercises = [...baseExercises, ...templateExercises];
-      try {
-        await onSaveCustomSession(selectedDate, nextExercises);
-      } catch (error) {
-        console.error('Failed to save template exercises', error);
-        Alert.alert('Add failed', 'Could not save template exercises. Check console for details.');
-        return;
-      }
-
-      setTemplateExercisesAdded((prev) => {
-        const next = new Set(prev);
-        exercises.forEach((ex) => {
-          next.add(`${template.id}-${ex.exerciseId}`);
-        });
-        return next;
-      });
-
-      setLastAddedTemplate(template);
-      Animated.spring(templateBannerAnim, {
-        toValue: 1,
-        ...ANIMATION_CONFIG.spring,
-        useNativeDriver: true,
-      }).start();
-
-      setDashboardTab('plans');
-    },
-    [onSaveCustomSession, plannedExercisesForSelectedDate, selectedSession, selectedDate, templateBannerAnim]
-  );
-
-  const toggleTemplateExerciseSelection = useCallback(
-    (exerciseKey: string, disabled?: boolean) => {
-      if (disabled) return;
-      setSelectedTemplateExerciseKeys((prev) => {
-        const next = new Set(prev);
-        if (next.has(exerciseKey)) {
-          next.delete(exerciseKey);
-        } else {
-          next.add(exerciseKey);
-        }
-        return next;
-      });
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (selectedTemplateModal) {
-      const nextKeys = new Set(
-        selectedTemplateModal.exercises.map((ex) => `${selectedTemplateModal.id}-${ex.exerciseId}`)
-      );
-      setSelectedTemplateExerciseKeys(nextKeys);
-      Animated.spring(templateModalSlideAnim, {
-        toValue: 0,
-        tension: 60,
-        friction: 8,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      templateModalSlideAnim.setValue(300);
-      setSelectedTemplateExerciseKeys(new Set());
-    }
-  }, [selectedTemplateModal, templateModalSlideAnim]);
 
   useEffect(() => {
     setLocalCompletionOverrides({});
@@ -1020,7 +754,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           ...baseConfig,
           label: 'Add Workout',
           icon: '+',
-          onPress: () => setDashboardTab('templates'),
+          onPress: () => setExercisePickerNonce((prev) => prev + 1),
         };
       }
       return {
@@ -1323,70 +1057,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     </View>
   );
 
-  // 🎨 Render template card - SUBTLE VERSION
-  const renderTemplateCard = (template: WorkoutTemplate) => {
-    const scale = getTemplateCardScale(template.id);
-    const difficultyColors = DIFFICULTY_COLORS[template.difficulty];
-
-    return (
-      <Animated.View key={template.id} style={{ transform: [{ scale }], marginBottom: 12 }}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => handleOpenTemplateModal(template)}
-        >
-          <View style={styles.templateCard}>
-            {/* Header */}
-            <View style={styles.templateHeader}>
-              <View style={styles.templateIconBadge}>
-                <Text style={styles.templateIcon}>{template.icon}</Text>
-              </View>
-              <View style={styles.templateHeaderText}>
-                <Text style={styles.templateTitle}>{template.title}</Text>
-                <Text style={styles.templateSubtitle}>{template.subtitle}</Text>
-              </View>
-              <View style={[styles.difficultyBadge, { backgroundColor: difficultyColors.bg }]}>
-                <Text style={[styles.difficultyBadgeText, { color: difficultyColors.text }]}>
-                  {template.difficulty.charAt(0).toUpperCase() + template.difficulty.slice(1)}
-                </Text>
-              </View>
-            </View>
-
-            {/* Description */}
-            <Text style={styles.templateDescription}>{template.description}</Text>
-
-            {/* Stats Row */}
-            <View style={styles.templateStatsRow}>
-              <View style={styles.templateStat}>
-                <Text style={styles.templateStatValue}>{template.exercises.length}</Text>
-                <Text style={styles.templateStatLabel}>exercises</Text>
-              </View>
-              <View style={styles.templateStatDivider} />
-              <View style={styles.templateStat}>
-                <Text style={styles.templateStatValue}>{template.totalSets}</Text>
-                <Text style={styles.templateStatLabel}>sets</Text>
-              </View>
-              <View style={styles.templateStatDivider} />
-              <View style={styles.templateStat}>
-                <Text style={styles.templateStatValue}>{template.estimatedTime}</Text>
-                <Text style={styles.templateStatLabel}>min</Text>
-              </View>
-            </View>
-
-            {/* Quick Add Button */}
-            <TouchableOpacity
-              style={styles.quickAddButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleApplyTemplateExercises(template, template.exercises);
-              }}
-            >
-              <Text style={styles.quickAddButtonText}>+ Add All to Today</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Animated.View>
-    );
-  };
 
   const renderWorkoutsSection = () => {
     const renderExerciseCard = (exercise: WorkoutSessionEntry['exercises'][number]) => {
@@ -1398,12 +1068,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       const scaleAnim = getExerciseCardAnimation(cardKey);
       const completedSets = workoutSetProgress[exerciseKey]?.completedSets ?? 0;
       const setProgress = targetSets > 0 ? (completedSets / targetSets) * 100 : 0;
-
-      // Check if this exercise came from a template
-      const templateMatchKey = exercise.exerciseId ? exercise.exerciseId : exercise.name;
-      const isFromTemplate = Array.from(templateExercisesAdded).some((key) =>
-        key.endsWith(`-${templateMatchKey}`)
-      );
 
       // Get primary muscle color
       const primaryMuscle = exercise.bodyParts[0]?.toLowerCase() || 'core';
@@ -1433,14 +1097,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 styles.exerciseCard,
                 !canLogWorkouts && styles.exerciseCardDisabled,
                 isMarked && styles.exerciseCardCompleted,
-                isFromTemplate && styles.exerciseCardFromTemplate,
               ]}
             >
-              {isFromTemplate && (
-                <View style={styles.templateBadge}>
-                  <Text style={styles.templateBadgeText}>📋 Template</Text>
-                </View>
-              )}
               <View style={styles.exerciseCardRow}>
                 {/* Left Side: Progress Ring + Checkbox */}
                 <View style={styles.exerciseLeftSection}>
@@ -1592,139 +1250,23 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </View>
         ) : null}
 
-        {dashboardTab === 'templates' ? (
-          <View style={styles.templateList}>
-            {templatesLoading && (
-              <Text style={styles.templateLoadingText}>Loading templates…</Text>
-            )}
-
-            {!templatesLoading && templatesError && (
-              <Text style={styles.templateLoadingText}>Failed to load templates.</Text>
-            )}
-
-            {/* Featured Section */}
-            {!templatesLoading && featuredTemplates.length > 0 && (
-              <>
-                <View style={styles.templateSectionHeader}>
-                  <Text style={styles.templateSectionTitle}>⭐ Featured</Text>
-                </View>
-                {featuredTemplates.map(renderTemplateCard)}
-              </>
-            )}
-
-            {!templatesLoading && availableTemplateTags.length > 1 && (
-              <View style={styles.templateFilterRow}>
-                {availableTemplateTags.map((tag) => (
-                  <TouchableOpacity
-                    key={tag}
-                    style={[
-                      styles.templateFilterButton,
-                      templateTagFilter === tag && styles.templateFilterButtonActive,
-                    ]}
-                    onPress={() => setTemplateTagFilter(tag)}
-                  >
-                    <Text
-                      style={[
-                        styles.templateFilterText,
-                        templateTagFilter === tag && styles.templateFilterTextActive,
-                      ]}
-                    >
-                      {tag === 'all'
-                        ? 'All'
-                        : tag.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            {/* All Templates */}
-            {!templatesLoading && filteredTemplates.filter((t) => !t.featured).length > 0 && (
-              <>
-                <View style={styles.templateSectionHeader}>
-                  <Text style={styles.templateSectionTitle}>All Templates</Text>
-                  <Text style={styles.templateSectionCount}>
-                    {filteredTemplates.filter((t) => !t.featured).length} templates
-                  </Text>
-                </View>
-                {filteredTemplates.filter((t) => !t.featured).map(renderTemplateCard)}
-              </>
-            )}
-
-            {!templatesLoading && filteredTemplates.length === 0 && (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyEmoji}>📦</Text>
-                <Text style={styles.emptyTitle}>No templates yet</Text>
-                <Text style={styles.emptyText}>
-                  Add templates in the admin console to populate this library.
-                </Text>
-              </View>
-            )}
-          </View>
-        ) : null}
-
-        {dashboardTab === 'plans' && !hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
+        {!hasActivePlan && !isHomeLoading && !isSessionsLoading ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>🎯</Text>
             <Text style={styles.emptyTitle}>No active plan</Text>
             <Text style={styles.emptyText}>
               Create your personalized training plan to get started.
             </Text>
-            
             {onStartPhase && (
               <Animated.View style={{ transform: [{ scale: createButtonPulse }] }}>
-                <TouchableOpacity 
-                  style={styles.createPlanButton} 
-                  onPress={onStartPhase}
-                >
+                <TouchableOpacity style={styles.createPlanButton} onPress={onStartPhase}>
                   <Text style={styles.createPlanButtonText}>Create Plan</Text>
                 </TouchableOpacity>
               </Animated.View>
             )}
           </View>
-        ) : dashboardTab === 'plans' && hasActivePlan ? (
+        ) : hasActivePlan ? (
           <>
-            {lastAddedTemplate && (
-              <Animated.View 
-                style={[
-                  styles.templateSourceBanner,
-                  {
-                    opacity: templateBannerAnim,
-                    transform: [{
-                      translateY: templateBannerAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [-20, 0],
-                      }),
-                    }],
-                  },
-                ]}
-              >
-                <View style={styles.templateSourceCard}>
-                  <View style={styles.templateSourceContent}>
-                    <View style={styles.templateSourceIconSmall}>
-                      <Text style={styles.templateSourceIconText}>{lastAddedTemplate.icon}</Text>
-                    </View>
-                    <View style={styles.templateSourceInfo}>
-                      <Text style={styles.templateSourceLabel}>FROM TEMPLATE</Text>
-                      <Text style={styles.templateSourceTitle}>{lastAddedTemplate.title}</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.templateSourceClose}
-                      onPress={() => {
-                        Animated.timing(templateBannerAnim, {
-                          toValue: 0,
-                          duration: 200,
-                          useNativeDriver: true,
-                        }).start(() => setLastAddedTemplate(null));
-                      }}
-                    >
-                      <Text style={styles.templateSourceCloseText}>×</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </Animated.View>
-            )}
-
             <PlansScreen
               user={user}
               phase={phase}
@@ -1733,30 +1275,25 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               onSaveCustomSession={onSaveCustomSession}
               onAddExercise={onAddExercise}
               onDeleteExercise={onDeleteExercise}
+              onToggleComplete={onToggleWorkoutExercise}
               embedded
               openExercisePickerSignal={exercisePickerNonce}
               selectedDateOverride={selectedDate}
             />
           </>
-        ) : dashboardTab === 'plans' && !hasSyncedWorkout ? (
+        ) : !hasSyncedWorkout ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>📭</Text>
             <Text style={styles.emptyTitle}>No workout scheduled</Text>
             <Text style={styles.emptyText}>
-              Add a template or build a custom workout to get started.
+              Go to the Library tab to pick a template for today.
             </Text>
-            <TouchableOpacity
-              style={styles.templateCtaButton}
-              onPress={() => setDashboardTab('templates')}
-            >
-              <Text style={styles.templateCtaText}>Browse Templates</Text>
-            </TouchableOpacity>
           </View>
-        ) : dashboardTab === 'plans' ? (
+        ) : (
           <View style={styles.verticalList}>
             {sortedWorkoutCards.map(renderExerciseCard)}
           </View>
-        ) : null}
+        )}
       </>
     );
 
@@ -1913,186 +1450,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           showsVerticalScrollIndicator={false}
           bounces={true}
           onScrollBeginDrag={handleContentScrollBegin}
-          stickyHeaderIndices={[0]}
         >
-          <View style={styles.tabsStickyWrapper}>
-            <View style={styles.dashboardTabRow}>
-              <TouchableOpacity
-                style={[
-                  styles.dashboardTabButton,
-                  dashboardTab === 'plans' && styles.dashboardTabButtonActive,
-                ]}
-                onPress={() => setDashboardTab('plans')}
-              >
-                <Text
-                  style={[
-                    styles.dashboardTabText,
-                    dashboardTab === 'plans' && styles.dashboardTabTextActive,
-                  ]}
-                >
-                  Today
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.dashboardTabButton,
-                  dashboardTab === 'templates' && styles.dashboardTabButtonActive,
-                ]}
-                onPress={() => setDashboardTab('templates')}
-              >
-                <Text
-                  style={[
-                    styles.dashboardTabText,
-                    dashboardTab === 'templates' && styles.dashboardTabTextActive,
-                  ]}
-                >
-                  Templates
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
           {renderWorkoutsSection()}
         </ScrollView>
       </LinearGradient>
 
-      {/* 🎨 Template Details Modal */}
-      <Modal
-        transparent
-        animationType="none"
-        visible={selectedTemplateModal !== null}
-        onRequestClose={() => setSelectedTemplateModal(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable
-            style={styles.modalBackdropPress}
-            onPress={() => setSelectedTemplateModal(null)}
-          />
-          <Animated.View
-            style={[
-              styles.templateModalSheet,
-              {
-                transform: [{ translateY: templateModalSlideAnim }],
-              },
-            ]}
-          >
-            <View style={styles.sheetHandle} />
-            {selectedTemplateModal && (
-              <>
-                {/* Compact Header */}
-                <View style={styles.templateModalHeaderCompact}>
-                  <View style={styles.templateModalIconSmall}>
-                    <Text style={styles.templateModalIconSmallText}>{selectedTemplateModal.icon}</Text>
-                  </View>
-                  <View style={styles.templateModalHeaderTextCompact}>
-                    <Text style={styles.templateModalTitleCompact}>{selectedTemplateModal.title}</Text>
-                    <View style={styles.templateModalMetaRow}>
-                      <View style={[
-                        styles.difficultyBadgeSmall,
-                        { backgroundColor: DIFFICULTY_COLORS[selectedTemplateModal.difficulty].bg }
-                      ]}>
-                        <Text style={[
-                          styles.difficultyBadgeSmallText,
-                          { color: DIFFICULTY_COLORS[selectedTemplateModal.difficulty].text }
-                        ]}>
-                          {selectedTemplateModal.difficulty.charAt(0).toUpperCase() + selectedTemplateModal.difficulty.slice(1)}
-                        </Text>
-                      </View>
-                      <Text style={styles.templateModalQuickStats}>
-                        {selectedTemplateModal.exercises.length} exercises • {selectedTemplateModal.totalSets} sets • {selectedTemplateModal.estimatedTime} min
-                      </Text>
-                    </View>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.modalCloseButtonCompact}
-                    onPress={() => setSelectedTemplateModal(null)}
-                  >
-                    <Text style={styles.modalCloseButtonText}>×</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Exercise List - FIRST! */}
-                <ScrollView 
-                  style={styles.templateModalExerciseListTop} 
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={styles.templateModalExerciseListContent}
-                >
-                  {selectedTemplateModal.exercises.map((ex, idx) => {
-                    const muscleKey = ex.bodyParts[0]?.toLowerCase() || 'core';
-                    const colors = MUSCLE_COLORS[muscleKey] || MUSCLE_COLORS.core;
-                    const exerciseKey = `${selectedTemplateModal.id}-${ex.exerciseId}`;
-                    const wasAdded = templateExercisesAdded.has(exerciseKey);
-                    const isSelected = selectedTemplateExerciseKeys.has(exerciseKey);
-
-                    return (
-                      <TouchableOpacity
-                        key={idx}
-                        style={[
-                          styles.templateModalExerciseRow,
-                          (isSelected || wasAdded) && styles.templateModalExerciseRowSelected,
-                        ]}
-                        activeOpacity={0.85}
-                        onPress={() => toggleTemplateExerciseSelection(exerciseKey, wasAdded)}
-                        disabled={wasAdded}
-                      >
-                        <View style={[styles.templateModalExerciseDot, { backgroundColor: colors.text }]} />
-                        <View style={styles.templateModalExerciseInfo}>
-                          <Text style={styles.templateModalExerciseName}>{ex.name}</Text>
-                          <Text style={styles.templateModalExerciseMeta}>
-                            {ex.sets}×{ex.reps} • {ex.bodyParts.slice(0, 2).map(formatBodyPartSafe).join(', ')}
-                          </Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.templateModalExerciseCheck,
-                            (isSelected || wasAdded) && styles.templateModalExerciseCheckActive,
-                          ]}
-                        >
-                          {(isSelected || wasAdded) && (
-                            <Text style={styles.templateModalExerciseCheckText}>✓</Text>
-                          )}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-
-                {/* Bottom Actions */}
-                <View style={styles.templateModalFooter}>
-                  {(() => {
-                    const addableExercises = selectedTemplateModal.exercises.filter((ex) => {
-                      const key = `${selectedTemplateModal.id}-${ex.exerciseId}`;
-                      return selectedTemplateExerciseKeys.has(key) && !templateExercisesAdded.has(key);
-                    });
-                    const addableCount = addableExercises.length;
-                    const totalCount = selectedTemplateModal.exercises.length;
-                    const label =
-                      addableCount === 0
-                        ? 'Add (0)'
-                        : addableCount === totalCount
-                          ? `Add (${totalCount} workouts)`
-                          : `Add (${addableCount})`;
-                    return (
-                      <TouchableOpacity
-                        style={[
-                          styles.templateModalAddAllButton,
-                          addableCount === 0 && styles.templateModalAddAllButtonDisabled,
-                        ]}
-                        onPress={async () => {
-                          setSelectedTemplateModal(null);
-                          await handleApplyTemplateExercises(selectedTemplateModal, addableExercises);
-                        }}
-                        disabled={addableCount === 0}
-                      >
-                        <Text style={styles.templateModalAddAllText}>{label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })()}
-                </View>
-              </>
-            )}
-          </Animated.View>
-        </View>
-      </Modal>
     </View>
   );
 };
@@ -2649,6 +2011,79 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: COLORS.accent,
+    letterSpacing: 0.2,
+  },
+  quickAddButtonCurrent: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 245, 160, 0.1)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(0, 245, 160, 0.3)',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  quickAddButtonCurrentText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.success,
+    letterSpacing: 0.2,
+  },
+  templateCardCurrent: {
+    borderColor: 'rgba(0, 245, 160, 0.35)',
+    backgroundColor: '#0D1A18',
+    shadowColor: COLORS.success,
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  templateCardFeatured: {
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+    shadowColor: COLORS.accent,
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  templateCardActiveStrip: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: 3,
+    borderTopLeftRadius: 16,
+    borderBottomLeftRadius: 16,
+    backgroundColor: COLORS.success,
+  },
+  templateCurrentBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 160, 0.35)',
+  },
+  templateCurrentBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.success,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  templateMusclePillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  templateMusclePill: {
+    paddingVertical: 3,
+    paddingHorizontal: 9,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  templateMusclePillText: {
+    fontSize: 10,
+    fontWeight: '700',
     letterSpacing: 0.2,
   },
   templateExerciseList: {

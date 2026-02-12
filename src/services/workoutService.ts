@@ -242,12 +242,30 @@ export const createSessionFromPlanWorkout = async ({
 }: CreateSessionFromPlanInput): Promise<string> => {
   const existingRes = await supabase
     .from('fitarc_workout_sessions')
-    .select('id')
+    .select('id, session_exercises:fitarc_workout_session_exercises(id)')
     .eq('plan_id', planId)
     .eq('planned_date', normalizeDate(date))
     .maybeSingle();
   if (existingRes.error) throw existingRes.error;
-  if (existingRes.data?.id) return existingRes.data.id;
+  if (existingRes.data?.id) {
+    const sessionId = existingRes.data.id;
+    const existingExercises = (existingRes.data as any).session_exercises ?? [];
+    // Session exists but has no exercises — populate them now
+    if (existingExercises.length === 0 && exercises.length > 0) {
+      for (let index = 0; index < exercises.length; index += 1) {
+        try {
+          await addExerciseToSession({
+            sessionId,
+            exercise: exercises[index],
+            displayOrder: exercises[index].displayOrder ?? index + 1,
+          });
+        } catch {
+          // ignore duplicate_exercise errors (exercise already added concurrently)
+        }
+      }
+    }
+    return sessionId;
+  }
 
   const { data, error } = await supabase
     .from('fitarc_workout_sessions')
@@ -759,6 +777,35 @@ export const deleteWorkoutSessionExercise = async (
     .delete()
     .eq('id', sessionExerciseId);
   if (deleteExerciseError) throw deleteExerciseError;
+};
+
+/**
+ * Returns true if any set in this session has logged weight or reps data,
+ * indicating the user has already started tracking their workout.
+ */
+export const sessionHasLoggedProgress = async (sessionId: string): Promise<boolean> => {
+  const { data: exerciseRows, error: exError } = await supabase
+    .from('fitarc_workout_session_exercises')
+    .select('id')
+    .eq('session_id', sessionId);
+  if (exError) {
+    console.warn('sessionHasLoggedProgress exercise query error:', exError);
+    return false;
+  }
+  const exerciseIds = (exerciseRows ?? []).map((r) => r.id as string);
+  if (!exerciseIds.length) return false;
+
+  const { data: setRows, error: setError } = await supabase
+    .from('fitarc_workout_sets')
+    .select('id')
+    .in('session_exercise_id', exerciseIds)
+    .or('weight.not.is.null,reps.not.is.null')
+    .limit(1);
+  if (setError) {
+    console.warn('sessionHasLoggedProgress set query error:', setError);
+    return false;
+  }
+  return (setRows?.length ?? 0) > 0;
 };
 
 type DeleteWorkoutSessionInput = {

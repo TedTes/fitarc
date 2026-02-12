@@ -21,6 +21,8 @@ type PlanContext = {
   goalType?: string | null;
 };
 
+type PlanTemplateMap = Record<string, string>;
+
 type TemplateExerciseRow = {
   id: string;
   exercise_id: string;
@@ -194,6 +196,31 @@ const fetchPlanContext = async (planId: string): Promise<PlanContext | null> => 
   };
 };
 
+const normalizePlanTemplateMap = (value: unknown): PlanTemplateMap | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, templateId]) => [normalizeKey(key), typeof templateId === 'string' ? templateId : null] as const)
+    .filter(([, templateId]) => Boolean(templateId));
+  if (!entries.length) return null;
+  return Object.fromEntries(entries) as PlanTemplateMap;
+};
+
+const fetchStoredPlanTemplateMap = async (planId: string): Promise<PlanTemplateMap | null> => {
+  const { data, error } = await supabase
+    .from('fitarc_workout_plans')
+    .select('template_map')
+    .eq('id', planId)
+    .maybeSingle();
+
+  // Fail open if the column does not exist yet in DB.
+  if (error) {
+    const code = (error as { code?: string }).code;
+    if (code === '42703') return null;
+    throw error;
+  }
+  return normalizePlanTemplateMap((data as { template_map?: unknown } | null)?.template_map);
+};
+
 const fetchTemplatesForUser = async (userId: string): Promise<TemplateRow[]> => {
   const { data, error } = await supabase
     .from('fitarc_workout_templates')
@@ -326,6 +353,7 @@ const resolveTemplateForDate = (
   split: User['trainingSplit'],
   daysPerWeek: 3 | 4 | 5 | 6,
   templates: TemplateRow[],
+  storedTemplateMap: PlanTemplateMap | null,
   equipmentLevel: 'bodyweight' | 'dumbbells' | 'full_gym' | null,
   experienceLevel?: User['experienceLevel']
 ): TemplateRow | null => {
@@ -333,6 +361,11 @@ const resolveTemplateForDate = (
   if (scheduledIndex === null) return null;
   const tags = mapSplitToTags(split);
   const workoutTag = tags[scheduledIndex % tags.length];
+  const mappedTemplateId = storedTemplateMap?.[workoutTag];
+  if (mappedTemplateId) {
+    const mapped = templates.find((template) => template.id === mappedTemplateId);
+    if (mapped) return mapped;
+  }
   const candidates = chooseTemplatesForTag(
     workoutTag,
     templates,
@@ -341,6 +374,32 @@ const resolveTemplateForDate = (
     experienceLevel
   );
   return candidates.length ? candidates[scheduledIndex % candidates.length] : null;
+};
+
+const buildTemplateMapForPlan = (
+  context: PlanContext,
+  split: User['trainingSplit'],
+  templates: TemplateRow[],
+  equipmentLevel: 'bodyweight' | 'dumbbells' | 'full_gym' | null,
+  experienceLevel?: User['experienceLevel']
+): PlanTemplateMap | null => {
+  const tags = mapSplitToTags(split);
+  const entries: Array<[string, string]> = [];
+  tags.forEach((tag) => {
+    const candidates = chooseTemplatesForTag(
+      tag,
+      templates,
+      context.goalType,
+      equipmentLevel,
+      experienceLevel
+    );
+    const chosen = candidates[0];
+    if (chosen?.id) {
+      entries.push([tag, chosen.id]);
+    }
+  });
+  if (!entries.length) return null;
+  return Object.fromEntries(entries);
 };
 
 const buildBaseExercises = (
@@ -481,6 +540,7 @@ const buildTemplateBaselineForDate = async (
   if (!templates.length) {
     return new Map();
   }
+  const storedTemplateMap = await fetchStoredPlanTemplateMap(context.planId);
   const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
   const template = resolveTemplateForDate(
     context,
@@ -488,6 +548,7 @@ const buildTemplateBaselineForDate = async (
     split,
     daysPerWeek,
     templates,
+    storedTemplateMap,
     equipmentLevel,
     profile?.experienceLevel
   );
@@ -551,6 +612,7 @@ export const fetchPlanRange = async (
   const daysPerWeek = inferDaysPerWeek(split);
   const templates = await fetchTemplatesForUser(userId);
   if (!templates.length) return [];
+  const storedTemplateMap = await fetchStoredPlanTemplateMap(planId);
   const overridesByDay = await fetchOverridesForRange(userId, planId, startDate, endDate);
   const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
 
@@ -564,6 +626,7 @@ export const fetchPlanRange = async (
       split,
       daysPerWeek,
       templates,
+      storedTemplateMap,
       equipmentLevel,
       profile?.experienceLevel
     );
@@ -589,6 +652,7 @@ export const fetchResolvedPlanForDate = async (
 
   const templates = await fetchTemplatesForUser(userId);
   if (!templates.length) return null;
+  const storedTemplateMap = await fetchStoredPlanTemplateMap(planId);
   const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
   const template = resolveTemplateForDate(
     context,
@@ -596,6 +660,7 @@ export const fetchResolvedPlanForDate = async (
     split,
     daysPerWeek,
     templates,
+    storedTemplateMap,
     equipmentLevel,
     profile?.experienceLevel
   );
@@ -815,3 +880,34 @@ export const toPlanExerciseInputs = (
     notes: exercise.notes ?? null,
     sourceTemplateExerciseId: extractTemplateExerciseId(exercise.id),
   }));
+
+export const linkPlanToMatchedTemplates = async (
+  userId: string,
+  planId: string
+): Promise<PlanTemplateMap | null> => {
+  const context = await fetchPlanContext(planId);
+  if (!context || context.userId !== userId) return null;
+
+  const profile = await fetchUserProfile(userId);
+  const split = profile?.trainingSplit ?? 'full_body';
+  const templates = await fetchTemplatesForUser(userId);
+  if (!templates.length) return null;
+  const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
+  const templateMap = buildTemplateMapForPlan(
+    context,
+    split,
+    templates,
+    equipmentLevel,
+    profile?.experienceLevel
+  );
+  if (!templateMap) return null;
+
+  const { error } = await supabase
+    .from('fitarc_workout_plans')
+    .update({ template_map: templateMap })
+    .eq('id', planId)
+    .eq('user_id', userId);
+  if (error) throw error;
+
+  return templateMap;
+};
