@@ -25,6 +25,24 @@ import * as ImagePicker from 'expo-image-picker';
 import Constants from 'expo-constants';
 import { uploadUserAvatar } from '../services/userProfileService';
 
+// ─── Design tokens ───────────────────────────────────────────────────────────
+const C = {
+  bg: '#0A0E27',
+  surface: '#151932',
+  surface2: '#1A1F3A',
+  primary: '#6C63FF',
+  accent: '#00F5A0',
+  text: '#FFFFFF',
+  textSec: '#8B93B0',
+  textMuted: '#5A6178',
+  border: '#2A2F4F',
+  danger: '#FF6B6B',
+  rowBorder: 'rgba(255,255,255,0.06)',
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+type ActivePicker = 'experience' | 'split' | 'eating' | 'physique' | null;
+
 type ProfileScreenProps = {
   user: User;
   onSave: (user: User) => void;
@@ -35,6 +53,252 @@ type ProfileScreenProps = {
   onDeleteAccount?: () => Promise<void> | void;
 };
 
+// ─── PickerModal ──────────────────────────────────────────────────────────────
+type PickerOption = {
+  value: string;
+  label: string;
+  sublabel?: string;
+};
+
+type PickerModalProps = {
+  visible: boolean;
+  title: string;
+  options: PickerOption[];
+  selected: string | number;
+  onSelect: (value: string) => void;
+  onClose: () => void;
+};
+
+const PickerModal: React.FC<PickerModalProps> = ({
+  visible,
+  title,
+  options,
+  selected,
+  onSelect,
+  onClose,
+}) => (
+  <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
+    <View style={pm.overlay}>
+      <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+      <View style={pm.sheet}>
+        <View style={pm.handle} />
+        <View style={pm.headerRow}>
+          <Text style={pm.title}>{title}</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={pm.closeX}>✕</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+          {options.map((opt, idx) => {
+            const isActive = String(selected) === String(opt.value);
+            const isLast = idx === options.length - 1;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[pm.option, !isLast && pm.optionBorder]}
+                onPress={() => { onSelect(opt.value); onClose(); }}
+                activeOpacity={0.7}
+              >
+                <View style={pm.optionLeft}>
+                  <Text style={[pm.optionLabel, isActive && pm.optionLabelActive]}>
+                    {opt.label}
+                  </Text>
+                  {opt.sublabel ? (
+                    <Text style={pm.optionSub}>{opt.sublabel}</Text>
+                  ) : null}
+                </View>
+                {isActive && <Text style={pm.check}>✓</Text>}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </View>
+  </Modal>
+);
+
+const pm = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: C.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    maxHeight: '70%',
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    marginTop: 12,
+    marginBottom: 20,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: C.text,
+  },
+  closeX: {
+    fontSize: 16,
+    color: C.textSec,
+  },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  optionBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: C.rowBorder,
+  },
+  optionLeft: { flex: 1 },
+  optionLabel: {
+    fontSize: 16,
+    color: C.textSec,
+    fontWeight: '500',
+  },
+  optionLabelActive: {
+    color: C.text,
+    fontWeight: '700',
+  },
+  optionSub: {
+    fontSize: 12,
+    color: C.textMuted,
+    marginTop: 3,
+    lineHeight: 17,
+  },
+  check: {
+    fontSize: 18,
+    color: C.accent,
+    fontWeight: '700',
+    marginLeft: 12,
+  },
+});
+
+// ─── Row helpers ──────────────────────────────────────────────────────────────
+type CardRowProps = {
+  icon: string;
+  label: string;
+  isLast?: boolean;
+  children: React.ReactNode;
+  onPress?: () => void;
+};
+
+const CardRow: React.FC<CardRowProps> = ({ icon, label, isLast, children, onPress }) => {
+  const inner = (
+    <View style={[cr.row, !isLast && cr.rowBorder]}>
+      <View style={cr.left}>
+        <View style={cr.iconBox}>
+          <Text style={cr.iconText}>{icon}</Text>
+        </View>
+        <Text style={cr.label}>{label}</Text>
+      </View>
+      <View style={cr.right}>{children}</View>
+    </View>
+  );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity onPress={onPress} activeOpacity={0.7}>
+        {inner}
+      </TouchableOpacity>
+    );
+  }
+  return inner;
+};
+
+const cr = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    minHeight: 56,
+  },
+  rowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: C.rowBorder,
+  },
+  left: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  iconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  iconText: { fontSize: 18 },
+  label: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: C.text,
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  right: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+    maxWidth: '55%',
+  },
+});
+
+// ─── SectionCard ──────────────────────────────────────────────────────────────
+const SectionCard: React.FC<{ title: string; children: React.ReactNode }> = ({
+  title,
+  children,
+}) => (
+  <View style={sc.wrap}>
+    <Text style={sc.title}>{title}</Text>
+    <View style={sc.card}>{children}</View>
+  </View>
+);
+
+const sc = StyleSheet.create({
+  wrap: { marginBottom: 28, paddingHorizontal: 16 },
+  title: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.textMuted,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  card: {
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    overflow: 'hidden',
+  },
+});
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   user,
   onSave,
@@ -45,10 +309,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onDeleteAccount,
 }) => {
   const { headerStyle, contentStyle } = useScreenAnimation();
+
+  // ── profile state ──
   const [name, setName] = useState(user.name ?? '');
   const [sex, setSex] = useState<'male' | 'female' | 'other'>(user.sex);
   const [age, setAge] = useState(user.age.toString());
   const [heightCm, setHeightCm] = useState(user.heightCm.toString());
+  const [weightKg, setWeightKg] = useState(user.weightKg?.toString() ?? '');
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>(user.experienceLevel);
   const [trainingSplit, setTrainingSplit] = useState<TrainingSplit>(user.trainingSplit);
   const [eatingMode, setEatingMode] = useState<EatingMode>(user.eatingMode);
@@ -58,6 +325,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(user.avatarUrl);
   const [avatarPath, setAvatarPath] = useState<string | undefined>(user.avatarPath);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+
   const avatarInitials = useMemo(
     () =>
       name
@@ -71,13 +339,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     [name]
   );
 
+  // ── shared picker state (replaces 4 separate booleans) ──
+  const [activePicker, setActivePicker] = useState<ActivePicker>(null);
 
-  // ✨ NEW: Modal states for pickers
-  const [showExperiencePicker, setShowExperiencePicker] = useState(false);
-  const [showSplitPicker, setShowSplitPicker] = useState(false);
-  const [showEatingPicker, setShowEatingPicker] = useState(false);
-  const [showCurrentLevelPicker, setShowCurrentLevelPicker] = useState(false);
+  // ── autosave indicator ──
+  const [saved, setSaved] = useState(false);
+  const savedOpacity = useRef(new Animated.Value(0)).current;
 
+  const showSavedBadge = useCallback(() => {
+    setSaved(true);
+    savedOpacity.setValue(1);
+    Animated.sequence([
+      Animated.delay(1200),
+      Animated.timing(savedOpacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]).start(() => setSaved(false));
+  }, [savedOpacity]);
+
+  // ── exercise defaults ──
   const { exercises: exerciseCatalog, isLoading: exercisesLoading } = useSupabaseExercises();
   const {
     defaults: exerciseDefaults,
@@ -87,7 +365,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   } = useExerciseDefaults(user.id);
 
   const [defaultsExpanded, setDefaultsExpanded] = useState(false);
-  const [defaultEdits, setDefaultEdits] = useState<Record<string, { weight: string; reps: string; sets: string; rest: string }>>({});
+  const [defaultEdits, setDefaultEdits] = useState<
+    Record<string, { weight: string; reps: string; sets: string; rest: string }>
+  >({});
   const [expandedDefaults, setExpandedDefaults] = useState<Record<string, boolean>>({});
   const [defaultSearch, setDefaultSearch] = useState('');
   const [defaultModalVisible, setDefaultModalVisible] = useState(false);
@@ -96,11 +376,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [termsModalVisible, setTermsModalVisible] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const appVersion =
     Constants.expoConfig?.version ??
     (Constants as any).manifest?.version ??
     '1.0.0';
 
+  // ── handlers (all original, no signature changes) ──
   const handleSendFeedback = useCallback(async () => {
     const subject = encodeURIComponent('Fitarc Feedback');
     const body = encodeURIComponent(
@@ -185,6 +467,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         sex,
         age: ageNum,
         heightCm: heightNum,
+        weightKg: parseFloat(weightKg) || undefined,
         experienceLevel,
         trainingSplit,
         eatingMode,
@@ -202,11 +485,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       eatingMode,
       experienceLevel,
       heightCm,
+      weightKg,
       name,
       onSave,
       sex,
       trainingSplit,
       user,
+      avatarUrl,
+      avatarPath,
     ]
   );
 
@@ -237,6 +523,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         sex,
         age: parseInt(age, 10) || user.age,
         heightCm: parseInt(heightCm, 10) || user.heightCm,
+        weightKg: parseFloat(weightKg) || undefined,
         experienceLevel,
         trainingSplit,
         eatingMode,
@@ -254,10 +541,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     eatingMode,
     experienceLevel,
     heightCm,
+    weightKg,
     onSave,
     sex,
     trainingSplit,
     user,
+    currentPhysiqueLevel,
   ]);
 
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -272,7 +561,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       clearTimeout(autosaveTimeoutRef.current);
     }
     autosaveTimeoutRef.current = setTimeout(() => {
-      persistProfile({ showErrors: false });
+      const ok = persistProfile({ showErrors: false });
+      if (ok) showSavedBadge();
     }, 800);
 
     return () => {
@@ -284,14 +574,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     sex,
     age,
     heightCm,
+    weightKg,
     experienceLevel,
     trainingSplit,
     eatingMode,
     currentPhysiqueLevel,
     persistProfile,
+    showSavedBadge,
   ]);
 
-  // Helper functions to format labels
+  // ── format helpers ──
   const formatTrainingSplit = (split: TrainingSplit): string => {
     const labels: Record<TrainingSplit, string> = {
       full_body: 'Full Body',
@@ -313,15 +605,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     return labels[mode];
   };
 
-  const formatExperience = (exp: ExperienceLevel): string => {
-    return exp.charAt(0).toUpperCase() + exp.slice(1);
-  };
+  const formatExperience = (exp: ExperienceLevel): string =>
+    exp.charAt(0).toUpperCase() + exp.slice(1);
 
   const physiqueLevels = useMemo(() => getPhysiqueLevelsBySex(sex), [sex]);
   const currentPhysiqueLabel =
     physiqueLevels.find((level) => level.id === currentPhysiqueLevel)?.name ??
     `Level ${currentPhysiqueLevel}`;
 
+  // ── exercise defaults effects & helpers ──
   useEffect(() => {
     const toDisplayString = (value?: number | null) =>
       value === null || value === undefined ? '0' : value.toString();
@@ -349,9 +641,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const filteredExerciseCatalog = useMemo(() => {
     const term = defaultSearch.trim().toLowerCase();
     if (!term) return exerciseCatalog;
-    return exerciseCatalog.filter((exercise) =>
-      exercise.name.toLowerCase().includes(term) ||
-      exercise.primaryMuscles.some((muscle) => muscle.toLowerCase().includes(term))
+    return exerciseCatalog.filter(
+      (exercise) =>
+        exercise.name.toLowerCase().includes(term) ||
+        exercise.primaryMuscles.some((muscle) => muscle.toLowerCase().includes(term))
     );
   }, [exerciseCatalog, defaultSearch]);
 
@@ -447,569 +740,536 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     }
   };
 
+  // ── picker option datasets ──
+  const experienceOptions: PickerOption[] = [
+    { value: 'beginner', label: 'Beginner' },
+    { value: 'intermediate', label: 'Intermediate' },
+    { value: 'advanced', label: 'Advanced' },
+  ];
+
+  const splitOptions: PickerOption[] = [
+    { value: 'full_body', label: 'Full Body' },
+    { value: 'upper_lower', label: 'Upper / Lower' },
+    { value: 'push_pull_legs', label: 'Push / Pull / Legs' },
+    { value: 'bro_split', label: 'Bro Split' },
+    { value: 'custom', label: 'Custom' },
+  ];
+
+  const eatingOptions: PickerOption[] = [
+    { value: 'mild_deficit', label: 'Mild Deficit' },
+    { value: 'recomp', label: 'Recomp' },
+    { value: 'lean_bulk', label: 'Lean Bulk' },
+    { value: 'maintenance', label: 'Maintenance' },
+  ];
+
+  const physiqueOptions: PickerOption[] = physiqueLevels.map((level) => ({
+    value: String(level.id),
+    label: `Level ${level.id}: ${level.name}`,
+    sublabel: level.description,
+  }));
+
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={['#0A0E27', '#151932', '#1E2340']}
-        style={styles.gradient}
-      >
+      <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.gradient}>
+        {/* Autosave badge */}
+        {saved && (
+          <Animated.View style={[styles.savedBadge, { opacity: savedOpacity }]}>
+            <Text style={styles.savedBadgeText}>Saved</Text>
+          </Animated.View>
+        )}
+
         <Animated.ScrollView
           style={contentStyle}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          {/* Header */}
-          <Animated.View style={[styles.header, headerStyle]} />
+          {/* Header spacer */}
+          <Animated.View style={[styles.headerSpacer, headerStyle]} />
 
-          <View style={styles.avatarRow}>
+          {/* ── Profile Hero ──────────────────────────────────────────────── */}
+          <View style={styles.hero}>
             <TouchableOpacity
-              style={styles.avatarButton}
+              style={styles.avatarWrap}
               onPress={handlePickAvatar}
               disabled={isUploadingAvatar}
+              activeOpacity={0.8}
             >
               {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+                <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
               ) : (
                 <Text style={styles.avatarInitials}>{avatarInitials}</Text>
               )}
+              {/* Camera overlay */}
+              <View style={styles.avatarCameraOverlay}>
+                {isUploadingAvatar ? (
+                  <ActivityIndicator size="small" color={C.text} />
+                ) : (
+                  <Text style={styles.avatarCameraIcon}>📷</Text>
+                )}
+              </View>
             </TouchableOpacity>
-            <View style={styles.avatarMeta}>
-              <Text style={styles.avatarTitle}>Profile photo</Text>
-              <Text style={styles.avatarHint}>
-                {isUploadingAvatar ? 'Uploading…' : 'Tap to upload'}
-              </Text>
+
+            <Text style={styles.heroName}>{name.trim() || 'Your Name'}</Text>
+
+            <View style={styles.heroBadges}>
+              <View style={styles.badgeAccent}>
+                <Text style={styles.badgeAccentText}>{formatEatingMode(eatingMode)}</Text>
+              </View>
+              <View style={styles.badgePrimary}>
+                <Text style={styles.badgePrimaryText}>{currentPhysiqueLabel}</Text>
+              </View>
             </View>
           </View>
 
-          {/* ✨ PROFILE SECTION */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>PROFILE</Text>
+          {/* ── Quick Stats Strip ─────────────────────────────────────────── */}
+          <View style={styles.statsStrip}>
+            <View style={styles.statChip}>
+              <Text style={styles.statLabel}>Age</Text>
+              <Text style={styles.statValue}>{age || '—'}</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statChip}>
+              <Text style={styles.statLabel}>Height</Text>
+              <Text style={styles.statValue}>{heightCm ? `${heightCm} cm` : '—'}</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statChip}>
+              <Text style={styles.statLabel}>Experience</Text>
+              <Text style={styles.statValue}>{formatExperience(experienceLevel)}</Text>
+            </View>
+          </View>
 
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>🪪</Text>
-                <Text style={styles.settingLabel}>Name</Text>
-              </View>
+          {/* ── PROFILE ───────────────────────────────────────────────────── */}
+          <SectionCard title="Profile">
+            {/* Name */}
+            <CardRow icon="🪪" label="Name">
               <TextInput
-                style={styles.settingInput}
+                style={styles.inlineInput}
                 value={name}
                 onChangeText={setName}
                 placeholder="Your name"
-                placeholderTextColor="#A0A3BD"
+                placeholderTextColor={C.textMuted}
                 autoCapitalize="words"
                 maxLength={40}
+                textAlign="right"
               />
-            </View>
-            
-            {/* Sex */}
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>👤</Text>
-                <Text style={styles.settingLabel}>Sex</Text>
-              </View>
-              <View style={styles.inlineButtonGroup}>
+            </CardRow>
+
+            {/* Sex — full-text 3-button segmented control */}
+            <CardRow icon="👤" label="Sex">
+              <View style={styles.segmented}>
                 {(['male', 'female', 'other'] as const).map((option) => (
                   <TouchableOpacity
                     key={option}
-                    style={[
-                      styles.inlineButton,
-                      sex === option && styles.inlineButtonActive
-                    ]}
+                    style={[styles.segBtn, sex === option && styles.segBtnActive]}
                     onPress={() => setSex(option)}
+                    activeOpacity={0.7}
                   >
-                    <Text style={[
-                      styles.inlineButtonText,
-                      sex === option && styles.inlineButtonTextActive
-                    ]}>
-                      {option.charAt(0).toUpperCase()}
+                    <Text style={[styles.segBtnText, sex === option && styles.segBtnTextActive]}>
+                      {option.charAt(0).toUpperCase() + option.slice(1)}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
-            </View>
+            </CardRow>
 
             {/* Age */}
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>🎂</Text>
-                <Text style={styles.settingLabel}>Age</Text>
-              </View>
+            <CardRow icon="🎂" label="Age">
               <TextInput
-                style={styles.settingInput}
+                style={styles.inlineInput}
                 value={age}
                 onChangeText={setAge}
                 keyboardType="number-pad"
-                placeholder="--"
-                placeholderTextColor="#A0A3BD"
+                placeholder="—"
+                placeholderTextColor={C.textMuted}
                 maxLength={3}
+                textAlign="right"
               />
-            </View>
+            </CardRow>
 
             {/* Height */}
-            <View style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>📏</Text>
-                <Text style={styles.settingLabel}>Height</Text>
-              </View>
-              <View style={styles.settingRight}>
-                <TextInput
-                  style={styles.settingInput}
-                  value={heightCm}
-                  onChangeText={setHeightCm}
-                  keyboardType="number-pad"
-                  placeholder="--"
-                  placeholderTextColor="#A0A3BD"
-                  maxLength={3}
-                />
-                <Text style={styles.settingUnit}>cm</Text>
-              </View>
-            </View>
-          </View>
+            <CardRow icon="📏" label="Height">
+              <TextInput
+                style={styles.inlineInput}
+                value={heightCm}
+                onChangeText={setHeightCm}
+                keyboardType="number-pad"
+                placeholder="—"
+                placeholderTextColor={C.textMuted}
+                maxLength={3}
+                textAlign="right"
+              />
+              <Text style={styles.unitLabel}>cm</Text>
+            </CardRow>
 
-          {/* ✨ TRAINING SECTION */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>TRAINING</Text>
+            {/* Weight */}
+            <CardRow icon="⚖️" label="Weight" isLast>
+              <TextInput
+                style={styles.inlineInput}
+                value={weightKg}
+                onChangeText={setWeightKg}
+                keyboardType="decimal-pad"
+                placeholder="—"
+                placeholderTextColor={C.textMuted}
+                maxLength={6}
+                textAlign="right"
+              />
+              <Text style={styles.unitLabel}>kg</Text>
+            </CardRow>
+          </SectionCard>
 
+          {/* ── TRAINING ──────────────────────────────────────────────────── */}
+          <SectionCard title="Training">
             {/* Experience Level */}
-            <TouchableOpacity 
-              style={styles.settingRow}
-              onPress={() => setShowExperiencePicker(!showExperiencePicker)}
+            <CardRow
+              icon="💪"
+              label="Experience"
+              onPress={() => setActivePicker('experience')}
             >
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>💪</Text>
-                <Text style={styles.settingLabel}>Experience Level</Text>
-              </View>
-              <View style={styles.settingRight}>
-                <Text style={styles.settingValue}>{formatExperience(experienceLevel)}</Text>
-                <Text style={styles.settingChevron}>›</Text>
-              </View>
-            </TouchableOpacity>
-
-            {showExperiencePicker && (
-              <View style={styles.pickerContainer}>
-                {(['beginner', 'intermediate', 'advanced'] as const).map((option) => (
-                  <TouchableOpacity
-                    key={option}
-                    style={styles.pickerOption}
-                    onPress={() => {
-                      setExperienceLevel(option);
-                      setShowExperiencePicker(false);
-                    }}
-                  >
-                    <Text style={[
-                      styles.pickerOptionText,
-                      experienceLevel === option && styles.pickerOptionTextActive
-                    ]}>
-                      {formatExperience(option)}
-                    </Text>
-                    {experienceLevel === option && (
-                      <Text style={styles.pickerCheck}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+              <Text style={styles.valueText}>{formatExperience(experienceLevel)}</Text>
+              <Text style={styles.chevron}>›</Text>
+            </CardRow>
 
             {/* Training Split */}
-            <TouchableOpacity 
-              style={styles.settingRow}
-              onPress={() => setShowSplitPicker(!showSplitPicker)}
+            <CardRow
+              icon="🏋️"
+              label="Training Split"
+              onPress={() => setActivePicker('split')}
             >
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>🏋️</Text>
-                <Text style={styles.settingLabel}>Training Split</Text>
-              </View>
-              <View style={styles.settingRight}>
-                <Text style={styles.settingValue}>{formatTrainingSplit(trainingSplit)}</Text>
-                <Text style={styles.settingChevron}>›</Text>
-              </View>
-            </TouchableOpacity>
+              <Text style={styles.valueText}>{formatTrainingSplit(trainingSplit)}</Text>
+              <Text style={styles.chevron}>›</Text>
+            </CardRow>
 
-            {showSplitPicker && (
-              <View style={styles.pickerContainer}>
-                {([
-                  { value: 'full_body', label: 'Full Body' },
-                  { value: 'upper_lower', label: 'Upper/Lower' },
-                  { value: 'push_pull_legs', label: 'Push/Pull/Legs' },
-                  { value: 'bro_split', label: 'Bro Split' },
-                  { value: 'custom', label: 'Custom' },
-                ] as const).map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={styles.pickerOption}
-                    onPress={() => {
-                      setTrainingSplit(option.value);
-                      setShowSplitPicker(false);
-                    }}
-                  >
-                    <Text style={[
-                      styles.pickerOptionText,
-                      trainingSplit === option.value && styles.pickerOptionTextActive
-                    ]}>
-                      {option.label}
-                    </Text>
-                    {trainingSplit === option.value && (
-                      <Text style={styles.pickerCheck}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            {/* Exercise Defaults (collapsed within Training) */}
-            <TouchableOpacity
-              style={styles.settingRow}
+            {/* Exercise Defaults */}
+            <CardRow
+              icon="📓"
+              label="Preferred Weights"
+              isLast={!defaultsExpanded}
               onPress={() => setDefaultsExpanded((prev) => !prev)}
             >
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>📓</Text>
-                <View>
-                  <Text style={styles.settingLabel}>Preferred Weights</Text>
-                  <Text style={styles.settingSubtext}>Auto-fill workouts with your usual sets</Text>
-                </View>
-              </View>
-              <Text style={styles.settingChevron}>{defaultsExpanded ? '⌄' : '›'}</Text>
-            </TouchableOpacity>
+              <Text style={styles.valueText}>{exerciseDefaults.length} saved</Text>
+              <Text style={styles.chevron}>{defaultsExpanded ? '⌄' : '›'}</Text>
+            </CardRow>
 
             {defaultsExpanded && (
               <View style={styles.defaultsPanel}>
                 {defaultsLoading ? (
-                  <Text style={styles.defaultHint}>Loading defaults…</Text>
+                  <Text style={styles.hintText}>Loading defaults…</Text>
                 ) : exerciseDefaults.length === 0 ? (
                   <View style={styles.defaultEmpty}>
-                    <Text style={styles.defaultEmptyText}>No defaults saved yet.</Text>
-                    <Text style={styles.defaultHint}>Add an exercise to prefill workouts.</Text>
+                    <Text style={styles.defaultEmptyTitle}>No defaults saved yet.</Text>
+                    <Text style={styles.hintText}>Add an exercise to prefill workouts.</Text>
                   </View>
                 ) : (
-                  <>
-                    {exerciseDefaults.map((exerciseDefault) => {
-                      const editValues = defaultEdits[exerciseDefault.id] || {
-                        sets: '0',
-                        reps: '0',
-                        weight: '0',
-                        rest: '0',
-                      };
-                      const exerciseName = getExerciseDisplayName(exerciseDefault.exerciseId);
-                      const isSaving = savingDefaultId === exerciseDefault.id;
-                      const isRemoving = removingDefaultId === exerciseDefault.id;
-                      const expanded = expandedDefaults[exerciseDefault.id] ?? false;
-                      const summary = `${editValues.sets}x${editValues.reps} @ ${editValues.weight}kg`;
-                      return (
-                        <View key={exerciseDefault.id} style={styles.defaultRow}>
-                          <TouchableOpacity
-                            style={styles.defaultRowHeader}
-                            onPress={() =>
-                              setExpandedDefaults((prev) => ({
-                                ...prev,
-                                [exerciseDefault.id]: !expanded,
-                              }))
-                            }
-                          >
-                            <View style={styles.defaultRowName}>
-                              <Text style={styles.defaultRowTitle}>{exerciseName}</Text>
-                              <Text style={styles.defaultSummaryText}>{summary}</Text>
-                            </View>
-                            <Text style={styles.settingChevron}>{expanded ? '⌄' : '›'}</Text>
-                          </TouchableOpacity>
-                          {expanded && (
-                            <View style={styles.defaultDetails}>
-                              <View style={styles.defaultFieldRow}>
-                                <View style={styles.defaultInputGroupInline}>
-                                  <Text style={styles.defaultInputLabel}>Sets</Text>
-                                  <TextInput
-                                    style={styles.defaultInput}
-                                    keyboardType="number-pad"
-                                    value={editValues.sets}
-                                    onChangeText={(text) => handleDefaultFieldChange(exerciseDefault.id, 'sets', text)}
-                                  />
-                                </View>
-                                <View style={styles.defaultInputGroupInline}>
-                                  <Text style={styles.defaultInputLabel}>Reps</Text>
-                                  <TextInput
-                                    style={styles.defaultInput}
-                                    keyboardType="number-pad"
-                                    value={editValues.reps}
-                                    onChangeText={(text) => handleDefaultFieldChange(exerciseDefault.id, 'reps', text)}
-                                  />
-                                </View>
+                  exerciseDefaults.map((exerciseDefault) => {
+                    const editValues = defaultEdits[exerciseDefault.id] || {
+                      sets: '0',
+                      reps: '0',
+                      weight: '0',
+                      rest: '0',
+                    };
+                    const exerciseName = getExerciseDisplayName(exerciseDefault.exerciseId);
+                    const isSaving = savingDefaultId === exerciseDefault.id;
+                    const isRemoving = removingDefaultId === exerciseDefault.id;
+                    const expanded = expandedDefaults[exerciseDefault.id] ?? false;
+                    const summary = `${editValues.sets}×${editValues.reps} @ ${editValues.weight} kg`;
+                    return (
+                      <View key={exerciseDefault.id} style={styles.defaultRow}>
+                        <TouchableOpacity
+                          style={styles.defaultRowHeader}
+                          onPress={() =>
+                            setExpandedDefaults((prev) => ({
+                              ...prev,
+                              [exerciseDefault.id]: !expanded,
+                            }))
+                          }
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.defaultRowNameWrap}>
+                            <Text style={styles.defaultRowTitle}>{exerciseName}</Text>
+                            <Text style={styles.defaultSummary}>{summary}</Text>
+                          </View>
+                          <Text style={styles.chevron}>{expanded ? '⌄' : '›'}</Text>
+                        </TouchableOpacity>
+
+                        {expanded && (
+                          <View style={styles.defaultDetails}>
+                            <View style={styles.defaultFieldRow}>
+                              <View style={styles.defaultInputGroup}>
+                                <Text style={styles.defaultInputLabel}>Sets</Text>
+                                <TextInput
+                                  style={styles.defaultInput}
+                                  keyboardType="number-pad"
+                                  value={editValues.sets}
+                                  onChangeText={(t) =>
+                                    handleDefaultFieldChange(exerciseDefault.id, 'sets', t)
+                                  }
+                                />
                               </View>
-                              <View style={styles.defaultFieldRow}>
-                                <View style={styles.defaultInputGroupInline}>
-                                  <Text style={styles.defaultInputLabel}>Weight</Text>
-                                  <TextInput
-                                    style={styles.defaultInput}
-                                    keyboardType="decimal-pad"
-                                    value={editValues.weight}
-                                    onChangeText={(text) => handleDefaultFieldChange(exerciseDefault.id, 'weight', text)}
-                                  />
-                                </View>
-                                <View style={styles.defaultInputGroupInline}>
-                                  <Text style={styles.defaultInputLabel}>Rest</Text>
-                                  <TextInput
-                                    style={styles.defaultInput}
-                                    keyboardType="number-pad"
-                                    value={editValues.rest}
-                                    onChangeText={(text) => handleDefaultFieldChange(exerciseDefault.id, 'rest', text)}
-                                  />
-                                </View>
+                              <View style={styles.defaultInputGroup}>
+                                <Text style={styles.defaultInputLabel}>Reps</Text>
+                                <TextInput
+                                  style={styles.defaultInput}
+                                  keyboardType="number-pad"
+                                  value={editValues.reps}
+                                  onChangeText={(t) =>
+                                    handleDefaultFieldChange(exerciseDefault.id, 'reps', t)
+                                  }
+                                />
                               </View>
-                              <View style={styles.defaultActions}>
-                                <TouchableOpacity
-                                  style={[styles.defaultIconButton, isSaving && styles.defaultActionButtonDisabled]}
-                                  onPress={() => handleSaveExerciseDefault(exerciseDefault.id)}
-                                  disabled={isSaving}
-                                >
-                                  <Text style={styles.defaultIconText}>{isSaving ? '…' : '✓'}</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  style={[styles.defaultIconButtonDanger, isRemoving && styles.defaultActionButtonDisabled]}
-                                  onPress={() => handleRemoveExerciseDefault(exerciseDefault.id)}
-                                  disabled={isRemoving}
-                                >
-                                  <Text style={styles.defaultIconText}>✕</Text>
-                                </TouchableOpacity>
+                              <View style={styles.defaultInputGroup}>
+                                <Text style={styles.defaultInputLabel}>Weight</Text>
+                                <TextInput
+                                  style={styles.defaultInput}
+                                  keyboardType="decimal-pad"
+                                  value={editValues.weight}
+                                  onChangeText={(t) =>
+                                    handleDefaultFieldChange(exerciseDefault.id, 'weight', t)
+                                  }
+                                />
+                              </View>
+                              <View style={styles.defaultInputGroup}>
+                                <Text style={styles.defaultInputLabel}>Rest</Text>
+                                <TextInput
+                                  style={styles.defaultInput}
+                                  keyboardType="number-pad"
+                                  value={editValues.rest}
+                                  onChangeText={(t) =>
+                                    handleDefaultFieldChange(exerciseDefault.id, 'rest', t)
+                                  }
+                                />
                               </View>
                             </View>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </>
+                            <View style={styles.defaultActions}>
+                              <TouchableOpacity
+                                style={[
+                                  styles.defaultSaveBtn,
+                                  isSaving && styles.defaultBtnDisabled,
+                                ]}
+                                onPress={() => handleSaveExerciseDefault(exerciseDefault.id)}
+                                disabled={isSaving}
+                              >
+                                <Text style={styles.defaultSaveBtnText}>
+                                  {isSaving ? 'Saving…' : 'Save'}
+                                </Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[
+                                  styles.defaultRemoveBtn,
+                                  isRemoving && styles.defaultBtnDisabled,
+                                ]}
+                                onPress={() => handleRemoveExerciseDefault(exerciseDefault.id)}
+                                disabled={isRemoving}
+                              >
+                                <Text style={styles.defaultRemoveBtnText}>Remove</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })
                 )}
                 <TouchableOpacity
-                  style={styles.addDefaultButton}
+                  style={styles.addDefaultBtn}
                   onPress={() => setDefaultModalVisible(true)}
                   disabled={exercisesLoading}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.addDefaultText}>+ Add Exercise Default</Text>
+                  <Text style={styles.addDefaultBtnText}>+ Add Exercise Default</Text>
                 </TouchableOpacity>
               </View>
             )}
-          </View>
+          </SectionCard>
 
-          {/* ✨ NUTRITION SECTION */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>NUTRITION</Text>
-
-            {/* Eating Mode */}
-            <TouchableOpacity 
-              style={styles.settingRow}
-              onPress={() => setShowEatingPicker(!showEatingPicker)}
+          {/* ── NUTRITION ─────────────────────────────────────────────────── */}
+          <SectionCard title="Nutrition">
+            <CardRow
+              icon="🍽️"
+              label="Eating Mode"
+              isLast
+              onPress={() => setActivePicker('eating')}
             >
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>🍽️</Text>
-                <Text style={styles.settingLabel}>Eating Mode</Text>
-              </View>
-              <View style={styles.settingRight}>
-                <Text style={styles.settingValue}>{formatEatingMode(eatingMode)}</Text>
-                <Text style={styles.settingChevron}>›</Text>
-              </View>
-            </TouchableOpacity>
+              <Text style={styles.valueText}>{formatEatingMode(eatingMode)}</Text>
+              <Text style={styles.chevron}>›</Text>
+            </CardRow>
+          </SectionCard>
 
-            {showEatingPicker && (
-              <View style={styles.pickerContainer}>
-                {([
-                  { value: 'mild_deficit', label: 'Mild Deficit' },
-                  { value: 'recomp', label: 'Recomp' },
-                  { value: 'lean_bulk', label: 'Lean Bulk' },
-                  { value: 'maintenance', label: 'Maintenance' },
-                ] as const).map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={styles.pickerOption}
-                    onPress={() => {
-                      setEatingMode(option.value);
-                      setShowEatingPicker(false);
-                    }}
-                  >
-                    <Text style={[
-                      styles.pickerOptionText,
-                      eatingMode === option.value && styles.pickerOptionTextActive
-                    ]}>
-                      {option.label}
-                    </Text>
-                    {eatingMode === option.value && (
-                      <Text style={styles.pickerCheck}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-          </View>
-
-          {/* ✨ ARC MANAGEMENT SECTION */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>ARC MANAGEMENT</Text>
-
-            <TouchableOpacity
-              style={styles.settingRow}
-              onPress={() => setShowCurrentLevelPicker((prev) => !prev)}
+          {/* ── ARC MANAGEMENT ────────────────────────────────────────────── */}
+          <SectionCard title="Arc Management">
+            <CardRow
+              icon="📍"
+              label="Current Physique Level"
+              isLast={!onChangeTargetLevel}
+              onPress={() => setActivePicker('physique')}
             >
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>📍</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.settingLabel}>Current Physique Level</Text>
-                  <Text style={styles.settingValueInline}>{currentPhysiqueLabel}</Text>
-                </View>
-              </View>
-              <Text style={styles.settingChevron}>{showCurrentLevelPicker ? '▾' : '›'}</Text>
-            </TouchableOpacity>
-
-            {showCurrentLevelPicker && (
-              <View style={styles.pickerContainer}>
-                {physiqueLevels.map((level) => (
-                  <TouchableOpacity
-                    key={level.id}
-                    style={styles.pickerOption}
-                    onPress={() => {
-                      setCurrentPhysiqueLevel(level.id);
-                      setShowCurrentLevelPicker(false);
-                    }}
-                  >
-                    <View style={styles.pickerOptionTextWrap}>
-                      <Text
-                        style={[
-                          styles.pickerOptionText,
-                          currentPhysiqueLevel === level.id && styles.pickerOptionTextActive,
-                        ]}
-                      >
-                        Level {level.id}: {level.name}
-                      </Text>
-                      <Text style={styles.pickerOptionSubtext}>{level.description}</Text>
-                    </View>
-                    {currentPhysiqueLevel === level.id && (
-                      <Text style={styles.pickerCheck}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+              <Text style={styles.valueText}>{currentPhysiqueLabel}</Text>
+              <Text style={styles.chevron}>›</Text>
+            </CardRow>
 
             {onChangeTargetLevel && (
-              <TouchableOpacity 
-                style={styles.settingRow}
+              <CardRow
+                icon="🎯"
+                label="Start New Plan"
+                isLast
                 onPress={onChangeTargetLevel}
               >
-                <View style={styles.settingLeft}>
-                  <Text style={styles.settingIcon}>🎯</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.settingLabel}>Start New Plan</Text>
-                    <Text style={styles.settingSubtext}>Set a new target and begin fresh</Text>
-                  </View>
-                </View>
-                <Text style={styles.settingChevron}>›</Text>
-              </TouchableOpacity>
+                <Text style={styles.valueTextSub}>Set a new target</Text>
+                <Text style={styles.chevron}>›</Text>
+              </CardRow>
             )}
-          </View>
+          </SectionCard>
 
-          {/* ✨ ACCOUNT SECTION */}
+          {/* ── ACCOUNT ───────────────────────────────────────────────────── */}
           {onLogout && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>ACCOUNT</Text>
-              <TouchableOpacity style={styles.settingRow} onPress={onLogout}>
-                <View style={styles.settingLeft}>
-                  <Text style={styles.settingIcon}>🚪</Text>
-                  <Text style={styles.settingLabel}>Log Out</Text>
+            <SectionCard title="Account">
+              <Pressable
+                style={({ pressed }) => [
+                  styles.accountRow,
+                  pressed && styles.accountRowPressed,
+                ]}
+                onPress={onLogout}
+              >
+                <View style={cr.left}>
+                  <View style={cr.iconBox}>
+                    <Text style={cr.iconText}>🚪</Text>
+                  </View>
+                  <Text style={cr.label}>Log Out</Text>
                 </View>
-                <Text style={styles.settingChevron}>›</Text>
-              </TouchableOpacity>
+                <Text style={styles.chevron}>›</Text>
+              </Pressable>
+
               {onDeleteAccount && (
                 <TouchableOpacity
-                  style={[styles.settingRow, styles.deleteRow]}
+                  style={styles.deleteAccountRow}
                   onPress={confirmDeleteAccount}
                   disabled={isDeletingAccount}
+                  activeOpacity={0.7}
                 >
-                  <View style={styles.settingLeft}>
-                    <Text style={styles.settingIcon}>🗑️</Text>
-                    <Text style={[styles.settingLabel, styles.deleteLabel]}>
-                      Delete Account
-                    </Text>
+                  <View style={cr.left}>
+                    <View style={[cr.iconBox, styles.dangerIconBox]}>
+                      <Text style={cr.iconText}>🗑️</Text>
+                    </View>
+                    <Text style={[cr.label, styles.dangerText]}>Delete Account</Text>
                   </View>
+                  {isDeletingAccount && <ActivityIndicator size="small" color={C.danger} />}
                 </TouchableOpacity>
               )}
-            </View>
+            </SectionCard>
           )}
 
-          {/* ✨ ABOUT SECTION */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>ABOUT</Text>
+          {/* ── ABOUT ─────────────────────────────────────────────────────── */}
+          <SectionCard title="About">
+            <CardRow icon="ℹ️" label="App Version">
+              <Text style={styles.valueText}>{appVersion}</Text>
+            </CardRow>
+            <CardRow
+              icon="📖"
+              label="Terms & Privacy"
+              onPress={() => setTermsModalVisible(true)}
+            >
+              <Text style={styles.chevron}>›</Text>
+            </CardRow>
+            <CardRow icon="💬" label="Send Feedback" isLast onPress={handleSendFeedback}>
+              <Text style={styles.chevron}>›</Text>
+            </CardRow>
+          </SectionCard>
 
-            <TouchableOpacity style={styles.settingRow}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>ℹ️</Text>
-                <Text style={styles.settingLabel}>App Version</Text>
-              </View>
-              <Text style={styles.settingValue}>1.0.0</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.settingRow} onPress={() => setTermsModalVisible(true)}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>📖</Text>
-                <Text style={styles.settingLabel}>Terms & Privacy</Text>
-              </View>
-              <Text style={styles.settingChevron}>›</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.settingRow} onPress={handleSendFeedback}>
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingIcon}>💬</Text>
-                <Text style={styles.settingLabel}>Send Feedback</Text>
-              </View>
-              <Text style={styles.settingChevron}>›</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Spacing for bottom */}
-          <View style={{ height: 40 }} />
+          <View style={{ height: 80 }} />
         </Animated.ScrollView>
 
+        {/* ── Shared PickerModals ──────────────────────────────────────────── */}
+        <PickerModal
+          visible={activePicker === 'experience'}
+          title="Experience Level"
+          options={experienceOptions}
+          selected={experienceLevel}
+          onSelect={(v) => setExperienceLevel(v as ExperienceLevel)}
+          onClose={() => setActivePicker(null)}
+        />
+        <PickerModal
+          visible={activePicker === 'split'}
+          title="Training Split"
+          options={splitOptions}
+          selected={trainingSplit}
+          onSelect={(v) => setTrainingSplit(v as TrainingSplit)}
+          onClose={() => setActivePicker(null)}
+        />
+        <PickerModal
+          visible={activePicker === 'eating'}
+          title="Eating Mode"
+          options={eatingOptions}
+          selected={eatingMode}
+          onSelect={(v) => setEatingMode(v as EatingMode)}
+          onClose={() => setActivePicker(null)}
+        />
+        <PickerModal
+          visible={activePicker === 'physique'}
+          title="Current Physique Level"
+          options={physiqueOptions}
+          selected={String(currentPhysiqueLevel)}
+          onSelect={(v) => setCurrentPhysiqueLevel(parseInt(v, 10))}
+          onClose={() => setActivePicker(null)}
+        />
+
+        {/* ── Exercise Defaults modal ──────────────────────────────────────── */}
         <Modal
-          animationType="fade"
+          animationType="slide"
           transparent
           visible={defaultModalVisible}
           onRequestClose={() => setDefaultModalVisible(false)}
         >
           <View style={styles.modalOverlay}>
-            <Pressable style={styles.modalBackdrop} onPress={() => setDefaultModalVisible(false)} />
+            <Pressable
+              style={StyleSheet.absoluteFillObject}
+              onPress={() => setDefaultModalVisible(false)}
+            />
             <View style={styles.modalSheet}>
               <View style={styles.modalHandle} />
               <View style={styles.modalHeaderRow}>
                 <Text style={styles.modalTitle}>Add Exercise Default</Text>
-                <TouchableOpacity onPress={() => setDefaultModalVisible(false)}>
-                  <Text style={styles.closeButtonText}>✕</Text>
+                <TouchableOpacity
+                  onPress={() => setDefaultModalVisible(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.modalCloseX}>✕</Text>
                 </TouchableOpacity>
               </View>
               <TextInput
-                style={styles.modalSearchInput}
-                placeholder="Search exercises..."
-                placeholderTextColor="#6B6F7B"
+                style={styles.modalSearch}
+                placeholder="Search exercises…"
+                placeholderTextColor={C.textMuted}
                 value={defaultSearch}
                 onChangeText={setDefaultSearch}
               />
               <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
                 {exercisesLoading ? (
-                  <Text style={styles.defaultHint}>Loading exercises…</Text>
+                  <ActivityIndicator color={C.primary} style={{ marginTop: 20 }} />
                 ) : filteredExerciseCatalog.length === 0 ? (
-                  <Text style={styles.defaultHint}>No exercises match your search.</Text>
+                  <Text style={styles.hintText}>No exercises match your search.</Text>
                 ) : (
-                  filteredExerciseCatalog.map((exercise) => {
+                  filteredExerciseCatalog.map((exercise, idx) => {
                     const alreadyAdded = exerciseDefaults.some(
                       (item) => item.exerciseId === exercise.id
                     );
+                    const isLast = idx === filteredExerciseCatalog.length - 1;
                     return (
                       <TouchableOpacity
                         key={exercise.id}
-                        style={[styles.modalListItem, alreadyAdded && styles.modalListItemDisabled]}
+                        style={[styles.modalItem, !isLast && styles.modalItemBorder, alreadyAdded && styles.modalItemDim]}
                         onPress={() => !alreadyAdded && handleAddExerciseDefault(exercise.id)}
                         disabled={alreadyAdded}
+                        activeOpacity={0.7}
                       >
-                        <View>
-                          <Text style={styles.modalListItemTitle}>{exercise.name}</Text>
-                          <Text style={styles.modalListItemSubtitle}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.modalItemTitle}>{exercise.name}</Text>
+                          <Text style={styles.modalItemSub}>
                             {exercise.primaryMuscles.join(', ') || 'Full body'}
                           </Text>
                         </View>
-                        <Text style={styles.modalListItemAction}>
+                        <Text style={[styles.modalItemAction, alreadyAdded && styles.modalItemActionDim]}>
                           {alreadyAdded ? 'Saved' : 'Add'}
                         </Text>
                       </TouchableOpacity>
@@ -1021,6 +1281,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </View>
         </Modal>
 
+        {/* ── Delete Account overlay ───────────────────────────────────────── */}
         <Modal
           animationType="fade"
           transparent
@@ -1031,28 +1292,25 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <View style={styles.deleteCard}>
               {isDeletingAccount ? (
                 <>
-                  <ActivityIndicator size="large" color="#6C63FF" />
-                  <Text style={styles.deleteTitle}>Deleting your account…</Text>
-                  <Text style={styles.deleteBody}>This may take a few seconds.</Text>
+                  <ActivityIndicator size="large" color={C.primary} />
+                  <Text style={styles.deleteCardTitle}>Deleting your account…</Text>
+                  <Text style={styles.deleteCardBody}>This may take a few seconds.</Text>
                 </>
               ) : (
                 <>
-                  <Text style={styles.deleteTitle}>Delete failed</Text>
-                  <Text style={styles.deleteBody}>
+                  <Text style={[styles.deleteCardTitle, { color: C.danger }]}>Delete failed</Text>
+                  <Text style={styles.deleteCardBody}>
                     {deleteError || 'Unable to delete your account. Please try again.'}
                   </Text>
-                  <View style={styles.deleteActions}>
+                  <View style={styles.deleteCardActions}>
                     <TouchableOpacity
-                      style={styles.deleteSecondary}
+                      style={styles.deleteCardCancelBtn}
                       onPress={() => setDeleteError(null)}
                     >
-                      <Text style={styles.deleteSecondaryText}>Cancel</Text>
+                      <Text style={styles.deleteCardCancelText}>Cancel</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.deletePrimary}
-                      onPress={handleDeleteRetry}
-                    >
-                      <Text style={styles.deletePrimaryText}>Retry</Text>
+                    <TouchableOpacity style={styles.deleteCardRetryBtn} onPress={handleDeleteRetry}>
+                      <Text style={styles.deleteCardRetryText}>Retry</Text>
                     </TouchableOpacity>
                   </View>
                 </>
@@ -1061,40 +1319,48 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </View>
         </Modal>
 
+        {/* ── Terms modal ─────────────────────────────────────────────────── */}
         <Modal
-          animationType="fade"
+          animationType="slide"
           transparent
           visible={termsModalVisible}
           onRequestClose={() => setTermsModalVisible(false)}
         >
           <View style={styles.modalOverlay}>
-            <Pressable style={styles.modalBackdrop} onPress={() => setTermsModalVisible(false)} />
+            <Pressable
+              style={StyleSheet.absoluteFillObject}
+              onPress={() => setTermsModalVisible(false)}
+            />
             <View style={styles.modalSheet}>
               <View style={styles.modalHandle} />
               <View style={styles.modalHeaderRow}>
                 <Text style={styles.modalTitle}>Terms & Privacy</Text>
-                <TouchableOpacity onPress={() => setTermsModalVisible(false)}>
-                  <Text style={styles.closeButtonText}>✕</Text>
+                <TouchableOpacity
+                  onPress={() => setTermsModalVisible(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.modalCloseX}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <ScrollView style={styles.termsBody} showsVerticalScrollIndicator={false}>
+              <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
                 <Text style={styles.termsHeading}>Terms of Service</Text>
                 <Text style={styles.termsText}>
-                  By using Fitarc, you agree to use the app responsibly and understand that
-                  training guidance is for informational purposes only. Use movements
-                  that match your experience level, stop if something feels wrong, and
-                  adjust volume or intensity as needed.
+                  By using Fitarc, you agree to use the app responsibly and understand that training
+                  guidance is for informational purposes only. Use movements that match your
+                  experience level, stop if something feels wrong, and adjust volume or intensity as
+                  needed.
                 </Text>
                 <Text style={styles.termsHeading}>Privacy Policy</Text>
                 <Text style={styles.termsText}>
-                  We collect account details and workout/meal activity to personalize your
-                  plan. Your data is stored securely and used only to provide core features
-                  of the app. We do not sell personal data.
+                  We collect account details and workout/meal activity to personalize your plan.
+                  Your data is stored securely and used only to provide core features of the app.
+                  We do not sell personal data.
                 </Text>
                 <Text style={styles.termsHeading}>Contact</Text>
                 <Text style={styles.termsText}>
                   For questions or data requests, contact support at tedtfu@gmail.com.
                 </Text>
+                <View style={{ height: 20 }} />
               </ScrollView>
             </View>
           </View>
@@ -1104,342 +1370,388 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   );
 };
 
+// ─── StyleSheet ───────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0A0E27',
-  },
-  gradient: {
-    flex: 1,
-  },
+  container: { flex: 1, backgroundColor: C.bg },
+  gradient: { flex: 1 },
+
   scrollContent: {
     flexGrow: 1,
-    paddingTop: 20,
+    paddingTop: 16,
   },
-  
-  // Header
-  header: {
-    flexDirection: 'row',
+
+  headerSpacer: {
+    height: 8,
+  },
+
+  // Autosave badge
+  savedBadge: {
+    position: 'absolute',
+    top: 52,
+    right: 20,
+    zIndex: 99,
+    backgroundColor: C.accent,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  savedBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#000',
+  },
+
+  // Hero
+  hero: {
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    marginBottom: 24,
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 24,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeButtonText: {
-    fontSize: 18,
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  avatarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    marginBottom: 24,
-    paddingHorizontal: 20,
-  },
-  avatarButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(108, 99, 255, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(108, 99, 255, 0.2)',
+  avatarWrap: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderWidth: 2,
+    borderColor: C.primary,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    marginBottom: 14,
   },
-  avatarImage: {
-    width: '100%',
-    height: '100%',
-  },
+  avatarImg: { width: '100%', height: '100%' },
   avatarInitials: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: '800',
+    color: C.text,
   },
-  avatarMeta: {
-    flex: 1,
+  avatarCameraOverlay: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  avatarTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  avatarHint: {
-    fontSize: 13,
-    color: '#A3A7B7',
-  },
-
-  // Section
-  section: {
-    marginBottom: 32,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6C63FF',
-    letterSpacing: 1,
-    paddingHorizontal: 20,
+  avatarCameraIcon: { fontSize: 13 },
+  heroName: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: C.text,
     marginBottom: 12,
+    textAlign: 'center',
   },
-
-  // Setting Row
-  settingRow: {
+  heroBadges: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    backgroundColor: '#151932',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E2340',
-  },
-  settingLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  settingIcon: {
-    fontSize: 20,
-    width: 28,
-  },
-  settingLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  settingSubtext: {
-    fontSize: 12,
-    color: '#A0A3BD',
-    marginTop: 2,
-  },
-  settingRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
   },
-  settingValue: {
+  badgeAccent: {
+    backgroundColor: 'rgba(0, 245, 160, 0.12)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 160, 0.3)',
+  },
+  badgeAccentText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.accent,
+  },
+  badgePrimary: {
+    backgroundColor: 'rgba(108, 99, 255, 0.15)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 99, 255, 0.3)',
+  },
+  badgePrimaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.primary,
+  },
+
+  // Stats strip
+  statsStrip: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 24,
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    overflow: 'hidden',
+  },
+  statChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: C.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  statValue: {
     fontSize: 15,
-    color: '#A0A3BD',
+    fontWeight: '700',
+    color: C.text,
+  },
+  statDivider: {
+    width: 1,
+    backgroundColor: C.border,
+    marginVertical: 12,
+  },
+
+  // Inline inputs
+  inlineInput: {
+    fontSize: 15,
+    color: C.text,
+    fontWeight: '600',
+    minWidth: 60,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+    flexShrink: 1,
+  },
+  unitLabel: {
+    fontSize: 13,
+    color: C.textMuted,
     fontWeight: '500',
   },
-  settingUnit: {
-    fontSize: 14,
-    color: '#A0A3BD',
-  },
-  settingChevron: {
-    fontSize: 20,
-    color: '#A0A3BD',
-    fontWeight: '300',
-  },
-  deleteRow: {
-    borderBottomColor: 'rgba(255, 107, 107, 0.3)',
-  },
-  deleteLabel: {
-    color: '#FF6B6B',
-  },
 
-  // Input
-  settingInput: {
-    minWidth: 60,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: '#1E2340',
-    borderRadius: 8,
-    fontSize: 15,
-    color: '#FFFFFF',
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-
-  // Inline Button Group (for Sex)
-  inlineButtonGroup: {
+  // Segmented control (Sex)
+  segmented: {
     flexDirection: 'row',
-    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    padding: 2,
+    gap: 2,
   },
-  inlineButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1E2340',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
+  segBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
-  inlineButtonActive: {
-    backgroundColor: '#6C63FF',
-    borderColor: '#6C63FF',
+  segBtnActive: {
+    backgroundColor: C.primary,
   },
-  inlineButtonText: {
+  segBtnText: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#A0A3BD',
+    fontWeight: '600',
+    color: C.textSec,
   },
-  inlineButtonTextActive: {
-    color: '#FFFFFF',
+  segBtnTextActive: {
+    color: C.text,
   },
 
-  // Exercise defaults
-  defaultsPanel: {
-    marginHorizontal: 20,
-    paddingVertical: 4,
-    gap: 6,
+  // Value / chevron
+  valueText: {
+    fontSize: 14,
+    color: C.textSec,
+    fontWeight: '500',
   },
-  defaultHint: {
-    color: '#A0A3BD',
+  valueTextSub: {
+    fontSize: 13,
+    color: C.textMuted,
+  },
+  chevron: {
+    fontSize: 20,
+    color: C.textMuted,
+    fontWeight: '300',
+    lineHeight: 22,
+  },
+
+  // Exercise defaults panel (inside Training card)
+  defaultsPanel: {
+    borderTopWidth: 1,
+    borderTopColor: C.rowBorder,
+    padding: 12,
+    gap: 8,
+  },
+  hintText: {
+    color: C.textSec,
     fontSize: 13,
     textAlign: 'center',
+    paddingVertical: 8,
   },
   defaultEmpty: {
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
+    paddingVertical: 8,
   },
-  defaultEmptyText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+  defaultEmptyTitle: {
+    color: C.text,
+    fontWeight: '700',
+    fontSize: 14,
   },
   defaultRow: {
+    backgroundColor: C.surface2,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1E2340',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    backgroundColor: '#151932',
-    marginBottom: 6,
-    gap: 10,
+    borderColor: C.border,
+    overflow: 'hidden',
   },
   defaultRowHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    padding: 12,
   },
-  defaultRowName: {
-    flex: 1,
-    paddingRight: 12,
-  },
+  defaultRowNameWrap: { flex: 1, paddingRight: 8 },
   defaultRowTitle: {
-    color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: C.text,
   },
-  defaultSummaryText: {
-    color: '#A0A3BD',
+  defaultSummary: {
     fontSize: 12,
-    marginTop: 4,
+    color: C.textSec,
+    marginTop: 3,
   },
   defaultDetails: {
-    marginTop: 12,
-    gap: 12,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: C.rowBorder,
   },
   defaultFieldRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
+    paddingTop: 10,
   },
-  defaultInputGroupInline: {
+  defaultInputGroup: {
     flex: 1,
-    gap: 6,
+    gap: 4,
   },
   defaultInputLabel: {
-    color: '#A0A3BD',
-    fontSize: 11,
-    letterSpacing: 0.5,
+    fontSize: 10,
+    color: C.textMuted,
+    fontWeight: '700',
     textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    textAlign: 'center',
   },
   defaultInput: {
-    backgroundColor: '#1E2340',
+    backgroundColor: C.bg,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#2A2F4F',
+    borderColor: C.border,
     paddingVertical: 8,
-    paddingHorizontal: 10,
-    color: '#FFFFFF',
-    fontWeight: '600',
+    paddingHorizontal: 4,
+    color: C.text,
+    fontWeight: '700',
     textAlign: 'center',
+    fontSize: 14,
   },
   defaultActions: {
     flexDirection: 'row',
     gap: 8,
     justifyContent: 'flex-end',
   },
-  defaultActionButtonDisabled: {
-    opacity: 0.5,
-  },
-  defaultIconButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#2B2E46',
-    alignItems: 'center',
-    justifyContent: 'center',
+  defaultBtnDisabled: { opacity: 0.5 },
+  defaultSaveBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(108, 99, 255, 0.2)',
     borderWidth: 1,
-    borderColor: '#3B3F5C',
+    borderColor: C.primary,
   },
-  defaultIconButtonDanger: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: 'rgba(239,68,68,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.4)',
-  },
-  defaultIconText: {
-    fontSize: 20,
+  defaultSaveBtnText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: C.primary,
   },
-  addDefaultButton: {
+  defaultRemoveBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 107, 107, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 107, 0.4)',
+  },
+  defaultRemoveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: C.danger,
+  },
+  addDefaultBtn: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#2A2F4F',
+    borderColor: C.border,
     paddingVertical: 12,
     alignItems: 'center',
-    backgroundColor: '#151932',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    marginTop: 4,
   },
-  addDefaultText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+  addDefaultBtnText: {
+    color: C.primary,
+    fontWeight: '700',
+    fontSize: 14,
   },
 
-  // Modal styles
+  // Account rows
+  accountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: C.rowBorder,
+    minHeight: 56,
+  },
+  accountRowPressed: {
+    backgroundColor: 'rgba(255, 107, 107, 0.06)',
+  },
+  deleteAccountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    minHeight: 56,
+  },
+  dangerIconBox: {
+    backgroundColor: 'rgba(255, 107, 107, 0.1)',
+  },
+  dangerText: {
+    color: C.danger,
+  },
+
+  // Modal shared
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(0,0,0,0.75)',
     justifyContent: 'flex-end',
   },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
   modalSheet: {
-    backgroundColor: '#0F1224',
+    backgroundColor: C.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    borderColor: C.border,
     paddingHorizontal: 20,
-    marginBottom: 30,
-    height: '60%',
+    paddingBottom: 40,
+    maxHeight: '70%',
   },
   modalHandle: {
     alignSelf: 'center',
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#2A2F4F',
-    marginBottom: 16,
+    backgroundColor: C.border,
+    marginTop: 12,
+    marginBottom: 20,
   },
   modalHeaderRow: {
     flexDirection: 'row',
@@ -1448,58 +1760,62 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   modalTitle: {
-    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
-    marginBottom: 20
+    color: C.text,
   },
-  modalSearchInput: {
-    backgroundColor: '#151932',
+  modalCloseX: {
+    fontSize: 16,
+    color: C.textSec,
+  },
+  modalSearch: {
+    backgroundColor: C.surface2,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1E2340',
+    borderColor: C.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    color: '#FFFFFF',
-    marginBottom: 12,
+    color: C.text,
+    fontSize: 15,
+    marginBottom: 8,
   },
   modalList: {
-    maxHeight: '70%',
+    flex: 1,
   },
-  termsBody: {
-    maxHeight: '70%',
-  },
-  termsHeading: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: 12,
-    marginBottom: 6,
-  },
-  termsText: {
-    color: '#A0A3BD',
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  modalListItem: {
+  modalItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 14,
+  },
+  modalItemBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: '#1E2340',
+    borderBottomColor: C.rowBorder,
   },
-  modalListItemDisabled: {
-    opacity: 0.5,
-  },
-  modalListItemTitle: {
-    color: '#FFFFFF',
+  modalItemDim: { opacity: 0.45 },
+  modalItemTitle: {
     fontSize: 15,
     fontWeight: '600',
+    color: C.text,
   },
+  modalItemSub: {
+    fontSize: 12,
+    color: C.textSec,
+    marginTop: 2,
+  },
+  modalItemAction: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: C.primary,
+    marginLeft: 12,
+  },
+  modalItemActionDim: {
+    color: C.textMuted,
+  },
+
+  // Delete Account overlay
   deleteOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10, 14, 39, 0.72)',
+    backgroundColor: 'rgba(10, 14, 39, 0.80)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
@@ -1507,113 +1823,74 @@ const styles = StyleSheet.create({
   deleteCard: {
     width: '100%',
     maxWidth: 320,
-    backgroundColor: '#151932',
-    borderRadius: 16,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
+    backgroundColor: C.surface,
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#2A2F4F',
+    borderColor: C.border,
   },
-  deleteTitle: {
+  deleteCardTitle: {
     marginTop: 16,
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  deleteBody: {
-    marginTop: 6,
-    fontSize: 13,
-    color: '#A0A3BD',
+    fontSize: 17,
+    fontWeight: '800',
+    color: C.text,
     textAlign: 'center',
   },
-  deleteActions: {
+  deleteCardBody: {
+    marginTop: 8,
+    fontSize: 13,
+    color: C.textSec,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  deleteCardActions: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 18,
+    marginTop: 20,
     width: '100%',
-    justifyContent: 'flex-end',
   },
-  deleteSecondary: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#2A2F4F',
-    backgroundColor: '#1E2340',
-  },
-  deleteSecondaryText: {
-    color: '#A0A3BD',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  deletePrimary: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#6C63FF',
-    backgroundColor: 'rgba(108, 99, 255, 0.2)',
-  },
-  deletePrimaryText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  modalListItemSubtitle: {
-    color: '#A0A3BD',
-    fontSize: 12,
-  },
-  modalListItemAction: {
-    color: '#6C63FF',
-    fontWeight: '700',
-  },
-
-  // Picker
-  pickerContainer: {
-    backgroundColor: '#1E2340',
-    marginHorizontal: 20,
-    marginTop: -1,
-    marginBottom: 12,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  pickerOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#151932',
-  },
-  pickerOptionText: {
-    fontSize: 15,
-    color: '#A0A3BD',
-    fontWeight: '500',
-  },
-  pickerOptionTextWrap: {
+  deleteCardCancelBtn: {
     flex: 1,
-    gap: 4,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface2,
+    alignItems: 'center',
   },
-  pickerOptionSubtext: {
-    fontSize: 12,
-    color: '#7A7F98',
-    lineHeight: 16,
+  deleteCardCancelText: {
+    color: C.textSec,
+    fontWeight: '700',
+    fontSize: 14,
   },
-  pickerOptionTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+  deleteCardRetryBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 107, 0.5)',
+    backgroundColor: 'rgba(255, 107, 107, 0.12)',
+    alignItems: 'center',
   },
-  settingValueInline: {
-    marginTop: 4,
-    fontSize: 13,
-    color: '#8B93B0',
-  },
-  pickerCheck: {
-    fontSize: 16,
-    color: '#00F5A0',
-    fontWeight: 'bold',
+  deleteCardRetryText: {
+    color: C.danger,
+    fontWeight: '700',
+    fontSize: 14,
   },
 
+  // Terms
+  termsHeading: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: C.text,
+    marginTop: 16,
+    marginBottom: 6,
+  },
+  termsText: {
+    fontSize: 13,
+    color: C.textSec,
+    lineHeight: 20,
+  },
 });
