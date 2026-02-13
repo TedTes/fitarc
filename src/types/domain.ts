@@ -105,20 +105,6 @@ export type PlanDay = {
   workout: PlanWorkout | null;
 };
 
-export type MealPlanMeal = {
-  title: string;
-  items: string[];
-  completed: boolean;
-};
-
-export type DailyMealPlan = {
-  id: string;
-  date: string;
-  phasePlanId: string;
-  meals: MealPlanMeal[];
-  completed: boolean;
-};
-
 export type User = {
   id: string;
   name?: string;
@@ -231,7 +217,6 @@ export type AppState = {
   strengthSnapshots: StrengthSnapshot[];
   workoutSessions: WorkoutSessionEntry[];
   plannedWorkouts: PlanDay[];
-  mealPlans: DailyMealPlan[];
   nextPhotoReminder: string | null;
   progressEstimate: ProgressEstimate | null;
   workoutDataVersion: number;
@@ -247,7 +232,6 @@ export const createEmptyAppState = (): AppState => ({
   strengthSnapshots: [],
   workoutSessions: [],
   plannedWorkouts: [],
-  mealPlans: [],
   nextPhotoReminder: null,
   progressEstimate: null,
   workoutDataVersion: 0,

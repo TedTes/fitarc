@@ -244,58 +244,35 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       completed: false,
     })), []);
 
-  const handleApply = useCallback(async (
+  const handleApply = useCallback((
     template: WorkoutTemplate,
     exercises: TemplateExercise[],
     replaceAll: boolean,
-    force = false
   ) => {
     const sessionExercises = buildSessionExercises(template, exercises);
 
-    if (replaceAll) {
-      if (!onReplaceSessionWithTemplate) return;
-      try {
-        const result = await onReplaceSessionWithTemplate(today, sessionExercises, force);
-        if (result.hasProgress) {
-          Alert.alert(
-            'Session has logged data',
-            'Your current workout has progress logged. Replace it anyway?',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Replace', style: 'destructive', onPress: () => void handleApply(template, exercises, replaceAll, true) },
-            ]
-          );
-          return;
-        }
-      } catch {
-        Alert.alert('Error', 'Could not apply template. Please try again.');
-        return;
-      }
-    } else {
-      // Selective add: close and navigate immediately, append in background
-      setSelectedModal(null);
-      onNavigateToToday?.();
-      if (!onAppendExercisesToSession) return;
-      void onAppendExercisesToSession(today, sessionExercises).catch(() =>
-        Alert.alert('Error', 'Could not add exercises. Please try again.')
-      );
-      setAppliedThisSession((prev) => {
-        const next = new Set(prev);
-        exercises.forEach((ex) => next.add(`${template.id}-${ex.exerciseId}`));
-        return next;
-      });
-      return;
-    }
-
-    // Full replace success
+    // Close modal and navigate immediately for both paths
     setAppliedThisSession((prev) => {
       const next = new Set(prev);
       exercises.forEach((ex) => next.add(`${template.id}-${ex.exerciseId}`));
       return next;
     });
-    setCurrentTemplateId(template.id);
+    if (replaceAll) setCurrentTemplateId(template.id);
     setSelectedModal(null);
     onNavigateToToday?.();
+
+    if (replaceAll) {
+      if (!onReplaceSessionWithTemplate) return;
+      // force=true: user already confirmed via the "Replace?" alert, skip hasProgress check
+      void onReplaceSessionWithTemplate(today, sessionExercises, true).catch(() =>
+        Alert.alert('Error', 'Could not apply template. Please try again.')
+      );
+    } else {
+      if (!onAppendExercisesToSession) return;
+      void onAppendExercisesToSession(today, sessionExercises).catch(() =>
+        Alert.alert('Error', 'Could not add exercises. Please try again.')
+      );
+    }
   }, [today, buildSessionExercises, onReplaceSessionWithTemplate, onAppendExercisesToSession, onNavigateToToday]);
 
   const confirmAndApply = useCallback((template: WorkoutTemplate, exercises: TemplateExercise[], replaceAll: boolean) => {
@@ -305,11 +282,11 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         `This will replace your current ${todayExerciseCount} exercise${todayExerciseCount !== 1 ? 's' : ''} with "${template.title}".`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Replace', style: 'destructive', onPress: () => void handleApply(template, exercises, replaceAll, false) },
+          { text: 'Replace', style: 'destructive', onPress: () => handleApply(template, exercises, replaceAll) },
         ]
       );
     } else {
-      void handleApply(template, exercises, replaceAll, false);
+      handleApply(template, exercises, replaceAll);
     }
   }, [todayExerciseCount, handleApply]);
 

@@ -8,7 +8,6 @@ import {
   createEmptyAppState,
   WorkoutSessionEntry,
   WorkoutSessionExercise,
-  DailyMealPlan,
   PlanDay,
 } from '../types/domain';
 import { buildWorkoutAnalytics } from '../utils/workoutAnalytics';
@@ -24,7 +23,6 @@ import {
 } from '../services/workoutService';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
-import { fetchMealPlansForRange } from '../services/mealService';
 import {
   fetchPlanRange,
   appendPlanExercisesForDate,
@@ -32,19 +30,6 @@ import {
   deletePlanExercise,
   ensurePlanWorkoutForDate,
 } from '../services/planRuntimeService';
-
-const upsertMealPlan = (plans: DailyMealPlan[], plan: DailyMealPlan): DailyMealPlan[] => {
-  const index = plans.findIndex(
-    (existing) => existing.date === plan.date && existing.phasePlanId === plan.phasePlanId
-  );
-  if (index >= 0) {
-    const updated = [...plans];
-    updated[index] = plan;
-    return updated;
-  }
-  return [...plans, plan];
-};
-
 
 export const useAppState = () => {
   const [state, setState] = useState<AppState | null>(null);
@@ -77,7 +62,6 @@ export const useAppState = () => {
       phase?: PhasePlan | null;
       workoutSessions?: WorkoutSessionEntry[];
       plannedWorkouts?: PlanDay[];
-      mealPlans?: DailyMealPlan[];
     }) => {
       updateState((prev) => {
         const nextPhase = payload.phase !== undefined ? payload.phase : prev.currentPhase;
@@ -99,7 +83,6 @@ export const useAppState = () => {
           workoutLogs: phaseChanged ? [] : prev.workoutLogs,
           strengthSnapshots: phaseChanged ? [] : prev.strengthSnapshots,
           workoutDataVersion: phaseChanged ? nextWorkoutVersion(prev) : prev.workoutDataVersion,
-          mealPlans: payload.mealPlans !== undefined ? payload.mealPlans : prev.mealPlans,
         };
       });
     },
@@ -214,35 +197,6 @@ export const useAppState = () => {
     []
   );
 
-  const loadMealPlansFromSupabase = useCallback(
-    async (userId: string, planId?: string | null) => {
-      try {
-        const today = new Date();
-        const start = new Date(today);
-        start.setDate(start.getDate() - 14);
-        const end = new Date(today);
-        end.setDate(end.getDate() + 7);
-        const startKey = formatLocalDateYMD(start);
-        const endKey = formatLocalDateYMD(end);
-        const remotePlans = await fetchMealPlansForRange(
-          userId,
-          startKey,
-          endKey,
-          planId ?? undefined
-        );
-        setState((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            mealPlans: remotePlans,
-          };
-        });
-      } catch (err) {
-        console.error('Failed to load meals from Supabase:', err);
-      }
-    },
-    []
-  );
 
   const toggleWorkoutExercise = useCallback(
     async (
@@ -357,32 +311,6 @@ export const useAppState = () => {
       }
     },
     [refreshWorkoutSessions]);
-
-  const toggleMealCompletion = useCallback(
-    async (date: string, mealTitle: string) => {
-      const current = stateRef.current;
-      if (!current || !current.currentPhase || !current.user) return;
-      const plan = current.mealPlans.find(
-        (item) => item.date === date && item.phasePlanId === current.currentPhase!.id
-      );
-      if (!plan) return;
-      const updatedMeals = plan.meals.map((meal) =>
-        meal.title === mealTitle ? { ...meal, completed: !meal.completed } : meal
-      );
-      const updatedPlan: DailyMealPlan = {
-        ...plan,
-        meals: updatedMeals,
-        completed: updatedMeals.every((meal) => meal.completed),
-      };
-      const updatedPlans = upsertMealPlan(current.mealPlans, updatedPlan);
-      updateState((prev) => ({
-        ...prev,
-        mealPlans: updatedPlans,
-      }));
-    },
-    [updateState]
-  );
-
 
   const schedulePhotoReminder = useCallback(
     async (date: string) => {
@@ -726,10 +654,8 @@ export const useAppState = () => {
     clearAllData,
     toggleWorkoutExercise,
     schedulePhotoReminder,
-    toggleMealCompletion,
     loadWorkoutSessionsFromSupabase,
     loadPlannedWorkoutsFromSupabase,
-    loadMealPlansFromSupabase,
     saveCustomWorkoutSession,
     createWorkoutSession: createWorkoutSessionForDate,
     addWorkoutExercise,

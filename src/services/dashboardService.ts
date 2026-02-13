@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
-import { DailyMealPlan, PhotoCheckin, PhasePlan, WorkoutSessionEntry } from '../types/domain';
+import { PhotoCheckin, PhasePlan, WorkoutSessionEntry } from '../types/domain';
 import { mapPhaseRow } from './phaseService';
 import { mapSessionRow } from '../utils/workoutSessionMapper';
 import {
@@ -16,7 +16,6 @@ export type HomeScreenData = {
   phase: PhasePlan | null;
   recentSessions: WorkoutSessionEntry[];
   todaySession: WorkoutSessionEntry | null;
-  todayMealPlan: DailyMealPlan | null;
   lastPhotoCheckin: PhotoCheckin | null;
   consistencySummary: {
     streak: number;
@@ -101,7 +100,6 @@ export const fetchHomeData = async (
   );
 
   const todaySession = recentSessions.find((session) => session.date === todayKey) || null;
-  const todayMealPlan = null;
   const lastPhotoCheckin = null;
 
   if (__DEV__) {
@@ -118,7 +116,6 @@ export const fetchHomeData = async (
     phase,
     recentSessions,
     todaySession,
-    todayMealPlan,
     lastPhotoCheckin,
     consistencySummary: buildConsistencySummary(recentSessions, phase?.startDate ?? null),
   };

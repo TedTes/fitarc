@@ -330,7 +330,6 @@ function AppContent() {
     loadWorkoutSessionsFromSupabase,
     loadPlannedWorkoutsFromSupabase,
     hydrateFromRemote,
-    loadMealPlansFromSupabase,
     saveCustomWorkoutSession,
     addWorkoutExercise,
     deleteWorkoutExercise,
@@ -618,7 +617,6 @@ function AppContent() {
       await Promise.all([
         loadWorkoutSessionsFromSupabase(authUser.id, remotePhase.id),
         loadPlannedWorkoutsFromSupabase(authUser.id, remotePhase.id),
-        loadMealPlansFromSupabase(authUser.id, remotePhase.id),
       ]);
       
       console.log('✅ Sessions loaded successfully');
@@ -712,14 +710,12 @@ function AppContent() {
           await hydrateFromRemote({
             phase: homeData.phase ?? null,
             workoutSessions: homeData.recentSessions,
-            mealPlans: homeData.todayMealPlan ? [homeData.todayMealPlan] : undefined,
           });
           resetWorkoutData();
 
           if (homeData.phase?.id) {
             await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);
             await loadPlannedWorkoutsFromSupabase(authUser.id, homeData.phase.id);
-            await loadMealPlansFromSupabase(authUser.id, homeData.phase.id);
           }
           setOnboardingStep('complete');
         } else {
@@ -750,7 +746,6 @@ function AppContent() {
     hydrateFromRemote,
     loadWorkoutSessionsFromSupabase,
     loadPlannedWorkoutsFromSupabase,
-    loadMealPlansFromSupabase,
   ]);
 
   useEffect(() => {
