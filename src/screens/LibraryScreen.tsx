@@ -215,6 +215,22 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     });
   }, []);
 
+  const toggleAllKeys = useCallback(() => {
+    if (!selectedModal) return;
+    const allKeys = selectedModal.exercises.map((ex) => `${selectedModal.id}-${ex.exerciseId}`);
+    const unapplied = allKeys.filter((k) => !appliedThisSession.has(k));
+    const allSelected = unapplied.every((k) => selectedKeys.has(k));
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        unapplied.forEach((k) => next.delete(k));
+      } else {
+        unapplied.forEach((k) => next.add(k));
+      }
+      return next;
+    });
+  }, [selectedModal, selectedKeys, appliedThisSession]);
+
   // ─ Apply template ─
   const buildSessionExercises = useCallback((_template: WorkoutTemplate, exercises: TemplateExercise[]): WorkoutSessionExercise[] =>
     exercises.map((ex, i) => ({
@@ -495,35 +511,75 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                 return selectedKeys.has(k) && !appliedThisSession.has(k);
               });
               const isAll = addable.length === selectedModal.exercises.length;
-              const btnLabel = addable.length === 0 ? 'Nothing to add' : isAll ? 'Use Today' : `Add ${addable.length} Exercise${addable.length !== 1 ? 's' : ''}`;
+              const btnLabel = addable.length === 0 ? 'Nothing to add' : isAll ? 'Use Template' : `Add ${addable.length} Exercise${addable.length !== 1 ? 's' : ''}`;
+              const unappliedKeys = selectedModal.exercises
+                .map((ex) => `${selectedModal.id}-${ex.exerciseId}`)
+                .filter((k) => !appliedThisSession.has(k));
+              const allSelected = unappliedKeys.length > 0 && unappliedKeys.every((k) => selectedKeys.has(k));
 
               return (
                 <>
-                  {/* Modal header */}
-                  <View style={styles.modalHeader}>
-                    <View style={[styles.modalIconBadge, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
-                      <Text style={styles.modalIconText}>{selectedModal.icon}</Text>
-                    </View>
-                    <View style={styles.modalHeaderText}>
-                      <Text style={styles.modalTitle}>{selectedModal.title}</Text>
-                      <View style={styles.modalMetaRow}>
-                        <View style={[styles.diffBadge, { backgroundColor: diff.bg }]}>
-                          <Text style={[styles.diffBadgeText, { color: diff.text }]}>
-                            {selectedModal.difficulty.charAt(0).toUpperCase() + selectedModal.difficulty.slice(1)}
-                          </Text>
+                  {/* Gradient header */}
+                  <LinearGradient
+                    colors={[diff.bg, 'transparent']}
+                    style={styles.modalHeaderGradient}
+                  >
+                    <View style={styles.modalHeaderRow}>
+                      <View style={[styles.modalIconBadge, { borderColor: diff.text + '40' }]}>
+                        <Text style={styles.modalIconText}>{selectedModal.icon}</Text>
+                      </View>
+                      <View style={styles.modalHeaderText}>
+                        <Text style={styles.modalTitle}>{selectedModal.title}</Text>
+                        {selectedModal.description ? (
+                          <Text style={styles.modalDesc} numberOfLines={1}>{selectedModal.description}</Text>
+                        ) : null}
+                        <View style={styles.modalTagRow}>
+                          <View style={[styles.diffBadge, { backgroundColor: diff.bg }]}>
+                            <Text style={[styles.diffBadgeText, { color: diff.text }]}>
+                              {selectedModal.difficulty.charAt(0).toUpperCase() + selectedModal.difficulty.slice(1)}
+                            </Text>
+                          </View>
+                          {selectedModal.goalTags.slice(0, 2).map((tag) => (
+                            <View key={tag} style={styles.goalBadge}>
+                              <Text style={styles.goalBadgeText}>{GOAL_LABELS[tag] ?? tag}</Text>
+                            </View>
+                          ))}
                         </View>
-                        <Text style={styles.modalMeta}>
-                          {selectedModal.exercises.length} exercises · {selectedModal.totalSets} sets · {selectedModal.estimatedTime} min
-                        </Text>
+                      </View>
+                      <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedModal(null)}>
+                        <Text style={styles.modalCloseText}>×</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Stats strip */}
+                    <View style={styles.statsStrip}>
+                      <View style={styles.statItem}>
+                        <Text style={styles.statValue}>{selectedModal.exercises.length}</Text>
+                        <Text style={styles.statLabel}>Exercises</Text>
+                      </View>
+                      <View style={styles.statDivider} />
+                      <View style={styles.statItem}>
+                        <Text style={styles.statValue}>{selectedModal.totalSets}</Text>
+                        <Text style={styles.statLabel}>Sets</Text>
+                      </View>
+                      <View style={styles.statDivider} />
+                      <View style={styles.statItem}>
+                        <Text style={[styles.statValue, { color: COLORS.accent }]}>{selectedModal.estimatedTime}</Text>
+                        <Text style={styles.statLabel}>Min</Text>
                       </View>
                     </View>
-                    <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedModal(null)}>
-                      <Text style={styles.modalCloseText}>×</Text>
+                  </LinearGradient>
+
+                  {/* Exercise list header */}
+                  <View style={styles.exListHeader}>
+                    <Text style={styles.exListTitle}>Exercises</Text>
+                    <TouchableOpacity onPress={toggleAllKeys}>
+                      <Text style={styles.selectAllBtn}>{allSelected ? 'Deselect all' : 'Select all'}</Text>
                     </TouchableOpacity>
                   </View>
 
                   {/* Exercise list */}
-                  <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
+                  <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
                     {selectedModal.exercises.map((ex, idx) => {
                       const mc = MUSCLE_COLORS[ex.bodyParts[0]?.toLowerCase() ?? ''] ?? MUSCLE_COLORS.core;
                       const key = `${selectedModal.id}-${ex.exerciseId}`;
@@ -537,13 +593,16 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                           disabled={wasAdded}
                           activeOpacity={0.8}
                         >
-                          <View style={[styles.exDot, { backgroundColor: mc.text }]} />
+                          <View style={[styles.exColorBar, { backgroundColor: mc.text }]} />
                           <View style={styles.exInfo}>
-                            <Text style={styles.exName}>{ex.name}</Text>
+                            <Text style={[styles.exName, wasAdded && { color: COLORS.textMuted }]}>{ex.name}</Text>
                             <Text style={styles.exMeta}>
-                              {ex.sets}×{ex.reps} · {ex.bodyParts.slice(0, 2).map(formatBodyPart).join(', ')}
+                              {ex.bodyParts.slice(0, 2).map(formatBodyPart).join(' · ')}
                             </Text>
                           </View>
+                          <Text style={[styles.exSetsReps, (isSelected || wasAdded) && { color: diff.text }]}>
+                            {ex.sets}×{ex.reps}
+                          </Text>
                           <View style={[styles.exCheck, (isSelected || wasAdded) && styles.exCheckActive]}>
                             {(isSelected || wasAdded) && <Text style={styles.exCheckText}>✓</Text>}
                           </View>
@@ -554,8 +613,13 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
                   {/* Footer */}
                   <View style={styles.modalFooter}>
+                    {addable.length > 0 && !isAll && (
+                      <Text style={styles.footerHint}>
+                        {addable.length} of {selectedModal.exercises.length} selected · tap to deselect
+                      </Text>
+                    )}
                     <TouchableOpacity
-                      style={[styles.applyBtn, addable.length === 0 && styles.applyBtnDisabled]}
+                      style={[styles.applyBtn, isAll && styles.applyBtnPrimary, addable.length === 0 && styles.applyBtnDisabled]}
                       disabled={addable.length === 0}
                       onPress={() => confirmAndApply(selectedModal, addable, isAll)}
                     >
@@ -658,33 +722,56 @@ const styles = StyleSheet.create({
     display: 'flex', flexDirection: 'column',
   },
   sheetHandle: { alignSelf: 'center', width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 2, marginBottom: 16 },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 14, gap: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)', marginBottom: 8 },
-  modalIconBadge: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  modalIconText: { fontSize: 20 },
+
+  // Modal header
+  modalHeaderGradient: { paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)', marginBottom: 0 },
+  modalHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginBottom: 16 },
+  modalIconBadge: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
+  modalIconText: { fontSize: 26 },
   modalHeaderText: { flex: 1 },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.3, marginBottom: 4 },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -0.4, marginBottom: 3 },
+  modalDesc: { fontSize: 12, color: COLORS.textMuted, fontWeight: '500', marginBottom: 8 },
+  modalTagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   modalMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   modalMeta: { fontSize: 11, color: COLORS.textMuted, fontWeight: '500' },
-  diffBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
-  diffBadgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
+  diffBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  diffBadgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
+  goalBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(108,99,255,0.18)', borderWidth: 1, borderColor: 'rgba(108,99,255,0.3)' },
+  goalBadgeText: { fontSize: 10, fontWeight: '600', color: '#A89FFF', letterSpacing: 0.2 },
   modalClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: COLORS.overlay, alignItems: 'center', justifyContent: 'center' },
   modalCloseText: { fontSize: 22, color: COLORS.textSecondary, fontWeight: '300', marginTop: -2 },
+
+  // Stats strip
+  statsStrip: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, paddingVertical: 12 },
+  statItem: { flex: 1, alignItems: 'center' },
+  statValue: { fontSize: 20, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -0.5 },
+  statLabel: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 },
+  statDivider: { width: 1, height: 28, backgroundColor: 'rgba(255,255,255,0.08)' },
+
+  // Exercise list header
+  exListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10 },
+  exListTitle: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  selectAllBtn: { fontSize: 12, fontWeight: '700', color: COLORS.accent },
+
   modalList: { flex: 1, paddingHorizontal: 20 },
 
   // Exercise rows
-  exRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, borderRadius: 12, backgroundColor: COLORS.overlay, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.08)', gap: 10 },
-  exRowSelected: { backgroundColor: 'rgba(108,99,255,0.15)', borderColor: 'rgba(108,99,255,0.35)' },
-  exDot: { width: 8, height: 8, borderRadius: 4 },
-  exInfo: { flex: 1 },
+  exRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, borderRadius: 12, backgroundColor: COLORS.overlay, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.08)', gap: 12, overflow: 'hidden' },
+  exRowSelected: { backgroundColor: 'rgba(108,99,255,0.12)', borderColor: 'rgba(108,99,255,0.3)' },
+  exColorBar: { width: 4, alignSelf: 'stretch', minHeight: 52 },
+  exInfo: { flex: 1, paddingVertical: 12 },
   exName: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 3, letterSpacing: -0.2 },
   exMeta: { fontSize: 11, fontWeight: '500', color: COLORS.textMuted },
-  exCheck: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.03)', alignItems: 'center', justifyContent: 'center' },
+  exSetsReps: { fontSize: 13, fontWeight: '700', color: COLORS.textMuted, paddingRight: 4, letterSpacing: -0.2 },
+  exCheck: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.03)', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   exCheckActive: { backgroundColor: 'rgba(0,245,160,0.15)', borderColor: 'rgba(0,245,160,0.45)' },
   exCheckText: { fontSize: 13, fontWeight: '800', color: COLORS.success },
 
   // Footer
   modalFooter: { paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)' },
-  applyBtn: { paddingVertical: 14, borderRadius: 12, backgroundColor: COLORS.accent, alignItems: 'center', shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6 },
-  applyBtnDisabled: { backgroundColor: '#3A3F62', shadowOpacity: 0, elevation: 0 },
+  footerHint: { fontSize: 11, color: COLORS.textMuted, textAlign: 'center', marginBottom: 10, fontWeight: '500' },
+  applyBtn: { paddingVertical: 14, borderRadius: 12, backgroundColor: '#252A4A', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(108,99,255,0.25)' },
+  applyBtnPrimary: { backgroundColor: COLORS.accent, borderColor: 'transparent', shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
+  applyBtnDisabled: { backgroundColor: '#181D35', borderColor: 'rgba(255,255,255,0.06)', shadowOpacity: 0, elevation: 0 },
   applyBtnText: { fontSize: 15, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
 });
