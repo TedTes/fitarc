@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  Animated as RNAnimated,
+  Animated,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,15 +13,17 @@ import Svg, { Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 
-import { EatingMode, PhasePlan, User } from '../types/domain';
+import { PhasePlan, User } from '../types/domain';
 import { useFabAction } from '../contexts/FabActionContext';
 import { estimateDailyCalories } from '../utils/calorieGoal';
 import {
-  getTodayMeals,
-  MealsByType,
-  MealEntry,
-} from '../services/mealService';
-import { generateMealsForDay } from '../services/mealGenerationService';
+  applyMealTemplateForDate,
+  fetchMealTemplates,
+  fetchResolvedMealsForDate,
+  RuntimeMealEntry,
+  RuntimeMealTemplate,
+  RuntimeMealsByType,
+} from '../services/mealRuntimeService';
 import { formatLocalDateYMD } from '../utils/date';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -31,12 +33,11 @@ type MenuScreenProps = {
   phase: PhasePlan | null;
 };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Design tokens ────────────────────────────────────────────────────────────
 
-const SCREEN_GRADIENT = ['#0A0E27', '#0D1229', '#111633'] as const;
+const BG = '#0A0E27';
 
-const COLORS = {
-  background: '#0A0E27',
+const C = {
   surface: '#151932',
   primary: '#6C63FF',
   accent: '#00F5A0',
@@ -45,542 +46,442 @@ const COLORS = {
   carbs: '#6C63FF',
   fats: '#FF6B93',
   text: '#FFFFFF',
-  textSecondary: '#8B93B0',
+  textSec: '#8B93B0',
   textMuted: '#5A6178',
   border: '#2A2F4F',
 } as const;
 
 const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 };
 
-// ─── Meal Template Types & Data ───────────────────────────────────────────────
+const MEAL_ORDER = ['Breakfast', 'Lunch', 'Dinner', 'Snack', 'Meal'];
 
-type MealTemplate = {
-  id: string;
-  title: string;
-  goalLabel: string;
-  icon: string;
-  calorieMultiplier: number;
-  proteinPct: number;
-  carbsPct: number;
-  fatPct: number;
-  cuisine: string;
-  dietaryTags: string[];
-  maxReadyTime: number;
-  mealCount: number;
-  tags: string[];
-  eatingModes: EatingMode[];
-};
+const prettyTag = (tag: string) =>
+  tag.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
-type ComputedTemplate = MealTemplate & {
-  targetCalories: number;
-  protein_g: number;
-  carbs_g: number;
-  fat_g: number;
-};
+const sumMacro = (entries: RuntimeMealEntry[], key: 'calories' | 'protein' | 'carbs' | 'fats') =>
+  Math.round(entries.reduce((s, e) => s + ((e[key] as number | null | undefined) ?? 0), 0));
 
-const computeTemplateTargets = (template: MealTemplate, userCalorieGoal: number): ComputedTemplate => {
-  const targetCalories = Math.round((userCalorieGoal * template.calorieMultiplier) / 10) * 10;
-  return {
-    ...template,
-    targetCalories,
-    protein_g: Math.round((targetCalories * template.proteinPct) / 4),
-    carbs_g: Math.round((targetCalories * template.carbsPct) / 4),
-    fat_g: Math.round((targetCalories * template.fatPct) / 9),
-  };
-};
+const sortedSlots = (mealsByType: RuntimeMealsByType) =>
+  Object.entries(mealsByType).sort(([a], [b]) => {
+    const ai = MEAL_ORDER.indexOf(a);
+    const bi = MEAL_ORDER.indexOf(b);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
 
-const MEAL_TEMPLATES: MealTemplate[] = [
-  {
-    id: 'high-protein-power',
-    title: 'High Protein Power',
-    goalLabel: 'Muscle building',
-    icon: '💪',
-    calorieMultiplier: 1.0,
-    proteinPct: 0.35,
-    carbsPct: 0.45,
-    fatPct: 0.20,
-    cuisine: 'mixed',
-    dietaryTags: [],
-    maxReadyTime: 30,
-    mealCount: 4,
-    tags: ['high_protein', 'muscle'],
-    eatingModes: ['lean_bulk', 'recomp'],
-  },
-  {
-    id: 'low-carb-lean',
-    title: 'Low Carb Lean',
-    goalLabel: 'Fat loss',
-    icon: '🥩',
-    calorieMultiplier: 0.85,
-    proteinPct: 0.40,
-    carbsPct: 0.20,
-    fatPct: 0.40,
-    cuisine: 'mixed',
-    dietaryTags: [],
-    maxReadyTime: 30,
-    mealCount: 3,
-    tags: ['low_carb', 'fat_loss'],
-    eatingModes: ['mild_deficit'],
-  },
-  {
-    id: 'balanced-mediterranean',
-    title: 'Balanced Mediterranean',
-    goalLabel: 'Balanced',
-    icon: '🫒',
-    calorieMultiplier: 1.0,
-    proteinPct: 0.25,
-    carbsPct: 0.50,
-    fatPct: 0.25,
-    cuisine: 'mediterranean',
-    dietaryTags: [],
-    maxReadyTime: 45,
-    mealCount: 3,
-    tags: ['balanced', 'mediterranean'],
-    eatingModes: ['maintenance', 'recomp'],
-  },
-  {
-    id: 'plant-powered',
-    title: 'Plant Powered',
-    goalLabel: 'Vegan',
-    icon: '🌿',
-    calorieMultiplier: 1.0,
-    proteinPct: 0.22,
-    carbsPct: 0.55,
-    fatPct: 0.23,
-    cuisine: 'mixed',
-    dietaryTags: ['vegan'],
-    maxReadyTime: 30,
-    mealCount: 4,
-    tags: ['vegan', 'balanced'],
-    eatingModes: ['maintenance'],
-  },
-  {
-    id: 'quick-clean',
-    title: 'Quick & Clean',
-    goalLabel: 'Fast prep',
-    icon: '⚡',
-    calorieMultiplier: 1.0,
-    proteinPct: 0.30,
-    carbsPct: 0.45,
-    fatPct: 0.25,
-    cuisine: 'mixed',
-    dietaryTags: [],
-    maxReadyTime: 15,
-    mealCount: 3,
-    tags: ['quick', 'balanced'],
-    eatingModes: ['maintenance', 'recomp'],
-  },
-  {
-    id: 'asian-lean',
-    title: 'Asian Lean',
-    goalLabel: 'Asian · lean',
-    icon: '🍜',
-    calorieMultiplier: 0.90,
-    proteinPct: 0.35,
-    carbsPct: 0.48,
-    fatPct: 0.17,
-    cuisine: 'asian',
-    dietaryTags: [],
-    maxReadyTime: 30,
-    mealCount: 3,
-    tags: ['asian', 'balanced'],
-    eatingModes: ['mild_deficit'],
-  },
-];
+// ─── Macro ring ───────────────────────────────────────────────────────────────
 
-const MEAL_TEMPLATE_TAGS = ['all', 'high_protein', 'low_carb', 'balanced', 'vegan', 'quick', 'mediterranean', 'asian'];
-const MEAL_TAG_LABELS: Record<string, string> = {
-  all: 'All', high_protein: 'High Protein', low_carb: 'Low Carb',
-  balanced: 'Balanced', vegan: 'Vegan', quick: 'Quick', mediterranean: 'Mediterranean', asian: 'Asian',
-};
-
-// ─── CircularProgress ─────────────────────────────────────────────────────────
-
-const CircularProgress: React.FC<{
+const MacroRing: React.FC<{
   size: number;
   strokeWidth: number;
   progress: number;
   color: string;
-}> = ({ size, strokeWidth, progress, color }) => {
-  const AnimatedCircle = useMemo(() => RNAnimated.createAnimatedComponent(Circle), []);
-  const progressAnim = useRef(new RNAnimated.Value(0)).current;
+  label: string;
+  value: number;
+  unit: string;
+  muted?: boolean;
+}> = ({ size, strokeWidth, progress, color, label, value, unit, muted }) => {
+  const AnimCircle = useMemo(() => Animated.createAnimatedComponent(Circle), []);
+  const anim = useRef(new Animated.Value(0)).current;
   const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const gapLength = Math.max(8, strokeWidth * 0.9);
-  const maxProgress = (circumference - gapLength) / circumference;
-  const clampedProgress = Math.min(Math.max(progress, 0), maxProgress);
+  const circ = 2 * Math.PI * radius;
+  const gap = Math.max(8, strokeWidth);
+  const maxP = (circ - gap) / circ;
+  const clamped = Math.min(Math.max(progress, 0), maxP);
 
   useEffect(() => {
-    RNAnimated.timing(progressAnim, {
-      toValue: clampedProgress,
-      duration: 400,
-      useNativeDriver: false,
-    }).start();
-  }, [clampedProgress, progressAnim]);
+    Animated.timing(anim, { toValue: clamped, duration: 500, useNativeDriver: false }).start();
+  }, [clamped, anim]);
 
-  const strokeDashoffset = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [circumference, 0],
-  });
+  const dashOffset = anim.interpolate({ inputRange: [0, 1], outputRange: [circ, 0] });
+  const ringColor = muted ? color + '44' : color;
+  const textColor = muted ? 'rgba(255,255,255,0.4)' : C.text;
 
   return (
-    <Svg width={size} height={size}>
-      <Circle cx={size / 2} cy={size / 2} r={radius} stroke="rgba(255,255,255,0.06)" strokeWidth={strokeWidth} fill="none" />
-      <AnimatedCircle
-        cx={size / 2} cy={size / 2} r={radius}
-        stroke={color} strokeWidth={strokeWidth} fill="none"
-        strokeDasharray={`${circumference} ${circumference}`}
-        strokeDashoffset={strokeDashoffset}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-    </Svg>
-  );
-};
-
-// ─── Meal Entry Row ───────────────────────────────────────────────────────────
-
-const MealEntryRow: React.FC<{ entry: MealEntry }> = ({ entry }) => (
-  <View style={styles.entryRow}>
-    <View style={styles.entryDot} />
-    <Text style={styles.entryName} numberOfLines={1}>{entry.foodName}</Text>
-    <Text style={styles.entryKcal}>
-      {entry.calories != null ? `${Math.round(entry.calories)} kcal` : '—'}
-    </Text>
-  </View>
-);
-
-// ─── Meal Group ───────────────────────────────────────────────────────────────
-
-const MealGroup: React.FC<{ mealType: string; entries: MealEntry[] }> = ({ mealType, entries }) => {
-  const totalKcal = entries.reduce((s, e) => s + (e.calories ?? 0), 0);
-  return (
-    <View style={styles.mealGroup}>
-      <View style={styles.mealGroupHeader}>
-        <Text style={styles.mealGroupTitle}>{mealType}</Text>
-        <Text style={styles.mealGroupKcal}>{Math.round(totalKcal)} kcal</Text>
+    <View style={{ alignItems: 'center' }}>
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+        <Svg width={size} height={size}>
+          <Circle
+            cx={size / 2} cy={size / 2} r={radius}
+            stroke="rgba(255,255,255,0.06)" strokeWidth={strokeWidth} fill="none"
+          />
+          <AnimCircle
+            cx={size / 2} cy={size / 2} r={radius}
+            stroke={ringColor} strokeWidth={strokeWidth} fill="none"
+            strokeDasharray={`${circ} ${circ}`}
+            strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        </Svg>
+        <View style={[StyleSheet.absoluteFill as object, { alignItems: 'center', justifyContent: 'center' }]}
+          pointerEvents="none">
+          <Text style={{ fontSize: 13, fontWeight: '800', color: textColor, letterSpacing: -0.3 }}
+            numberOfLines={1}>{value}</Text>
+          <Text style={{ fontSize: 8, fontWeight: '600', color: C.textMuted, marginTop: 1 }}>{unit}</Text>
+        </View>
       </View>
-      {entries.map((e) => <MealEntryRow key={e.id} entry={e} />)}
+      <Text style={{ fontSize: 11, fontWeight: '600', color: muted ? C.textMuted : C.textSec, marginTop: 5 }}>
+        {label}
+      </Text>
     </View>
   );
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Meal slot card ───────────────────────────────────────────────────────────
+
+const SLOT_COLORS: Record<string, string> = {
+  Breakfast: '#FFB800',
+  Lunch: '#00D9A3',
+  Dinner: '#6C63FF',
+  Snack: '#FF6B93',
+  Meal: '#8B93B0',
+};
+
+const MealSlotCard: React.FC<{ title: string; entries: RuntimeMealEntry[] }> = ({ title, entries }) => {
+  const color = SLOT_COLORS[title] ?? SLOT_COLORS.Meal;
+  const kcal = sumMacro(entries, 'calories');
+  const protein = sumMacro(entries, 'protein');
+  const carbs = sumMacro(entries, 'carbs');
+  const fats = sumMacro(entries, 'fats');
+
+  return (
+    <View style={[styles.slotCard, { borderLeftColor: color }]}>
+      <View style={styles.slotHeader}>
+        <Text style={[styles.slotTitle, { color }]}>{title}</Text>
+        <View style={styles.slotMacroRow}>
+          {kcal > 0 && <Text style={styles.slotKcal}>{kcal} kcal</Text>}
+          {protein > 0 && <Text style={styles.slotProtein}>P {protein}g</Text>}
+        </View>
+      </View>
+      {entries.map((entry, i) => (
+        <View key={entry.id} style={[styles.slotEntry, i < entries.length - 1 && styles.slotEntryDivider]}>
+          <Text style={styles.slotEntryName} numberOfLines={1}>{entry.foodName}</Text>
+          {entry.quantity != null && (
+            <Text style={styles.slotEntryQty}>
+              {entry.quantity}{entry.unit ? ` ${entry.unit}` : ''}
+            </Text>
+          )}
+        </View>
+      ))}
+      {(carbs > 0 || fats > 0) && (
+        <View style={styles.slotFooter}>
+          {carbs > 0 && <Text style={styles.slotFooterText}>C {carbs}g</Text>}
+          {fats > 0 && <Text style={styles.slotFooterText}>F {fats}g</Text>}
+        </View>
+      )}
+    </View>
+  );
+};
+
+// ─── Template card ────────────────────────────────────────────────────────────
+
+const TemplateCard: React.FC<{
+  template: RuntimeMealTemplate;
+  active: boolean;
+  recommended: boolean;
+  calorieTarget: number;
+  onPress: () => void;
+}> = ({ template, active, recommended, calorieTarget, onPress }) => {
+  const mealSlots = useMemo(() => {
+    const slots = new Set(template.entries.map((e) => e.mealType));
+    return slots.size || 3;
+  }, [template.entries]);
+
+  const displayKcal = template.estimatedCalories ?? calorieTarget;
+
+  return (
+    <TouchableOpacity
+      style={[styles.templateCard, active && styles.templateCardActive]}
+      activeOpacity={0.78}
+      onPress={onPress}
+    >
+      {active && <View style={styles.templateStrip} />}
+      <View style={styles.templateInner}>
+        <View style={styles.templateBody}>
+          <View style={styles.templateTitleRow}>
+            <Text style={[styles.templateTitle, active && { color: C.accent }]} numberOfLines={1}>
+              {template.title}
+            </Text>
+            {recommended && (
+              <View style={styles.forYouBadge}>
+                <Text style={styles.forYouText}>For you</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.templateMeta} numberOfLines={1}>
+            {displayKcal.toLocaleString()} kcal · {mealSlots} meals
+            {template.difficulty ? ` · ${template.difficulty}` : ''}
+          </Text>
+          {template.goalTags.length > 0 && (
+            <View style={styles.tagRow}>
+              {template.goalTags.slice(0, 3).map((tag) => (
+                <View key={`${template.id}-${tag}`} style={styles.tagChip}>
+                  <Text style={styles.tagText}>{prettyTag(tag)}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+        <View style={[styles.templateCheck, active && styles.templateCheckActive]}>
+          <Text style={[styles.templateCheckText, active && { color: C.accent }]}>
+            {active ? '✓' : '›'}
+          </Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const { setFabAction } = useFabAction();
 
+  const [templates, setTemplates] = useState<RuntimeMealTemplate[]>([]);
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
-  const [mealTagFilter, setMealTagFilter] = useState('all');
-  const [isLoadingMeals, setIsLoadingMeals] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [mealsByType, setMealsByType] = useState<MealsByType>({});
-
-  const scrollY = useRef(new RNAnimated.Value(0)).current;
-  const headerOpacity = scrollY.interpolate({ inputRange: [0, 80], outputRange: [1, 0.92], extrapolate: 'clamp' });
-  const ringScale = scrollY.interpolate({ inputRange: [0, 120], outputRange: [1, 0.85], extrapolate: 'clamp' });
-  const ringOpacity = scrollY.interpolate({ inputRange: [0, 90, 140], outputRange: [1, 0.7, 0], extrapolate: 'clamp' });
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [mealsByType, setMealsByType] = useState<RuntimeMealsByType>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
 
   const today = useMemo(() => formatLocalDateYMD(new Date()), []);
   const planId = phase?.id ?? null;
 
   const calorieGoal = useMemo(() => estimateDailyCalories(user).goalCalories, [user]);
-
   const macroTargets = useMemo(() => ({
-    protein_g: Math.round((calorieGoal * MACRO_SPLIT.protein) / 4),
-    carbs_g: Math.round((calorieGoal * MACRO_SPLIT.carbs) / 4),
-    fats_g: Math.round((calorieGoal * MACRO_SPLIT.fats) / 9),
+    protein: Math.round((calorieGoal * MACRO_SPLIT.protein) / 4),
+    carbs: Math.round((calorieGoal * MACRO_SPLIT.carbs) / 4),
+    fats: Math.round((calorieGoal * MACRO_SPLIT.fats) / 9),
   }), [calorieGoal]);
 
   const selectedTemplate = useMemo(
-    () => MEAL_TEMPLATES.find((t) => t.id === appliedTemplateId) ?? null,
-    [appliedTemplateId]
+    () => templates.find((t) => t.id === selectedTemplateId) ?? null,
+    [selectedTemplateId, templates]
   );
 
-  const computedSelected = useMemo(
-    () => selectedTemplate ? computeTemplateTargets(selectedTemplate, calorieGoal) : null,
-    [selectedTemplate, calorieGoal]
-  );
-
-  // ── Actual meal data ──────────────────────────────────────────────────────
-
+  const hasMeals = Object.keys(mealsByType).length > 0;
   const allEntries = useMemo(() => Object.values(mealsByType).flat(), [mealsByType]);
-  const hasEntries = allEntries.length > 0;
 
-  const actualTotals = useMemo(() => ({
-    calories: allEntries.reduce((s, e) => s + (e.calories ?? 0), 0),
-    protein_g: allEntries.reduce((s, e) => s + (e.protein ?? 0), 0),
-    carbs_g: allEntries.reduce((s, e) => s + (e.carbs ?? 0), 0),
-    fats_g: allEntries.reduce((s, e) => s + (e.fats ?? 0), 0),
+  const totals = useMemo(() => ({
+    calories: sumMacro(allEntries, 'calories'),
+    protein: sumMacro(allEntries, 'protein'),
+    carbs: sumMacro(allEntries, 'carbs'),
+    fats: sumMacro(allEntries, 'fats'),
   }), [allEntries]);
 
-  const isTargetMode = !hasEntries && !computedSelected;
-
-  // ── Rings ─────────────────────────────────────────────────────────────────
-
   const rings = useMemo(() => {
-    if (hasEntries) {
-      return [
-        { label: 'Calories', value: Math.round(actualTotals.calories), target: Math.round(calorieGoal), progress: actualTotals.calories / calorieGoal, color: COLORS.calories, unit: 'kcal' },
-        { label: 'Protein', value: Math.round(actualTotals.protein_g), target: macroTargets.protein_g, progress: actualTotals.protein_g / macroTargets.protein_g, color: COLORS.protein, unit: 'g' },
-        { label: 'Carbs', value: Math.round(actualTotals.carbs_g), target: macroTargets.carbs_g, progress: actualTotals.carbs_g / macroTargets.carbs_g, color: COLORS.carbs, unit: 'g' },
-        { label: 'Fat', value: Math.round(actualTotals.fats_g), target: macroTargets.fats_g, progress: actualTotals.fats_g / macroTargets.fats_g, color: COLORS.fats, unit: 'g' },
-      ];
-    }
+    const base = hasMeals
+      ? { cal: totals.calories, prot: totals.protein, carb: totals.carbs, fat: totals.fats }
+      : {
+          cal: selectedTemplate?.estimatedCalories ?? calorieGoal,
+          prot: selectedTemplate?.estimatedProtein ?? macroTargets.protein,
+          carb: selectedTemplate?.estimatedCarbs ?? macroTargets.carbs,
+          fat: selectedTemplate?.estimatedFats ?? macroTargets.fats,
+        };
     return [
-      { label: 'Calories', value: computedSelected?.targetCalories ?? Math.round(calorieGoal), target: Math.round(calorieGoal), progress: computedSelected ? computedSelected.targetCalories / calorieGoal : 1, color: COLORS.calories, unit: 'kcal' },
-      { label: 'Protein', value: computedSelected?.protein_g ?? macroTargets.protein_g, target: macroTargets.protein_g, progress: computedSelected ? computedSelected.protein_g / macroTargets.protein_g : 1, color: COLORS.protein, unit: 'g' },
-      { label: 'Carbs', value: computedSelected?.carbs_g ?? macroTargets.carbs_g, target: macroTargets.carbs_g, progress: computedSelected ? computedSelected.carbs_g / macroTargets.carbs_g : 1, color: COLORS.carbs, unit: 'g' },
-      { label: 'Fat', value: computedSelected?.fat_g ?? macroTargets.fats_g, target: macroTargets.fats_g, progress: computedSelected ? computedSelected.fat_g / macroTargets.fats_g : 1, color: COLORS.fats, unit: 'g' },
+      { label: 'Calories', value: Math.round(base.cal), unit: 'kcal', color: C.calories, progress: base.cal / calorieGoal },
+      { label: 'Protein', value: Math.round(base.prot), unit: 'g', color: C.protein, progress: base.prot / macroTargets.protein },
+      { label: 'Carbs', value: Math.round(base.carb), unit: 'g', color: C.carbs, progress: base.carb / macroTargets.carbs },
+      { label: 'Fat', value: Math.round(base.fat), unit: 'g', color: C.fats, progress: base.fat / macroTargets.fats },
     ];
-  }, [hasEntries, actualTotals, computedSelected, calorieGoal, macroTargets]);
+  }, [hasMeals, totals, selectedTemplate, calorieGoal, macroTargets]);
 
-  // ── Data loading ──────────────────────────────────────────────────────────
+  const isMuted = !hasMeals && !selectedTemplate;
+  const isPendingApply = selectedTemplateId !== null && selectedTemplateId !== appliedTemplateId;
 
-  const loadTodayMeals = useCallback(async () => {
-    setIsLoadingMeals(true);
+  // ── Data loading ─────────────────────────────────────────────────────────
+
+  const loadMeals = useCallback(async () => {
+    setIsLoading(true);
     try {
-      const result = await getTodayMeals(user.id, today, planId);
-      setMealsByType(result.mealsByType);
-    } catch (e) {
-      console.error('Failed to load today meals:', e);
+      const [templateRows, resolved] = await Promise.all([
+        fetchMealTemplates(user.id),
+        fetchResolvedMealsForDate(user.id, planId, today, user.eatingMode),
+      ]);
+      setTemplates(templateRows);
+      setMealsByType(resolved.mealsByType);
+
+      const currentId = resolved.template?.id ?? null;
+      setAppliedTemplateId(currentId);
+      if (currentId) {
+        setSelectedTemplateId(currentId);
+      } else if (templateRows.length) {
+        const bestMatch = templateRows.find(
+          (t) => (t.eatingMode ?? '').toLowerCase() === user.eatingMode
+        ) ?? templateRows[0];
+        setSelectedTemplateId(bestMatch.id);
+      }
+    } catch (error) {
+      console.error('Failed loading meals:', error);
     } finally {
-      setIsLoadingMeals(false);
+      setIsLoading(false);
     }
-  }, [user.id, today, planId]);
+  }, [planId, today, user.eatingMode, user.id]);
 
   useFocusEffect(useCallback(() => {
     setFabAction('Menu', null);
-    loadTodayMeals();
+    void loadMeals();
     return () => setFabAction('Menu', null);
-  }, [setFabAction, loadTodayMeals]));
+  }, [loadMeals, setFabAction]));
 
-  // ── Generate ──────────────────────────────────────────────────────────────
+  // ── Apply template ────────────────────────────────────────────────────────
 
-  const handleGenerate = useCallback(async () => {
+  const handleApply = useCallback(async () => {
     if (!selectedTemplate) return;
-    setIsGenerating(true);
-    const computed = computeTemplateTargets(selectedTemplate, calorieGoal);
-    try {
-      await generateMealsForDay({
-        user_id: user.id,
-        plan_id: planId ?? user.id,
-        date: today,
-        calorie_target: computed.targetCalories,
-        macro_targets: {
-          protein_g: computed.protein_g,
-          carbs_g: computed.carbs_g,
-          fats_g: computed.fat_g,
-        },
-        meal_count: selectedTemplate.mealCount,
-        dietary_tags: selectedTemplate.dietaryTags.length ? selectedTemplate.dietaryTags : undefined,
-        cuisine: selectedTemplate.cuisine !== 'mixed' ? selectedTemplate.cuisine : undefined,
-        max_ready_time_minutes: selectedTemplate.maxReadyTime,
-      });
-      await loadTodayMeals();
-    } catch (e) {
-      console.error('Meal generation failed:', e);
-      Alert.alert('Generation failed', 'Could not generate meals. Please try again.');
-    } finally {
-      setIsGenerating(false);
+    if (!planId) {
+      Alert.alert('No active plan', 'Start a training plan before applying meal templates.');
+      return;
     }
-  }, [selectedTemplate, user.id, planId, today, calorieGoal, loadTodayMeals]);
+    setIsApplying(true);
+    try {
+      await applyMealTemplateForDate(user.id, planId, today, selectedTemplate.id);
+      await loadMeals();
+    } catch (error) {
+      console.error('Failed applying template:', error);
+      Alert.alert('Error', 'Could not apply template. Please try again.');
+    } finally {
+      setIsApplying(false);
+    }
+  }, [loadMeals, planId, selectedTemplate, today, user.id]);
 
-  // ── Filtered templates ────────────────────────────────────────────────────
+  // ── Sorted templates ─────────────────────────────────────────────────────
 
-  const filteredTemplates = useMemo(() => {
-    const base = MEAL_TEMPLATES.filter((t) => t.id !== appliedTemplateId);
-    const filtered = mealTagFilter === 'all' ? base : base.filter((t) => t.tags.includes(mealTagFilter));
-    return [...filtered].sort((a, b) => {
-      const aRec = a.eatingModes.includes(user.eatingMode) ? 1 : 0;
-      const bRec = b.eatingModes.includes(user.eatingMode) ? 1 : 0;
-      return bRec - aRec;
+  const sortedTemplates = useMemo(() => {
+    return [...templates].sort((a, b) => {
+      const aRec = (a.eatingMode ?? '').toLowerCase() === user.eatingMode;
+      const bRec = (b.eatingMode ?? '').toLowerCase() === user.eatingMode;
+      if (aRec === bRec) return a.title.localeCompare(b.title);
+      return bRec ? 1 : -1;
     });
-  }, [appliedTemplateId, mealTagFilter, user.eatingMode]);
+  }, [templates, user.eatingMode]);
 
-  // ── Render card ───────────────────────────────────────────────────────────
-
-  const renderCard = (template: MealTemplate, isActive = false) => {
-    const computed = computeTemplateTargets(template, calorieGoal);
-    const isRecommended = !isActive && template.eatingModes.includes(user.eatingMode);
-    return (
-      <TouchableOpacity
-        key={template.id}
-        activeOpacity={0.75}
-        onPress={() => setAppliedTemplateId(isActive ? null : template.id)}
-        style={[styles.card, isActive && styles.cardActive]}
-      >
-        {isActive && <View style={styles.cardActiveStrip} />}
-        <View style={styles.cardInner}>
-          <View style={[styles.cardIcon, isActive && styles.cardIconActive]}>
-            <Text style={styles.cardIconText}>{template.icon}</Text>
-          </View>
-          <View style={styles.cardBody}>
-            <View style={styles.cardTitleRow}>
-              <Text style={[styles.cardTitle, isActive && { color: COLORS.accent }]} numberOfLines={1}>
-                {template.title}
-              </Text>
-              {isRecommended && (
-                <View style={styles.forYouBadge}>
-                  <Text style={styles.forYouText}>For you</Text>
-                </View>
-              )}
-            </View>
-            <Text style={styles.cardMeta} numberOfLines={1}>
-              {computed.targetCalories.toLocaleString()} kcal · {template.goalLabel} · {template.mealCount} meals
-            </Text>
-          </View>
-          <Text style={[styles.cardChevron, isActive && { color: COLORS.accent }]}>
-            {isActive ? '✓' : '›'}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  // ── Rings mode label ──────────────────────────────────────────────────────
-
-  const ringsModeText = hasEntries
-    ? `Today · ${Math.round(actualTotals.calories)} / ${Math.round(calorieGoal)} kcal`
-    : computedSelected
-      ? `${selectedTemplate!.title} · ${computedSelected.targetCalories} kcal`
-      : 'Daily targets · select a plan below';
-
-  const ringsModeStyle = hasEntries
-    ? styles.ringsModeActive
-    : isTargetMode
-      ? styles.ringsModeTarget
-      : styles.ringsModeActive;
+  const ringLabel = hasMeals
+    ? `${totals.calories} / ${Math.round(calorieGoal)} kcal today`
+    : selectedTemplate
+      ? `${selectedTemplate.title} — targets`
+      : `${Math.round(calorieGoal)} kcal daily target`;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+      <LinearGradient colors={['#0A0E27', '#0D1229', '#111633']} style={styles.gradient}>
 
-        {/* Sticky macro rings header */}
-        <RNAnimated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-          <RNAnimated.View style={[styles.ringsRow, { transform: [{ scale: ringScale }], opacity: ringOpacity }]}>
-            {rings.map((ring) => (
-              <View key={ring.label} style={styles.ringItem}>
-                <View style={styles.ringWrap}>
-                  <CircularProgress
-                    size={76}
-                    strokeWidth={8}
-                    progress={ring.progress}
-                    color={isTargetMode ? ring.color + '55' : ring.color}
-                  />
-                  <View style={styles.ringCenter}>
-                    <Text style={[styles.ringValue, isTargetMode && { color: 'rgba(255,255,255,0.45)' }]} numberOfLines={1}>
-                      {ring.value}
-                    </Text>
-                    <Text style={styles.ringUnit}>{ring.unit}</Text>
-                  </View>
-                </View>
-                <Text style={[styles.ringLabel, isTargetMode && { color: 'rgba(255,255,255,0.35)' }]}>{ring.label}</Text>
-              </View>
-            ))}
-          </RNAnimated.View>
-          <Text style={[styles.ringsModeLabel, ringsModeStyle]}>
-            {ringsModeText}
-          </Text>
-        </RNAnimated.View>
-
-        <RNAnimated.ScrollView
+        <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
-          onScroll={RNAnimated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
-          scrollEventThrottle={16}
         >
-          {/* Loading state */}
-          {isLoadingMeals && (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator size="small" color={COLORS.textSecondary} />
-              <Text style={styles.loadingText}>Loading today's meals…</Text>
-            </View>
-          )}
-
-          {/* Today's meals from Supabase */}
-          {!isLoadingMeals && hasEntries && (
-            <View style={styles.todaySection}>
-              <Text style={styles.sectionLabel}>TODAY'S MEALS</Text>
-              {Object.entries(mealsByType).map(([mealType, entries]) => (
-                <MealGroup key={mealType} mealType={mealType} entries={entries} />
-              ))}
-              <TouchableOpacity
-                style={styles.regenerateBtn}
-                onPress={handleGenerate}
-                disabled={isGenerating || !selectedTemplate}
-                activeOpacity={0.75}
-              >
-                {isGenerating
-                  ? <ActivityIndicator size="small" color={COLORS.textSecondary} />
-                  : <Text style={styles.regenerateBtnText}>Regenerate with template</Text>}
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Empty state — no meals yet */}
-          {!isLoadingMeals && !hasEntries && (
-            <View style={styles.emptySection}>
-              <Text style={styles.emptyIcon}>🍽️</Text>
-              <Text style={styles.emptyTitle}>No meals logged today</Text>
-              <Text style={styles.emptySubtitle}>
-                Pick a plan below and generate your meals for today.
-              </Text>
-
-              {selectedTemplate && (
-                <TouchableOpacity
-                  style={[styles.generateBtn, isGenerating && styles.generateBtnDisabled]}
-                  onPress={handleGenerate}
-                  disabled={isGenerating}
-                  activeOpacity={0.8}
-                >
-                  {isGenerating ? (
-                    <ActivityIndicator size="small" color="#0A0E27" />
-                  ) : (
-                    <Text style={styles.generateBtnText}>
-                      Generate with {selectedTemplate.title}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-
-          {/* Active plan */}
-          {selectedTemplate && (
-            <View style={styles.activeSection}>
-              <Text style={styles.sectionLabel}>ACTIVE PLAN</Text>
-              {renderCard(selectedTemplate, true)}
-            </View>
-          )}
-
-          {/* Meal Plans list */}
-          <View style={styles.listSection}>
-            <Text style={styles.sectionLabel}>MEAL PLANS</Text>
-
-            {/* Filter chips */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-              {MEAL_TEMPLATE_TAGS.map((tag) => (
-                <TouchableOpacity
-                  key={tag}
-                  style={[styles.filterChip, mealTagFilter === tag && styles.filterChipActive]}
-                  onPress={() => setMealTagFilter(tag)}
-                >
-                  <Text style={[styles.filterChipText, mealTagFilter === tag && styles.filterChipTextActive]}>
-                    {MEAL_TAG_LABELS[tag]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            {filteredTemplates.map((t) => renderCard(t, false))}
+          {/* Page header */}
+          <View style={styles.pageHeader}>
+            <Text style={styles.pageTitle}>Meals</Text>
+            <Text style={styles.pageSubtitle}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            </Text>
           </View>
 
-          <View style={{ height: 100 }} />
-        </RNAnimated.ScrollView>
+          {/* Macro summary card */}
+          <View style={styles.summaryCard}>
+            <View style={styles.ringsRow}>
+              {rings.map((ring) => (
+                <MacroRing
+                  key={ring.label}
+                  size={72}
+                  strokeWidth={7}
+                  progress={ring.progress}
+                  color={ring.color}
+                  label={ring.label}
+                  value={ring.value}
+                  unit={ring.unit}
+                  muted={isMuted}
+                />
+              ))}
+            </View>
+            <Text style={[styles.ringLabel, isMuted ? styles.ringLabelMuted : styles.ringLabelActive]}>
+              {ringLabel}
+            </Text>
+          </View>
+
+          {/* Loading */}
+          {isLoading && (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color={C.textMuted} />
+              <Text style={styles.loadingText}>Loading…</Text>
+            </View>
+          )}
+
+          {/* Today's meals */}
+          {!isLoading && hasMeals && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>TODAY</Text>
+                {appliedTemplateId && (
+                  <Text style={styles.sectionBadge}>
+                    {templates.find((t) => t.id === appliedTemplateId)?.title ?? ''}
+                  </Text>
+                )}
+              </View>
+              {sortedSlots(mealsByType).map(([slotName, entries]) => (
+                <MealSlotCard key={slotName} title={slotName} entries={entries} />
+              ))}
+            </View>
+          )}
+
+          {/* Templates */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>MEAL TEMPLATES</Text>
+
+            {isLoading && !templates.length && (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator size="small" color={C.textMuted} />
+                <Text style={styles.loadingText}>Loading templates…</Text>
+              </View>
+            )}
+
+            {!isLoading && !templates.length && (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyEmoji}>🍽️</Text>
+                <Text style={styles.emptyTitle}>No templates yet</Text>
+                <Text style={styles.emptyText}>Meal templates will appear here once added.</Text>
+              </View>
+            )}
+
+            {sortedTemplates.map((template) => (
+              <TemplateCard
+                key={template.id}
+                template={template}
+                active={template.id === selectedTemplateId}
+                recommended={(template.eatingMode ?? '').toLowerCase() === user.eatingMode}
+                calorieTarget={calorieGoal}
+                onPress={() => setSelectedTemplateId(template.id)}
+              />
+            ))}
+          </View>
+
+          <View style={{ height: isPendingApply ? 100 : 60 }} />
+        </ScrollView>
+
+        {/* Sticky apply footer */}
+        {isPendingApply && (
+          <View style={styles.footer}>
+            <TouchableOpacity
+              style={[styles.applyBtn, isApplying && styles.applyBtnDisabled]}
+              onPress={handleApply}
+              disabled={isApplying}
+              activeOpacity={0.8}
+            >
+              {isApplying ? (
+                <ActivityIndicator size="small" color={BG} />
+              ) : (
+                <Text style={styles.applyBtnText}>
+                  {appliedTemplateId
+                    ? `Switch to ${selectedTemplate?.title ?? '…'}`
+                    : `Apply ${selectedTemplate?.title ?? '…'}`}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
 
       </LinearGradient>
     </View>
@@ -590,172 +491,189 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
+  container: { flex: 1, backgroundColor: BG },
   gradient: { flex: 1 },
+  scroll: { flex: 1 },
+  scrollContent: { paddingTop: 60, paddingHorizontal: 16 },
 
-  // Header
-  stickyHeader: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0,
-    zIndex: 10,
-    backgroundColor: COLORS.background,
-    paddingTop: 60,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
+  // Page header
+  pageHeader: { marginBottom: 20 },
+  pageTitle: { fontSize: 28, fontWeight: '800', color: C.text, letterSpacing: -0.6 },
+  pageSubtitle: { fontSize: 13, fontWeight: '500', color: C.textMuted, marginTop: 3 },
+
+  // Macro summary
+  summaryCard: {
+    backgroundColor: C.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingVertical: 18,
+    paddingHorizontal: 12,
+    marginBottom: 20,
   },
   ringsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    gap: 8,
+    justifyContent: 'space-around',
   },
-  ringItem: { alignItems: 'center', justifyContent: 'center', flex: 1 },
-  ringWrap: { position: 'relative', width: 76, height: 76, alignItems: 'center', justifyContent: 'center' },
-  ringCenter: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
-  ringValue: { fontSize: 13, fontWeight: '700', color: COLORS.text },
-  ringUnit: { fontSize: 9, fontWeight: '600', color: COLORS.textSecondary, marginTop: 1 },
-  ringLabel: { fontSize: 11, fontWeight: '600', color: COLORS.textSecondary, marginTop: 6 },
-  ringsModeLabel: {
-    fontSize: 11,
-    fontWeight: '600',
+  ringLabel: {
     textAlign: 'center',
-    marginTop: 8,
-    letterSpacing: 0.2,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 12,
+    letterSpacing: 0.1,
   },
-  ringsModeTarget: { color: COLORS.textMuted, fontStyle: 'italic' },
-  ringsModeActive: { color: COLORS.accent },
-
-  // Scroll
-  scroll: { flex: 1 },
-  scrollContent: { paddingTop: 200, paddingHorizontal: 16 },
+  ringLabelMuted: { color: C.textMuted, fontStyle: 'italic' },
+  ringLabelActive: { color: C.accent },
 
   // Loading
-  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 20, justifyContent: 'center' },
-  loadingText: { fontSize: 13, color: COLORS.textMuted },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, justifyContent: 'center' },
+  loadingText: { fontSize: 13, color: C.textMuted },
 
-  // Today's meals
-  todaySection: { marginBottom: 24 },
-  mealGroup: {
-    backgroundColor: COLORS.surface,
+  // Sections
+  section: { marginBottom: 20 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  sectionTitle: { fontSize: 11, fontWeight: '700', color: C.textMuted, letterSpacing: 1.2, textTransform: 'uppercase' },
+  sectionBadge: { fontSize: 11, fontWeight: '600', color: C.accent },
+
+  // Meal slot card
+  slotCard: {
+    backgroundColor: C.surface,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: C.border,
+    borderLeftWidth: 3,
     marginBottom: 8,
     overflow: 'hidden',
   },
-  mealGroupHeader: {
+  slotHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingTop: 11,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  mealGroupTitle: { fontSize: 13, fontWeight: '700', color: COLORS.text },
-  mealGroupKcal: { fontSize: 12, fontWeight: '600', color: COLORS.calories },
-  entryRow: {
+  slotTitle: { fontSize: 13, fontWeight: '800' },
+  slotMacroRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  slotKcal: { fontSize: 12, fontWeight: '700', color: C.calories },
+  slotProtein: { fontSize: 11, fontWeight: '600', color: C.protein },
+  slotEntry: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    gap: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.03)',
+    paddingVertical: 9,
   },
-  entryDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.textMuted },
-  entryName: { flex: 1, fontSize: 13, color: COLORS.textSecondary, fontWeight: '500' },
-  entryKcal: { fontSize: 12, fontWeight: '600', color: COLORS.textMuted },
-  regenerateBtn: {
-    paddingVertical: 11,
-    alignItems: 'center',
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-    marginTop: 4,
+  slotEntryDivider: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  slotEntryName: { flex: 1, fontSize: 13, fontWeight: '500', color: C.textSec },
+  slotEntryQty: { fontSize: 11, color: C.textMuted, fontWeight: '500' },
+  slotFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 6,
+    paddingBottom: 9,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.04)',
   },
-  regenerateBtnText: { fontSize: 13, fontWeight: '600', color: COLORS.textMuted },
+  slotFooterText: { fontSize: 11, fontWeight: '600', color: C.textMuted },
 
-  // Empty state
-  emptySection: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    marginBottom: 20,
-  },
-  emptyIcon: { fontSize: 40, marginBottom: 12 },
-  emptyTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
-  emptySubtitle: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 20, paddingHorizontal: 24, marginBottom: 20 },
-  generateBtn: {
-    backgroundColor: COLORS.accent,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    alignItems: 'center',
-    minWidth: 240,
-  },
-  generateBtnDisabled: { opacity: 0.5 },
-  generateBtnText: { fontSize: 15, fontWeight: '800', color: '#0A0E27' },
-
-  // Sections
-  activeSection: { marginBottom: 24 },
-  listSection: { marginBottom: 8 },
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: COLORS.textMuted,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    marginBottom: 10,
-  },
-
-  // Filter chips
-  filterRow: { paddingBottom: 12, gap: 8 },
-  filterChip: {
-    paddingVertical: 7, paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  filterChipActive: {
-    backgroundColor: 'rgba(108,99,255,0.2)',
-    borderColor: 'rgba(108,99,255,0.45)',
-  },
-  filterChipText: { fontSize: 12, fontWeight: '700', color: COLORS.textSecondary },
-  filterChipTextActive: { color: COLORS.primary },
-
-  // Template cards
-  card: {
+  // Template card
+  templateCard: {
     borderRadius: 14,
     marginBottom: 8,
-    backgroundColor: COLORS.surface,
+    backgroundColor: C.surface,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: C.border,
     overflow: 'hidden',
   },
-  cardActive: { borderColor: 'rgba(0,245,160,0.3)', backgroundColor: '#0C1A17' },
-  cardActiveStrip: { position: 'absolute', top: 0, bottom: 0, left: 0, width: 3, backgroundColor: COLORS.accent },
-  cardInner: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 14 },
-  cardIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
-  cardIconActive: { backgroundColor: 'rgba(0,245,160,0.08)' },
-  cardIconText: { fontSize: 20 },
-  cardBody: { flex: 1 },
-  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text, letterSpacing: -0.2 },
-  cardMeta: { fontSize: 12, fontWeight: '500', color: COLORS.textSecondary },
-  cardChevron: { fontSize: 22, color: COLORS.textMuted, fontWeight: '300', marginTop: -1 },
-
-  // For you badge
-  forYouBadge: {
-    paddingVertical: 2, paddingHorizontal: 6,
-    borderRadius: 5,
-    backgroundColor: 'rgba(255,184,0,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,184,0,0.3)',
+  templateCardActive: {
+    borderColor: 'rgba(0,245,160,0.3)',
+    backgroundColor: '#0C1A17',
   },
-  forYouText: { fontSize: 9, fontWeight: '700', color: '#FFB800', textTransform: 'uppercase', letterSpacing: 0.4 },
+  templateStrip: {
+    position: 'absolute',
+    top: 0, bottom: 0, left: 0,
+    width: 3,
+    backgroundColor: C.accent,
+  },
+  templateInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  templateBody: { flex: 1 },
+  templateTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  templateTitle: { fontSize: 15, fontWeight: '700', color: C.text, letterSpacing: -0.2 },
+  templateMeta: { fontSize: 12, fontWeight: '500', color: C.textSec },
+  templateCheck: {
+    width: 28, height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  templateCheckActive: {
+    backgroundColor: 'rgba(0,245,160,0.12)',
+    borderColor: 'rgba(0,245,160,0.35)',
+  },
+  templateCheckText: { fontSize: 16, color: C.textMuted, fontWeight: '300' },
+
+  tagRow: { flexDirection: 'row', gap: 5, marginTop: 7, flexWrap: 'wrap' },
+  tagChip: {
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  tagText: { fontSize: 10, fontWeight: '600', color: C.textMuted },
+  forYouBadge: {
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: 5,
+    backgroundColor: 'rgba(108,99,255,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(108,99,255,0.3)',
+  },
+  forYouText: { fontSize: 9, fontWeight: '700', color: '#A89FFF', textTransform: 'uppercase', letterSpacing: 0.3 },
+
+  // Empty state
+  emptyCard: {
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 28,
+    alignItems: 'center',
+  },
+  emptyEmoji: { fontSize: 32, marginBottom: 10 },
+  emptyTitle: { fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 5 },
+  emptyText: { fontSize: 13, color: C.textMuted, textAlign: 'center' },
+
+  // Sticky footer
+  footer: {
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+    paddingTop: 12,
+    backgroundColor: 'rgba(10,14,39,0.94)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.07)',
+  },
+  applyBtn: {
+    backgroundColor: C.accent,
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  applyBtnDisabled: { opacity: 0.55 },
+  applyBtnText: { fontSize: 15, fontWeight: '800', color: BG, letterSpacing: 0.1 },
 });
 
 export default MenuScreen;
