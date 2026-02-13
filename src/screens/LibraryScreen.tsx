@@ -236,17 +236,6 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   ) => {
     const sessionExercises = buildSessionExercises(template, exercises);
 
-    const onSuccess = () => {
-      setAppliedThisSession((prev) => {
-        const next = new Set(prev);
-        exercises.forEach((ex) => next.add(`${template.id}-${ex.exerciseId}`));
-        return next;
-      });
-      if (replaceAll) setCurrentTemplateId(template.id);
-      setSelectedModal(null);
-      onNavigateToToday?.();
-    };
-
     if (replaceAll) {
       if (!onReplaceSessionWithTemplate) return;
       try {
@@ -262,19 +251,35 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           );
           return;
         }
-        onSuccess();
       } catch {
         Alert.alert('Error', 'Could not apply template. Please try again.');
+        return;
       }
     } else {
+      // Selective add: close and navigate immediately, append in background
+      setSelectedModal(null);
+      onNavigateToToday?.();
       if (!onAppendExercisesToSession) return;
-      try {
-        await onAppendExercisesToSession(today, sessionExercises);
-        onSuccess();
-      } catch {
-        Alert.alert('Error', 'Could not add exercises. Please try again.');
-      }
+      void onAppendExercisesToSession(today, sessionExercises).catch(() =>
+        Alert.alert('Error', 'Could not add exercises. Please try again.')
+      );
+      setAppliedThisSession((prev) => {
+        const next = new Set(prev);
+        exercises.forEach((ex) => next.add(`${template.id}-${ex.exerciseId}`));
+        return next;
+      });
+      return;
     }
+
+    // Full replace success
+    setAppliedThisSession((prev) => {
+      const next = new Set(prev);
+      exercises.forEach((ex) => next.add(`${template.id}-${ex.exerciseId}`));
+      return next;
+    });
+    setCurrentTemplateId(template.id);
+    setSelectedModal(null);
+    onNavigateToToday?.();
   }, [today, buildSessionExercises, onReplaceSessionWithTemplate, onAppendExercisesToSession, onNavigateToToday]);
 
   const confirmAndApply = useCallback((template: WorkoutTemplate, exercises: TemplateExercise[], replaceAll: boolean) => {
@@ -298,91 +303,43 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
   const renderTemplateCard = (template: WorkoutTemplate) => {
     const isCurrent = currentTemplateId === template.id;
-    const diff = DIFFICULTY_COLORS[template.difficulty];
     const muscles = Array.from(
       new Set(template.exercises.flatMap((ex) => ex.bodyParts.map((b) => b.toLowerCase())))
-    ).filter((b) => KNOWN_MUSCLES.has(b)).slice(0, 4);
+    ).filter((b) => KNOWN_MUSCLES.has(b)).slice(0, 3);
 
     return (
       <TouchableOpacity
         key={template.id}
         activeOpacity={0.75}
         onPress={() => setSelectedModal(template)}
-        style={[styles.card, isCurrent && styles.cardCurrent, template.featured && !isCurrent && styles.cardFeatured]}
+        style={[styles.card, isCurrent && styles.cardCurrent]}
       >
         {isCurrent && <View style={styles.activeStrip} />}
 
-        {/* Header */}
-        <View style={styles.cardHeader}>
+        <View style={styles.cardInner}>
           <View style={[styles.iconBadge, isCurrent && styles.iconBadgeCurrent]}>
             <Text style={styles.iconText}>{template.icon}</Text>
           </View>
-          <View style={styles.cardHeaderText}>
+
+          <View style={styles.cardBody}>
             <Text style={[styles.cardTitle, isCurrent && { color: COLORS.success }]} numberOfLines={1}>
               {template.title}
             </Text>
-            <Text style={styles.cardSubtitle}>{template.subtitle}</Text>
+            <Text style={styles.cardMeta} numberOfLines={1}>
+              {template.difficulty.charAt(0).toUpperCase() + template.difficulty.slice(1)}
+              {' · '}{template.exercises.length} exercises{' · '}{template.estimatedTime} min
+              {muscles.length > 0 ? '  ·  ' + muscles.map(formatBodyPart).join(', ') : ''}
+            </Text>
           </View>
-          {isCurrent ? (
-            <View style={styles.currentBadge}>
-              <Text style={styles.currentBadgeText}>✓ Active</Text>
-            </View>
-          ) : (
-            <View style={[styles.diffBadge, { backgroundColor: diff.bg }]}>
-              <Text style={[styles.diffBadgeText, { color: diff.text }]}>
-                {template.difficulty.charAt(0).toUpperCase() + template.difficulty.slice(1)}
-              </Text>
-            </View>
-          )}
+
+          <View style={styles.cardRight}>
+            {isCurrent ? (
+              <Text style={styles.activeCheck}>✓</Text>
+            ) : (
+              <Text style={styles.cardChevron}>›</Text>
+            )}
+          </View>
         </View>
-
-        {/* Muscle pills */}
-        {muscles.length > 0 && (
-          <View style={styles.pillsRow}>
-            {muscles.map((m) => {
-              const mc = MUSCLE_COLORS[m] ?? MUSCLE_COLORS.core;
-              return (
-                <View key={m} style={[styles.pill, { backgroundColor: mc.bg, borderColor: mc.border }]}>
-                  <Text style={[styles.pillText, { color: mc.text }]}>{formatBodyPart(m)}</Text>
-                </View>
-              );
-            })}
-          </View>
-        )}
-
-        {/* Stats */}
-        <View style={styles.statsRow}>
-          {[
-            { value: template.exercises.length, label: 'exercises' },
-            { value: template.totalSets, label: 'sets' },
-            { value: template.estimatedTime, label: 'min' },
-          ].map((stat, i) => (
-            <React.Fragment key={stat.label}>
-              {i > 0 && <View style={styles.statDivider} />}
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, isCurrent && { color: COLORS.success }]}>{stat.value}</Text>
-                <Text style={styles.statLabel}>{stat.label}</Text>
-              </View>
-            </React.Fragment>
-          ))}
-        </View>
-
-        {/* CTA */}
-        {isCurrent ? (
-          <View style={styles.ctaCurrent}>
-            <Text style={styles.ctaCurrentText}>✓ Active for Today</Text>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.cta}
-            onPress={(e) => {
-              e.stopPropagation();
-              confirmAndApply(template, template.exercises, true);
-            }}
-          >
-            <Text style={styles.ctaText}>Use Today</Text>
-          </TouchableOpacity>
-        )}
       </TouchableOpacity>
     );
   };
@@ -396,7 +353,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       >
         {/* ── Header ── */}
         <View style={styles.pageHeader}>
-          <Text style={styles.pageTitle}>Library</Text>
+          <Text style={styles.pageTitle}>Workouts</Text>
           <Text style={styles.pageSubtitle}>Templates & your training plan</Text>
         </View>
 
@@ -668,43 +625,22 @@ const styles = StyleSheet.create({
 
   // Template cards
   card: {
-    borderRadius: 18, padding: 18, marginBottom: 12,
-    backgroundColor: COLORS.card, borderWidth: 1.5, borderColor: COLORS.border,
+    borderRadius: 14, marginBottom: 8,
+    backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border,
     overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4,
   },
-  cardCurrent: { borderColor: 'rgba(0,245,160,0.35)', backgroundColor: '#0D1A18', shadowColor: '#00F5A0', shadowOpacity: 0.15 },
-  cardFeatured: { borderColor: 'rgba(108,99,255,0.3)', shadowColor: '#6C63FF', shadowOpacity: 0.1 },
-  activeStrip: { position: 'absolute', top: 0, bottom: 0, left: 0, width: 3, borderTopLeftRadius: 18, borderBottomLeftRadius: 18, backgroundColor: COLORS.success },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 12 },
-  iconBadge: { width: 46, height: 46, borderRadius: 14, backgroundColor: COLORS.overlay, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  iconBadgeCurrent: { backgroundColor: 'rgba(0,245,160,0.1)', borderColor: 'rgba(0,245,160,0.2)' },
-  iconText: { fontSize: 22 },
-  cardHeaderText: { flex: 1 },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.2, marginBottom: 2 },
-  cardSubtitle: { fontSize: 12, fontWeight: '500', color: COLORS.textMuted },
-  currentBadge: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(0,245,160,0.12)', borderWidth: 1, borderColor: 'rgba(0,245,160,0.3)' },
-  currentBadgeText: { fontSize: 10, fontWeight: '700', color: COLORS.success, textTransform: 'uppercase', letterSpacing: 0.5 },
-  diffBadge: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8 },
-  diffBadgeText: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-
-  // Muscle pills
-  pillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
-  pill: { paddingVertical: 3, paddingHorizontal: 9, borderRadius: 20, borderWidth: 1 },
-  pillText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.2 },
-
-  // Stats
-  statsRow: { flexDirection: 'row', alignItems: 'center', paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', marginBottom: 14 },
-  stat: { flex: 1, alignItems: 'center' },
-  statValue: { fontSize: 16, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 2 },
-  statLabel: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-  statDivider: { width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.06)' },
-
-  // CTAs
-  cta: { paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(108,99,255,0.2)', borderWidth: 1.5, borderColor: 'rgba(108,99,255,0.4)', alignItems: 'center' },
-  ctaText: { fontSize: 13, fontWeight: '700', color: COLORS.accent, letterSpacing: 0.2 },
-  ctaCurrent: { paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(0,245,160,0.08)', borderWidth: 1.5, borderColor: 'rgba(0,245,160,0.25)', alignItems: 'center' },
-  ctaCurrentText: { fontSize: 13, fontWeight: '700', color: COLORS.success, letterSpacing: 0.2 },
+  cardCurrent: { borderColor: 'rgba(0,245,160,0.3)', backgroundColor: '#0C1A17' },
+  activeStrip: { position: 'absolute', top: 0, bottom: 0, left: 0, width: 3, backgroundColor: COLORS.success },
+  cardInner: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 14 },
+  iconBadge: { width: 40, height: 40, borderRadius: 12, backgroundColor: COLORS.overlay, alignItems: 'center', justifyContent: 'center' },
+  iconBadgeCurrent: { backgroundColor: 'rgba(0,245,160,0.08)' },
+  iconText: { fontSize: 20 },
+  cardBody: { flex: 1 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.2, marginBottom: 3 },
+  cardMeta: { fontSize: 12, fontWeight: '500', color: COLORS.textMuted },
+  cardRight: { paddingLeft: 4 },
+  activeCheck: { fontSize: 16, fontWeight: '700', color: COLORS.success },
+  cardChevron: { fontSize: 22, color: COLORS.textMuted, fontWeight: '300', marginTop: -1 },
 
   // Empty state
   emptyCard: { borderRadius: 16, padding: 32, backgroundColor: COLORS.card, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
@@ -729,6 +665,8 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 17, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.3, marginBottom: 4 },
   modalMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   modalMeta: { fontSize: 11, color: COLORS.textMuted, fontWeight: '500' },
+  diffBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+  diffBadgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
   modalClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: COLORS.overlay, alignItems: 'center', justifyContent: 'center' },
   modalCloseText: { fontSize: 22, color: COLORS.textSecondary, fontWeight: '300', marginTop: -2 },
   modalList: { flex: 1, paddingHorizontal: 20 },

@@ -57,9 +57,9 @@ import { deleteAccount as deleteAccountService } from './src/services/accountSer
 
 type RootTabParamList = {
   Today: undefined;
-  Nutrition: undefined;
+  Workouts: undefined;
+  Meals: undefined;
   Progress: undefined;
-  Library: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
@@ -73,10 +73,10 @@ type TabConfig = {
 };
 
 const TAB_CONFIG: Record<keyof RootTabParamList, TabConfig> = {
-  Today:     { icon: 'today-outline',        activeIcon: 'today',           label: 'Today'     },
-  Nutrition: { icon: 'nutrition-outline',    activeIcon: 'nutrition',       label: 'Nutrition' },
-  Progress:  { icon: 'trending-up-outline',  activeIcon: 'trending-up',     label: 'Progress'  },
-  Library:   { icon: 'library-outline',      activeIcon: 'library',         label: 'Library'   },
+  Today:    { icon: 'today-outline',       activeIcon: 'today',        label: 'Today'    },
+  Workouts: { icon: 'barbell-outline',     activeIcon: 'barbell',      label: 'Workouts' },
+  Meals:    { icon: 'restaurant-outline',  activeIcon: 'restaurant',   label: 'Meals'    },
+  Progress: { icon: 'trending-up-outline', activeIcon: 'trending-up',  label: 'Progress' },
 };
 
 const linking = {
@@ -84,9 +84,9 @@ const linking = {
   config: {
     screens: {
       Today: 'today',
-      Nutrition: 'nutrition',
+      Workouts: 'workouts',
+      Meals: 'meals',
       Progress: 'progress',
-      Library: 'library',
     },
   },
 };
@@ -334,6 +334,8 @@ function AppContent() {
     saveCustomWorkoutSession,
     addWorkoutExercise,
     deleteWorkoutExercise,
+    replaceSessionWithTemplate,
+    appendExercisesToSession,
   } = useAppState();
   
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
@@ -433,7 +435,7 @@ function AppContent() {
   useEffect(() => {
     if (!navigationRef.isReady()) return;
     if (showPlanTabs) return;
-    if (currentRouteName === 'Nutrition' || currentRouteName === 'Library') {
+    if (currentRouteName === 'Meals' || currentRouteName === 'Workouts') {
       navigationRef.navigate('Today');
     }
   }, [currentRouteName, navigationRef, showPlanTabs]);
@@ -1066,12 +1068,32 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          <Tab.Screen name="Nutrition">
+          <Tab.Screen name="Workouts">
+            {() =>
+              state?.user ? (
+                <LibraryScreen
+                  user={state.user}
+                  phase={state.currentPhase}
+                  plannedWorkouts={state.plannedWorkouts}
+                  workoutSessions={state.workoutSessions}
+                  onReplaceSessionWithTemplate={replaceSessionWithTemplate}
+                  onAppendExercisesToSession={appendExercisesToSession}
+                  onNavigateToToday={() => {
+                    setProfileVisible(false);
+                    navigationRef.navigate('Today');
+                  }}
+                />
+              ) : (
+                <TabPlaceholder title="Workouts" subtitle="Create a plan to explore workout templates." />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen name="Meals">
             {() =>
               state?.user ? (
                 <MenuScreen user={state.user} phase={state.currentPhase} />
               ) : (
-                <TabPlaceholder title="Nutrition" subtitle="Create a plan to unlock your meal guide." />
+                <TabPlaceholder title="Meals" subtitle="Create a plan to unlock your meal guide." />
               )
             }
           </Tab.Screen>
@@ -1090,24 +1112,6 @@ function AppContent() {
                 />
               ) : (
                 <TabPlaceholder title="Progress" subtitle="Create a plan to unlock progress tracking." />
-              )
-            }
-          </Tab.Screen>
-          <Tab.Screen name="Library">
-            {() =>
-              state?.user ? (
-                <LibraryScreen
-                  user={state.user}
-                  phase={state.currentPhase}
-                  plannedWorkouts={state.plannedWorkouts}
-                  workoutSessions={state.workoutSessions}
-                  onNavigateToToday={() => {
-                    setProfileVisible(false);
-                    navigationRef.navigate('Today');
-                  }}
-                />
-              ) : (
-                <TabPlaceholder title="Library" subtitle="Create a plan to explore workout templates." />
               )
             }
           </Tab.Screen>
