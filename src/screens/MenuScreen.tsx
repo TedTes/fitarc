@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Animated as RNAnimated,
   ScrollView,
   StyleSheet,
@@ -14,6 +16,13 @@ import { useFocusEffect } from '@react-navigation/native';
 import { EatingMode, PhasePlan, User } from '../types/domain';
 import { useFabAction } from '../contexts/FabActionContext';
 import { estimateDailyCalories } from '../utils/calorieGoal';
+import {
+  getTodayMeals,
+  MealsByType,
+  MealEntry,
+} from '../services/mealService';
+import { generateMealsForDay } from '../services/mealGenerationService';
+import { formatLocalDateYMD } from '../utils/date';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -229,18 +238,51 @@ const CircularProgress: React.FC<{
   );
 };
 
+// ─── Meal Entry Row ───────────────────────────────────────────────────────────
+
+const MealEntryRow: React.FC<{ entry: MealEntry }> = ({ entry }) => (
+  <View style={styles.entryRow}>
+    <View style={styles.entryDot} />
+    <Text style={styles.entryName} numberOfLines={1}>{entry.foodName}</Text>
+    <Text style={styles.entryKcal}>
+      {entry.calories != null ? `${Math.round(entry.calories)} kcal` : '—'}
+    </Text>
+  </View>
+);
+
+// ─── Meal Group ───────────────────────────────────────────────────────────────
+
+const MealGroup: React.FC<{ mealType: string; entries: MealEntry[] }> = ({ mealType, entries }) => {
+  const totalKcal = entries.reduce((s, e) => s + (e.calories ?? 0), 0);
+  return (
+    <View style={styles.mealGroup}>
+      <View style={styles.mealGroupHeader}>
+        <Text style={styles.mealGroupTitle}>{mealType}</Text>
+        <Text style={styles.mealGroupKcal}>{Math.round(totalKcal)} kcal</Text>
+      </View>
+      {entries.map((e) => <MealEntryRow key={e.id} entry={e} />)}
+    </View>
+  );
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export const MenuScreen: React.FC<MenuScreenProps> = ({ user }) => {
+export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const { setFabAction } = useFabAction();
 
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
   const [mealTagFilter, setMealTagFilter] = useState('all');
+  const [isLoadingMeals, setIsLoadingMeals] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [mealsByType, setMealsByType] = useState<MealsByType>({});
 
   const scrollY = useRef(new RNAnimated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 80], outputRange: [1, 0.92], extrapolate: 'clamp' });
   const ringScale = scrollY.interpolate({ inputRange: [0, 120], outputRange: [1, 0.85], extrapolate: 'clamp' });
   const ringOpacity = scrollY.interpolate({ inputRange: [0, 90, 140], outputRange: [1, 0.7, 0], extrapolate: 'clamp' });
+
+  const today = useMemo(() => formatLocalDateYMD(new Date()), []);
+  const planId = phase?.id ?? null;
 
   const calorieGoal = useMemo(() => estimateDailyCalories(user).goalCalories, [user]);
 
@@ -260,40 +302,91 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user }) => {
     [selectedTemplate, calorieGoal]
   );
 
-  const rings = useMemo(() => [
-    {
-      label: 'Cal',
-      value: computedSelected?.targetCalories ?? 0,
-      target: Math.round(calorieGoal),
-      progress: computedSelected ? computedSelected.targetCalories / calorieGoal : 0,
-      color: COLORS.calories,
-      unit: 'kcal',
-    },
-    {
-      label: 'Protein',
-      value: computedSelected?.protein_g ?? 0,
-      target: macroTargets.protein_g,
-      progress: computedSelected ? computedSelected.protein_g / macroTargets.protein_g : 0,
-      color: COLORS.protein,
-      unit: 'g',
-    },
-    {
-      label: 'Carbs',
-      value: computedSelected?.carbs_g ?? 0,
-      target: macroTargets.carbs_g,
-      progress: computedSelected ? computedSelected.carbs_g / macroTargets.carbs_g : 0,
-      color: COLORS.carbs,
-      unit: 'g',
-    },
-    {
-      label: 'Fat',
-      value: computedSelected?.fat_g ?? 0,
-      target: macroTargets.fats_g,
-      progress: computedSelected ? computedSelected.fat_g / macroTargets.fats_g : 0,
-      color: COLORS.fats,
-      unit: 'g',
-    },
-  ], [computedSelected, calorieGoal, macroTargets]);
+  // ── Actual meal data ──────────────────────────────────────────────────────
+
+  const allEntries = useMemo(() => Object.values(mealsByType).flat(), [mealsByType]);
+  const hasEntries = allEntries.length > 0;
+
+  const actualTotals = useMemo(() => ({
+    calories: allEntries.reduce((s, e) => s + (e.calories ?? 0), 0),
+    protein_g: allEntries.reduce((s, e) => s + (e.protein ?? 0), 0),
+    carbs_g: allEntries.reduce((s, e) => s + (e.carbs ?? 0), 0),
+    fats_g: allEntries.reduce((s, e) => s + (e.fats ?? 0), 0),
+  }), [allEntries]);
+
+  const isTargetMode = !hasEntries && !computedSelected;
+
+  // ── Rings ─────────────────────────────────────────────────────────────────
+
+  const rings = useMemo(() => {
+    if (hasEntries) {
+      return [
+        { label: 'Calories', value: Math.round(actualTotals.calories), target: Math.round(calorieGoal), progress: actualTotals.calories / calorieGoal, color: COLORS.calories, unit: 'kcal' },
+        { label: 'Protein', value: Math.round(actualTotals.protein_g), target: macroTargets.protein_g, progress: actualTotals.protein_g / macroTargets.protein_g, color: COLORS.protein, unit: 'g' },
+        { label: 'Carbs', value: Math.round(actualTotals.carbs_g), target: macroTargets.carbs_g, progress: actualTotals.carbs_g / macroTargets.carbs_g, color: COLORS.carbs, unit: 'g' },
+        { label: 'Fat', value: Math.round(actualTotals.fats_g), target: macroTargets.fats_g, progress: actualTotals.fats_g / macroTargets.fats_g, color: COLORS.fats, unit: 'g' },
+      ];
+    }
+    return [
+      { label: 'Calories', value: computedSelected?.targetCalories ?? Math.round(calorieGoal), target: Math.round(calorieGoal), progress: computedSelected ? computedSelected.targetCalories / calorieGoal : 1, color: COLORS.calories, unit: 'kcal' },
+      { label: 'Protein', value: computedSelected?.protein_g ?? macroTargets.protein_g, target: macroTargets.protein_g, progress: computedSelected ? computedSelected.protein_g / macroTargets.protein_g : 1, color: COLORS.protein, unit: 'g' },
+      { label: 'Carbs', value: computedSelected?.carbs_g ?? macroTargets.carbs_g, target: macroTargets.carbs_g, progress: computedSelected ? computedSelected.carbs_g / macroTargets.carbs_g : 1, color: COLORS.carbs, unit: 'g' },
+      { label: 'Fat', value: computedSelected?.fat_g ?? macroTargets.fats_g, target: macroTargets.fats_g, progress: computedSelected ? computedSelected.fat_g / macroTargets.fats_g : 1, color: COLORS.fats, unit: 'g' },
+    ];
+  }, [hasEntries, actualTotals, computedSelected, calorieGoal, macroTargets]);
+
+  // ── Data loading ──────────────────────────────────────────────────────────
+
+  const loadTodayMeals = useCallback(async () => {
+    setIsLoadingMeals(true);
+    try {
+      const result = await getTodayMeals(user.id, today, planId);
+      setMealsByType(result.mealsByType);
+    } catch (e) {
+      console.error('Failed to load today meals:', e);
+    } finally {
+      setIsLoadingMeals(false);
+    }
+  }, [user.id, today, planId]);
+
+  useFocusEffect(useCallback(() => {
+    setFabAction('Menu', null);
+    loadTodayMeals();
+    return () => setFabAction('Menu', null);
+  }, [setFabAction, loadTodayMeals]));
+
+  // ── Generate ──────────────────────────────────────────────────────────────
+
+  const handleGenerate = useCallback(async () => {
+    if (!selectedTemplate) return;
+    setIsGenerating(true);
+    const computed = computeTemplateTargets(selectedTemplate, calorieGoal);
+    try {
+      await generateMealsForDay({
+        user_id: user.id,
+        plan_id: planId ?? user.id,
+        date: today,
+        calorie_target: computed.targetCalories,
+        macro_targets: {
+          protein_g: computed.protein_g,
+          carbs_g: computed.carbs_g,
+          fats_g: computed.fat_g,
+        },
+        meal_count: selectedTemplate.mealCount,
+        dietary_tags: selectedTemplate.dietaryTags.length ? selectedTemplate.dietaryTags : undefined,
+        cuisine: selectedTemplate.cuisine !== 'mixed' ? selectedTemplate.cuisine : undefined,
+        max_ready_time_minutes: selectedTemplate.maxReadyTime,
+      });
+      await loadTodayMeals();
+    } catch (e) {
+      console.error('Meal generation failed:', e);
+      Alert.alert('Generation failed', 'Could not generate meals. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [selectedTemplate, user.id, planId, today, calorieGoal, loadTodayMeals]);
+
+  // ── Filtered templates ────────────────────────────────────────────────────
 
   const filteredTemplates = useMemo(() => {
     const base = MEAL_TEMPLATES.filter((t) => t.id !== appliedTemplateId);
@@ -305,10 +398,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user }) => {
     });
   }, [appliedTemplateId, mealTagFilter, user.eatingMode]);
 
-  useFocusEffect(useCallback(() => {
-    setFabAction('Menu', null);
-    return () => setFabAction('Menu', null);
-  }, [setFabAction]));
+  // ── Render card ───────────────────────────────────────────────────────────
 
   const renderCard = (template: MealTemplate, isActive = false) => {
     const computed = computeTemplateTargets(template, calorieGoal);
@@ -348,6 +438,22 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user }) => {
     );
   };
 
+  // ── Rings mode label ──────────────────────────────────────────────────────
+
+  const ringsModeText = hasEntries
+    ? `Today · ${Math.round(actualTotals.calories)} / ${Math.round(calorieGoal)} kcal`
+    : computedSelected
+      ? `${selectedTemplate!.title} · ${computedSelected.targetCalories} kcal`
+      : 'Daily targets · select a plan below';
+
+  const ringsModeStyle = hasEntries
+    ? styles.ringsModeActive
+    : isTargetMode
+      ? styles.ringsModeTarget
+      : styles.ringsModeActive;
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
   return (
     <View style={styles.container}>
       <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
@@ -358,21 +464,26 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user }) => {
             {rings.map((ring) => (
               <View key={ring.label} style={styles.ringItem}>
                 <View style={styles.ringWrap}>
-                  <CircularProgress size={76} strokeWidth={8} progress={ring.progress} color={ring.color} />
+                  <CircularProgress
+                    size={76}
+                    strokeWidth={8}
+                    progress={ring.progress}
+                    color={isTargetMode ? ring.color + '55' : ring.color}
+                  />
                   <View style={styles.ringCenter}>
-                    <Text style={styles.ringValue} numberOfLines={1}>
-                      {ring.value > 0 ? ring.value : '—'}
+                    <Text style={[styles.ringValue, isTargetMode && { color: 'rgba(255,255,255,0.45)' }]} numberOfLines={1}>
+                      {ring.value}
                     </Text>
-                    <Text style={styles.ringTarget}>/{ring.target}{ring.unit}</Text>
+                    <Text style={styles.ringUnit}>{ring.unit}</Text>
                   </View>
                 </View>
-                <Text style={styles.ringLabel}>{ring.label}</Text>
+                <Text style={[styles.ringLabel, isTargetMode && { color: 'rgba(255,255,255,0.35)' }]}>{ring.label}</Text>
               </View>
             ))}
           </RNAnimated.View>
-          {!selectedTemplate && (
-            <Text style={styles.noSelectionHint}>Select a plan to see your macros</Text>
-          )}
+          <Text style={[styles.ringsModeLabel, ringsModeStyle]}>
+            {ringsModeText}
+          </Text>
         </RNAnimated.View>
 
         <RNAnimated.ScrollView
@@ -382,6 +493,62 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user }) => {
           onScroll={RNAnimated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
           scrollEventThrottle={16}
         >
+          {/* Loading state */}
+          {isLoadingMeals && (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color={COLORS.textSecondary} />
+              <Text style={styles.loadingText}>Loading today's meals…</Text>
+            </View>
+          )}
+
+          {/* Today's meals from Supabase */}
+          {!isLoadingMeals && hasEntries && (
+            <View style={styles.todaySection}>
+              <Text style={styles.sectionLabel}>TODAY'S MEALS</Text>
+              {Object.entries(mealsByType).map(([mealType, entries]) => (
+                <MealGroup key={mealType} mealType={mealType} entries={entries} />
+              ))}
+              <TouchableOpacity
+                style={styles.regenerateBtn}
+                onPress={handleGenerate}
+                disabled={isGenerating || !selectedTemplate}
+                activeOpacity={0.75}
+              >
+                {isGenerating
+                  ? <ActivityIndicator size="small" color={COLORS.textSecondary} />
+                  : <Text style={styles.regenerateBtnText}>Regenerate with template</Text>}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Empty state — no meals yet */}
+          {!isLoadingMeals && !hasEntries && (
+            <View style={styles.emptySection}>
+              <Text style={styles.emptyIcon}>🍽️</Text>
+              <Text style={styles.emptyTitle}>No meals logged today</Text>
+              <Text style={styles.emptySubtitle}>
+                Pick a plan below and generate your meals for today.
+              </Text>
+
+              {selectedTemplate && (
+                <TouchableOpacity
+                  style={[styles.generateBtn, isGenerating && styles.generateBtnDisabled]}
+                  onPress={handleGenerate}
+                  disabled={isGenerating}
+                  activeOpacity={0.8}
+                >
+                  {isGenerating ? (
+                    <ActivityIndicator size="small" color="#0A0E27" />
+                  ) : (
+                    <Text style={styles.generateBtnText}>
+                      Generate with {selectedTemplate.title}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           {/* Active plan */}
           {selectedTemplate && (
             <View style={styles.activeSection}>
@@ -447,19 +614,89 @@ const styles = StyleSheet.create({
   ringWrap: { position: 'relative', width: 76, height: 76, alignItems: 'center', justifyContent: 'center' },
   ringCenter: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
   ringValue: { fontSize: 13, fontWeight: '700', color: COLORS.text },
-  ringTarget: { fontSize: 9, fontWeight: '600', color: COLORS.textSecondary, marginTop: 1 },
+  ringUnit: { fontSize: 9, fontWeight: '600', color: COLORS.textSecondary, marginTop: 1 },
   ringLabel: { fontSize: 11, fontWeight: '600', color: COLORS.textSecondary, marginTop: 6 },
-  noSelectionHint: {
-    fontSize: 12,
-    color: COLORS.textMuted,
+  ringsModeLabel: {
+    fontSize: 11,
+    fontWeight: '600',
     textAlign: 'center',
     marginTop: 8,
-    fontStyle: 'italic',
+    letterSpacing: 0.2,
   },
+  ringsModeTarget: { color: COLORS.textMuted, fontStyle: 'italic' },
+  ringsModeActive: { color: COLORS.accent },
 
   // Scroll
   scroll: { flex: 1 },
   scrollContent: { paddingTop: 200, paddingHorizontal: 16 },
+
+  // Loading
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 20, justifyContent: 'center' },
+  loadingText: { fontSize: 13, color: COLORS.textMuted },
+
+  // Today's meals
+  todaySection: { marginBottom: 24 },
+  mealGroup: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  mealGroupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  mealGroupTitle: { fontSize: 13, fontWeight: '700', color: COLORS.text },
+  mealGroupKcal: { fontSize: 12, fontWeight: '600', color: COLORS.calories },
+  entryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.03)',
+  },
+  entryDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.textMuted },
+  entryName: { flex: 1, fontSize: 13, color: COLORS.textSecondary, fontWeight: '500' },
+  entryKcal: { fontSize: 12, fontWeight: '600', color: COLORS.textMuted },
+  regenerateBtn: {
+    paddingVertical: 11,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    marginTop: 4,
+  },
+  regenerateBtnText: { fontSize: 13, fontWeight: '600', color: COLORS.textMuted },
+
+  // Empty state
+  emptySection: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    marginBottom: 20,
+  },
+  emptyIcon: { fontSize: 40, marginBottom: 12 },
+  emptyTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
+  emptySubtitle: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 20, paddingHorizontal: 24, marginBottom: 20 },
+  generateBtn: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    alignItems: 'center',
+    minWidth: 240,
+  },
+  generateBtnDisabled: { opacity: 0.5 },
+  generateBtnText: { fontSize: 15, fontWeight: '800', color: '#0A0E27' },
 
   // Sections
   activeSection: { marginBottom: 24 },
