@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   ScrollView,
   StyleSheet,
   Text,
@@ -51,12 +52,11 @@ const C = {
   border: '#2A2F4F',
 } as const;
 
+const CARD_WIDTH = Dimensions.get('window').width - 56;
+
 const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 };
 
 const MEAL_ORDER = ['Breakfast', 'Lunch', 'Dinner', 'Snack', 'Meal'];
-
-const prettyTag = (tag: string) =>
-  tag.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 const sumMacro = (entries: RuntimeMealEntry[], key: 'calories' | 'protein' | 'carbs' | 'fats') =>
   Math.round(entries.reduce((s, e) => s + ((e[key] as number | null | undefined) ?? 0), 0));
@@ -178,10 +178,11 @@ const MealSlotCard: React.FC<{ title: string; entries: RuntimeMealEntry[] }> = (
 const TemplateCard: React.FC<{
   template: RuntimeMealTemplate;
   active: boolean;
+  applying: boolean;
   recommended: boolean;
   calorieTarget: number;
   onPress: () => void;
-}> = ({ template, active, recommended, calorieTarget, onPress }) => {
+}> = ({ template, active, applying, recommended, calorieTarget, onPress }) => {
   const mealSlots = useMemo(() => {
     const slots = new Set(template.entries.map((e) => e.mealType));
     return slots.size || 3;
@@ -191,43 +192,31 @@ const TemplateCard: React.FC<{
 
   return (
     <TouchableOpacity
-      style={[styles.templateCard, active && styles.templateCardActive]}
-      activeOpacity={0.78}
+      style={[styles.carouselCard, active && styles.carouselCardActive]}
+      activeOpacity={0.8}
       onPress={onPress}
     >
-      {active && <View style={styles.templateStrip} />}
-      <View style={styles.templateInner}>
-        <View style={styles.templateBody}>
-          <View style={styles.templateTitleRow}>
-            <Text style={[styles.templateTitle, active && { color: C.accent }]} numberOfLines={1}>
-              {template.title}
-            </Text>
-            {recommended && (
-              <View style={styles.forYouBadge}>
-                <Text style={styles.forYouText}>For you</Text>
-              </View>
-            )}
-          </View>
-          <Text style={styles.templateMeta} numberOfLines={1}>
-            {displayKcal.toLocaleString()} kcal · {mealSlots} meals
-            {template.difficulty ? ` · ${template.difficulty}` : ''}
-          </Text>
-          {template.goalTags.length > 0 && (
-            <View style={styles.tagRow}>
-              {template.goalTags.slice(0, 3).map((tag) => (
-                <View key={`${template.id}-${tag}`} style={styles.tagChip}>
-                  <Text style={styles.tagText}>{prettyTag(tag)}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-        <View style={[styles.templateCheck, active && styles.templateCheckActive]}>
-          <Text style={[styles.templateCheckText, active && { color: C.accent }]}>
-            {active ? '✓' : '›'}
-          </Text>
-        </View>
+      <View style={[styles.carouselThumb, active && styles.carouselThumbActive]}>
+        {applying ? (
+          <ActivityIndicator size="small" color={C.accent} />
+        ) : (
+          <Text style={styles.carouselEmoji}>🍽️</Text>
+        )}
       </View>
+      <View style={styles.carouselCardBody}>
+        <Text style={[styles.carouselCardTitle, active && { color: C.accent }]} numberOfLines={1}>
+          {template.title}
+        </Text>
+        <Text style={styles.carouselCardMeta} numberOfLines={1}>
+          {displayKcal.toLocaleString()} kcal · {mealSlots} meals
+        </Text>
+        {recommended && (
+          <View style={[styles.forYouBadge, { marginTop: 4 }]}>
+            <Text style={styles.forYouText}>For you</Text>
+          </View>
+        )}
+      </View>
+      {active && <View style={styles.carouselActiveBar} />}
     </TouchableOpacity>
   );
 };
@@ -287,7 +276,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   }, [hasMeals, totals, selectedTemplate, calorieGoal, macroTargets]);
 
   const isMuted = !hasMeals && !selectedTemplate;
-  const isPendingApply = selectedTemplateId !== null && selectedTemplateId !== appliedTemplateId;
 
   // ── Data loading ─────────────────────────────────────────────────────────
 
@@ -326,15 +314,19 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
 
   // ── Apply template ────────────────────────────────────────────────────────
 
-  const handleApply = useCallback(async () => {
-    if (!selectedTemplate) return;
+  const handleSelectTemplate = useCallback(async (templateId: string) => {
+    if (templateId === appliedTemplateId) {
+      setSelectedTemplateId(templateId);
+      return;
+    }
     if (!planId) {
       Alert.alert('No active plan', 'Start a training plan before applying meal templates.');
       return;
     }
+    setSelectedTemplateId(templateId);
     setIsApplying(true);
     try {
-      await applyMealTemplateForDate(user.id, planId, today, selectedTemplate.id);
+      await applyMealTemplateForDate(user.id, planId, today, templateId);
       await loadMeals();
     } catch (error) {
       console.error('Failed applying template:', error);
@@ -342,7 +334,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     } finally {
       setIsApplying(false);
     }
-  }, [loadMeals, planId, selectedTemplate, today, user.id]);
+  }, [appliedTemplateId, loadMeals, planId, today, user.id]);
 
   // ── Sorted templates ─────────────────────────────────────────────────────
 
@@ -413,75 +405,61 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           {/* Today's meals */}
           {!isLoading && hasMeals && (
             <View style={styles.section}>
-              <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionTitle}>TODAY</Text>
-                {appliedTemplateId && (
-                  <Text style={styles.sectionBadge}>
-                    {templates.find((t) => t.id === appliedTemplateId)?.title ?? ''}
-                  </Text>
-                )}
+              <View style={styles.todayCard}>
+                <View style={styles.todayHeader}>
+                  <Text style={styles.todayLabel}>Today's Meals</Text>
+                  {appliedTemplateId && (
+                    <Text style={styles.todayBadge}>
+                      {templates.find((t) => t.id === appliedTemplateId)?.title ?? ''}
+                    </Text>
+                  )}
+                </View>
+                {sortedSlots(mealsByType).map(([slotName, entries], idx, arr) => (
+                  <React.Fragment key={slotName}>
+                    {idx > 0 && <View style={styles.slotDivider} />}
+                    <MealSlotCard title={slotName} entries={entries} />
+                  </React.Fragment>
+                ))}
               </View>
-              {sortedSlots(mealsByType).map(([slotName, entries]) => (
-                <MealSlotCard key={slotName} title={slotName} entries={entries} />
-              ))}
             </View>
           )}
 
-          {/* Templates */}
+          {/* Template carousel */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>MEAL TEMPLATES</Text>
+            <Text style={styles.sectionTitle}>TEMPLATES</Text>
 
-            {isLoading && !templates.length && (
+            {isLoading && !templates.length ? (
               <View style={styles.loadingRow}>
                 <ActivityIndicator size="small" color={C.textMuted} />
-                <Text style={styles.loadingText}>Loading templates…</Text>
+                <Text style={styles.loadingText}>Loading…</Text>
               </View>
+            ) : !templates.length ? (
+              <Text style={styles.carouselEmpty}>No templates available</Text>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                snapToInterval={CARD_WIDTH + 12}
+                decelerationRate="fast"
+                contentContainerStyle={styles.carouselScroll}
+              >
+                {sortedTemplates.map((template) => (
+                  <TemplateCard
+                    key={template.id}
+                    template={template}
+                    active={template.id === selectedTemplateId}
+                    applying={isApplying && template.id === selectedTemplateId}
+                    recommended={(template.eatingMode ?? '').toLowerCase() === user.eatingMode}
+                    calorieTarget={calorieGoal}
+                    onPress={() => handleSelectTemplate(template.id)}
+                  />
+                ))}
+              </ScrollView>
             )}
-
-            {!isLoading && !templates.length && (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyEmoji}>🍽️</Text>
-                <Text style={styles.emptyTitle}>No templates yet</Text>
-                <Text style={styles.emptyText}>Meal templates will appear here once added.</Text>
-              </View>
-            )}
-
-            {sortedTemplates.map((template) => (
-              <TemplateCard
-                key={template.id}
-                template={template}
-                active={template.id === selectedTemplateId}
-                recommended={(template.eatingMode ?? '').toLowerCase() === user.eatingMode}
-                calorieTarget={calorieGoal}
-                onPress={() => setSelectedTemplateId(template.id)}
-              />
-            ))}
           </View>
 
-          <View style={{ height: isPendingApply ? 100 : 60 }} />
+          <View style={{ height: 60 }} />
         </ScrollView>
-
-        {/* Sticky apply footer */}
-        {isPendingApply && (
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.applyBtn, isApplying && styles.applyBtnDisabled]}
-              onPress={handleApply}
-              disabled={isApplying}
-              activeOpacity={0.8}
-            >
-              {isApplying ? (
-                <ActivityIndicator size="small" color={BG} />
-              ) : (
-                <Text style={styles.applyBtnText}>
-                  {appliedTemplateId
-                    ? `Switch to ${selectedTemplate?.title ?? '…'}`
-                    : `Apply ${selectedTemplate?.title ?? '…'}`}
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
 
       </LinearGradient>
     </View>
@@ -532,18 +510,45 @@ const styles = StyleSheet.create({
   // Sections
   section: { marginBottom: 20 },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  sectionTitle: { fontSize: 11, fontWeight: '700', color: C.textMuted, letterSpacing: 1.2, textTransform: 'uppercase' },
+  sectionTitle: { fontSize: 11, fontWeight: '700', color: C.textMuted, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10 },
   sectionBadge: { fontSize: 11, fontWeight: '600', color: C.accent },
 
-  // Meal slot card
-  slotCard: {
+  // Today card container
+  todayCard: {
     backgroundColor: C.surface,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    borderLeftWidth: 3,
-    marginBottom: 8,
     overflow: 'hidden',
+  },
+  todayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  todayLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: C.text,
+  },
+  todayBadge: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: C.accent,
+  },
+
+  // Meal slot (row within todayCard)
+  slotCard: {
+    borderLeftWidth: 3,
+  },
+  slotDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginLeft: 17,
   },
   slotHeader: {
     flexDirection: 'row',
@@ -579,101 +584,72 @@ const styles = StyleSheet.create({
   },
   slotFooterText: { fontSize: 11, fontWeight: '600', color: C.textMuted },
 
-  // Template card
-  templateCard: {
-    borderRadius: 14,
-    marginBottom: 8,
+  // Template carousel
+  carouselScroll: {
+    paddingHorizontal: 16,
+  },
+  carouselEmpty: {
+    fontSize: 13,
+    color: C.textMuted,
+    textAlign: 'center',
+    paddingVertical: 24,
+  },
+  carouselCard: {
+    width: CARD_WIDTH,
     backgroundColor: C.surface,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: C.border,
     overflow: 'hidden',
+    marginRight: 12,
   },
-  templateCardActive: {
-    borderColor: 'rgba(0,245,160,0.3)',
-    backgroundColor: '#0C1A17',
-  },
-  templateStrip: {
-    position: 'absolute',
-    top: 0, bottom: 0, left: 0,
-    width: 3,
-    backgroundColor: C.accent,
-  },
-  templateInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    gap: 10,
-  },
-  templateBody: { flex: 1 },
-  templateTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
-  templateTitle: { fontSize: 15, fontWeight: '700', color: C.text, letterSpacing: -0.2 },
-  templateMeta: { fontSize: 12, fontWeight: '500', color: C.textSec },
-  templateCheck: {
-    width: 28, height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  templateCheckActive: {
-    backgroundColor: 'rgba(0,245,160,0.12)',
+  carouselCardActive: {
     borderColor: 'rgba(0,245,160,0.35)',
   },
-  templateCheckText: { fontSize: 16, color: C.textMuted, fontWeight: '300' },
-
-  tagRow: { flexDirection: 'row', gap: 5, marginTop: 7, flexWrap: 'wrap' },
-  tagChip: {
-    paddingHorizontal: 7, paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+  carouselThumb: {
+    height: 120,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  tagText: { fontSize: 10, fontWeight: '600', color: C.textMuted },
+  carouselThumbActive: {
+    backgroundColor: 'rgba(0,245,160,0.06)',
+  },
+  carouselEmoji: {
+    fontSize: 40,
+  },
+  carouselCardBody: {
+    padding: 16,
+    gap: 4,
+  },
+  carouselCardTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: C.text,
+    letterSpacing: -0.3,
+  },
+  carouselCardMeta: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: C.textSec,
+  },
+  carouselActiveBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: C.accent,
+  },
   forYouBadge: {
-    paddingHorizontal: 6, paddingVertical: 2,
-    borderRadius: 5,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 6,
     backgroundColor: 'rgba(108,99,255,0.18)',
     borderWidth: 1,
     borderColor: 'rgba(108,99,255,0.3)',
+    alignSelf: 'flex-start',
   },
-  forYouText: { fontSize: 9, fontWeight: '700', color: '#A89FFF', textTransform: 'uppercase', letterSpacing: 0.3 },
-
-  // Empty state
-  emptyCard: {
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 28,
-    alignItems: 'center',
-  },
-  emptyEmoji: { fontSize: 32, marginBottom: 10 },
-  emptyTitle: { fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 5 },
-  emptyText: { fontSize: 13, color: C.textMuted, textAlign: 'center' },
-
-  // Sticky footer
-  footer: {
-    position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    paddingHorizontal: 16,
-    paddingBottom: 32,
-    paddingTop: 12,
-    backgroundColor: 'rgba(10,14,39,0.94)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.07)',
-  },
-  applyBtn: {
-    backgroundColor: C.accent,
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: 'center',
-  },
-  applyBtnDisabled: { opacity: 0.55 },
-  applyBtnText: { fontSize: 15, fontWeight: '800', color: BG, letterSpacing: 0.1 },
+  forYouText: { fontSize: 10, fontWeight: '700', color: '#A89FFF', textTransform: 'uppercase', letterSpacing: 0.3 },
 });
 
 export default MenuScreen;

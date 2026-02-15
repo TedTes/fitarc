@@ -89,6 +89,13 @@ export type RuntimeMealEntry = {
 };
 
 export type RuntimeMealsByType = Record<string, RuntimeMealEntry[]>;
+export type RuntimeDailyNutritionTotals = {
+  date: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fats: number;
+};
 
 const normalizeKey = (value?: string | null): string =>
   (value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
@@ -198,6 +205,46 @@ const fetchMealOverridesForDate = async (
     .eq('user_id', userId)
     .eq('plan_id', planId)
     .eq('day_date', date)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as MealOverrideRow[];
+};
+
+const fetchMealOverridesForDates = async (
+  userId: string,
+  planId: string,
+  dates: string[]
+): Promise<MealOverrideRow[]> => {
+  if (!dates.length) return [];
+  const { data, error } = await supabase
+    .from('fitarc_meal_overrides')
+    .select(
+      `
+      id,
+      user_id,
+      plan_id,
+      day_date,
+      template_entry_id,
+      action_type,
+      meal_slot,
+      food_id,
+      food_name,
+      quantity,
+      unit,
+      calories,
+      protein_g,
+      carbs_g,
+      fats_g,
+      display_order,
+      notes,
+      is_active,
+      created_at
+    `
+    )
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .in('day_date', dates)
     .eq('is_active', true)
     .order('created_at', { ascending: true });
   if (error) throw error;
@@ -348,6 +395,73 @@ export const fetchResolvedMealsForDate = async (
   };
 };
 
+export const fetchNutritionTotalsForDates = async (
+  userId: string,
+  planId: string | null,
+  dates: string[],
+  eatingMode: EatingMode
+): Promise<RuntimeDailyNutritionTotals[]> => {
+  const normalizedDates = Array.from(new Set(dates.filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+  if (!normalizedDates.length) return [];
+
+  const templates = await fetchMealTemplates(userId);
+  if (!templates.length) {
+    return normalizedDates.map((date) => ({
+      date,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fats: 0,
+    }));
+  }
+
+  const planMap = planId ? await fetchPlanMealTemplateMap(planId) : null;
+  const template = pickTemplate(templates, planMap, eatingMode);
+  if (!template) {
+    return normalizedDates.map((date) => ({
+      date,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fats: 0,
+    }));
+  }
+
+  const overrides = planId
+    ? await fetchMealOverridesForDates(userId, planId, normalizedDates)
+    : [];
+  const overridesByDate = overrides.reduce<Record<string, MealOverrideRow[]>>((acc, row) => {
+    if (!acc[row.day_date]) acc[row.day_date] = [];
+    acc[row.day_date].push(row);
+    return acc;
+  }, {});
+
+  const baseEntries = template.entries.map((entry) => ({ ...entry }));
+  return normalizedDates.map((date) => {
+    const entries = planId
+      ? applyOverrides(baseEntries, overridesByDate[date] ?? [])
+      : baseEntries;
+    const totals = entries.reduce(
+      (sum, entry) => ({
+        calories: sum.calories + Number(entry.calories ?? 0),
+        protein: sum.protein + Number(entry.protein ?? 0),
+        carbs: sum.carbs + Number(entry.carbs ?? 0),
+        fats: sum.fats + Number(entry.fats ?? 0),
+      }),
+      { calories: 0, protein: 0, carbs: 0, fats: 0 }
+    );
+    return {
+      date,
+      calories: Math.round(totals.calories),
+      protein: Math.round(totals.protein),
+      carbs: Math.round(totals.carbs),
+      fats: Math.round(totals.fats),
+    };
+  });
+};
+
 export const applyMealTemplateForDate = async (
   userId: string,
   planId: string | null,
@@ -379,4 +493,3 @@ export const applyMealTemplateForDate = async (
     .eq('day_date', date);
   if (clearError) throw clearError;
 };
-
