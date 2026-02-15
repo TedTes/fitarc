@@ -153,7 +153,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const swipeCardAnims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const modalSlideAnim = useRef(new Animated.Value(300)).current;
   const completionBannerAnim = useRef(new Animated.Value(0)).current;
-  const markAllHandleAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!selectedDateOverride) return;
@@ -698,39 +697,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     }
   };
 
-  const handleMarkAllComplete = () => {
-    const incompleteExercises = editingExercisesRef.current.filter((ex) => !ex.completed);
-    setEditingExercises((prev) => {
-      const hasIncomplete = prev.some((ex) => !ex.completed);
-      if (!hasIncomplete) return prev;
-      const next = prev.map((ex) => ({ ...ex, completed: true }));
-      editingExercisesRef.current = next;
-      if (selectedPlan) {
-        setCompletionMap((prevMap) => ({ ...prevMap, [selectedPlan.dateStr]: true }));
-      }
-      return next;
-    });
-    if (selectedPlan) {
-      localEditsDateRef.current = selectedPlan.dateStr;
-    }
-    setIsDirty(true);
-    if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
-    autosaveTimeoutRef.current = setTimeout(() => {
-      if (selectedPlan) {
-        void enqueueSave(selectedPlan, editingExercisesRef.current);
-        setIsDirty(false);
-        refreshCompletionMap();
-      }
-    }, 200);
-    // Persist each completion to the session layer
-    if (onToggleComplete && incompleteExercises.length > 0) {
-      const snapshot = editingExercisesRef.current;
-      incompleteExercises.forEach((ex) => {
-        void onToggleComplete(selectedDate, ex.name, ex.exerciseId, snapshot);
-      });
-    }
-  };
-
   // Animate completion banner in/out
   const allComplete =
     editingExercises.length > 0 && editingExercises.every((ex) => ex.completed);
@@ -844,28 +810,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       .slice(0, MAX_LIBRARY_ITEMS);
   }, [exerciseCatalog, muscleFilter, exerciseSearch]);
 
-  const markAllPanResponder = PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) =>
-      gesture.dy < -8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-    onPanResponderMove: (_, gesture) => {
-      const progress = Math.min(1, Math.max(0, -gesture.dy / 60));
-      markAllHandleAnim.setValue(progress);
-    },
-    onPanResponderRelease: (_, gesture) => {
-      if (gesture.dy < -40) {
-        Animated.spring(markAllHandleAnim, { toValue: 1, tension: 200, friction: 12, useNativeDriver: true }).start(() => {
-          handleMarkAllComplete();
-          Animated.spring(markAllHandleAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }).start();
-        });
-      } else {
-        Animated.spring(markAllHandleAnim, { toValue: 0, tension: 150, friction: 12, useNativeDriver: true }).start();
-      }
-    },
-    onPanResponderTerminate: () => {
-      Animated.spring(markAllHandleAnim, { toValue: 0, tension: 150, friction: 12, useNativeDriver: true }).start();
-    },
-  });
-
   const renderSession = () => {
     if (!selectedPlan) {
       return (
@@ -888,17 +832,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         </View>
       );
     }
-
-    const handleScaleUp = markAllHandleAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [1, 1.04],
-      extrapolate: 'clamp',
-    });
-    const handleLabelOpacity = markAllHandleAnim.interpolate({
-      inputRange: [0, 0.5, 1],
-      outputRange: [0.4, 0.8, 1],
-      extrapolate: 'clamp',
-    });
 
     return (
       <View style={styles.workoutCard}>
@@ -1082,20 +1015,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </Animated.View>
         )}
 
-        {/* Swipe-up handle: mark all complete */}
-        {!allComplete && editingExercises.length > 0 && (
-          <Animated.View
-            style={[styles.markAllHandle, { transform: [{ scale: handleScaleUp }] }]}
-            {...markAllPanResponder.panHandlers}
-          >
-            <Animated.Text style={[styles.markAllHandleChevrons, { opacity: handleLabelOpacity }]}>
-              ⌃
-            </Animated.Text>
-            <Animated.Text style={[styles.markAllHandleLabel, { opacity: handleLabelOpacity }]}>
-              Swipe up to finish
-            </Animated.Text>
-          </Animated.View>
-        )}
       </View>
     );
   };
@@ -1597,24 +1516,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.textPrimary,
     fontWeight: '700',
-  },
-  markAllHandle: {
-    marginTop: 12,
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 2,
-  },
-  markAllHandleChevrons: {
-    fontSize: 14,
-    color: COLORS.textTertiary,
-    fontWeight: '700',
-    lineHeight: 14,
-  },
-  markAllHandleLabel: {
-    fontSize: 11,
-    color: COLORS.textTertiary,
-    fontWeight: '500',
-    letterSpacing: 0.3,
   },
   completionBanner: {
     marginTop: 16,
