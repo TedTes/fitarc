@@ -364,7 +364,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     removeDefault,
   } = useExerciseDefaults(user.id);
 
-  const [defaultsExpanded, setDefaultsExpanded] = useState(false);
+  const [defaultsPanelVisible, setDefaultsPanelVisible] = useState(false);
   const [defaultEdits, setDefaultEdits] = useState<
     Record<string, { weight: string; reps: string; sets: string; rest: string }>
   >({});
@@ -732,7 +732,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         defaultReps: 10,
       });
       setDefaultModalVisible(false);
-      setDefaultsExpanded(true);
     } catch (err: any) {
       Alert.alert('Add Failed', err?.message || 'Unable to add default');
     } finally {
@@ -946,142 +945,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <CardRow
               icon="📓"
               label="Preferred Weights"
-              isLast={!defaultsExpanded}
-              onPress={() => setDefaultsExpanded((prev) => !prev)}
+              isLast
+              onPress={() => setDefaultsPanelVisible(true)}
             >
               <Text style={styles.valueText}>{exerciseDefaults.length} saved</Text>
-              <Text style={styles.chevron}>{defaultsExpanded ? '⌄' : '›'}</Text>
+              <Text style={styles.chevron}>›</Text>
             </CardRow>
-
-            {defaultsExpanded && (
-              <View style={styles.defaultsPanel}>
-                {defaultsLoading ? (
-                  <Text style={styles.hintText}>Loading defaults…</Text>
-                ) : exerciseDefaults.length === 0 ? (
-                  <View style={styles.defaultEmpty}>
-                    <Text style={styles.defaultEmptyTitle}>No defaults saved yet.</Text>
-                    <Text style={styles.hintText}>Add an exercise to prefill workouts.</Text>
-                  </View>
-                ) : (
-                  exerciseDefaults.map((exerciseDefault) => {
-                    const editValues = defaultEdits[exerciseDefault.id] || {
-                      sets: '0',
-                      reps: '0',
-                      weight: '0',
-                      rest: '0',
-                    };
-                    const exerciseName = getExerciseDisplayName(exerciseDefault.exerciseId);
-                    const isSaving = savingDefaultId === exerciseDefault.id;
-                    const isRemoving = removingDefaultId === exerciseDefault.id;
-                    const expanded = expandedDefaults[exerciseDefault.id] ?? false;
-                    const summary = `${editValues.sets}×${editValues.reps} @ ${editValues.weight} kg`;
-                    return (
-                      <View key={exerciseDefault.id} style={styles.defaultRow}>
-                        <TouchableOpacity
-                          style={styles.defaultRowHeader}
-                          onPress={() =>
-                            setExpandedDefaults((prev) => ({
-                              ...prev,
-                              [exerciseDefault.id]: !expanded,
-                            }))
-                          }
-                          activeOpacity={0.7}
-                        >
-                          <View style={styles.defaultRowNameWrap}>
-                            <Text style={styles.defaultRowTitle}>{exerciseName}</Text>
-                            <Text style={styles.defaultSummary}>{summary}</Text>
-                          </View>
-                          <Text style={styles.chevron}>{expanded ? '⌄' : '›'}</Text>
-                        </TouchableOpacity>
-
-                        {expanded && (
-                          <View style={styles.defaultDetails}>
-                            <View style={styles.defaultFieldRow}>
-                              <View style={styles.defaultInputGroup}>
-                                <Text style={styles.defaultInputLabel}>Sets</Text>
-                                <TextInput
-                                  style={styles.defaultInput}
-                                  keyboardType="number-pad"
-                                  value={editValues.sets}
-                                  onChangeText={(t) =>
-                                    handleDefaultFieldChange(exerciseDefault.id, 'sets', t)
-                                  }
-                                />
-                              </View>
-                              <View style={styles.defaultInputGroup}>
-                                <Text style={styles.defaultInputLabel}>Reps</Text>
-                                <TextInput
-                                  style={styles.defaultInput}
-                                  keyboardType="number-pad"
-                                  value={editValues.reps}
-                                  onChangeText={(t) =>
-                                    handleDefaultFieldChange(exerciseDefault.id, 'reps', t)
-                                  }
-                                />
-                              </View>
-                              <View style={styles.defaultInputGroup}>
-                                <Text style={styles.defaultInputLabel}>Weight</Text>
-                                <TextInput
-                                  style={styles.defaultInput}
-                                  keyboardType="decimal-pad"
-                                  value={editValues.weight}
-                                  onChangeText={(t) =>
-                                    handleDefaultFieldChange(exerciseDefault.id, 'weight', t)
-                                  }
-                                />
-                              </View>
-                              <View style={styles.defaultInputGroup}>
-                                <Text style={styles.defaultInputLabel}>Rest</Text>
-                                <TextInput
-                                  style={styles.defaultInput}
-                                  keyboardType="number-pad"
-                                  value={editValues.rest}
-                                  onChangeText={(t) =>
-                                    handleDefaultFieldChange(exerciseDefault.id, 'rest', t)
-                                  }
-                                />
-                              </View>
-                            </View>
-                            <View style={styles.defaultActions}>
-                              <TouchableOpacity
-                                style={[
-                                  styles.defaultSaveBtn,
-                                  isSaving && styles.defaultBtnDisabled,
-                                ]}
-                                onPress={() => handleSaveExerciseDefault(exerciseDefault.id)}
-                                disabled={isSaving}
-                              >
-                                <Text style={styles.defaultSaveBtnText}>
-                                  {isSaving ? 'Saving…' : 'Save'}
-                                </Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={[
-                                  styles.defaultRemoveBtn,
-                                  isRemoving && styles.defaultBtnDisabled,
-                                ]}
-                                onPress={() => handleRemoveExerciseDefault(exerciseDefault.id)}
-                                disabled={isRemoving}
-                              >
-                                <Text style={styles.defaultRemoveBtnText}>Remove</Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        )}
-                      </View>
-                    );
-                  })
-                )}
-                <TouchableOpacity
-                  style={styles.addDefaultBtn}
-                  onPress={() => setDefaultModalVisible(true)}
-                  disabled={exercisesLoading}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.addDefaultBtnText}>+ Add Exercise Default</Text>
-                </TouchableOpacity>
-              </View>
-            )}
           </SectionCard>
 
           {/* ── NUTRITION ─────────────────────────────────────────────────── */}
@@ -1213,6 +1082,159 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           onSelect={(v) => setCurrentPhysiqueLevel(parseInt(v, 10))}
           onClose={() => setActivePicker(null)}
         />
+
+        {/* ── Preferred Weights panel ──────────────────────────────────────── */}
+        <Modal
+          animationType="slide"
+          transparent
+          visible={defaultsPanelVisible}
+          onRequestClose={() => setDefaultsPanelVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <Pressable
+              style={StyleSheet.absoluteFillObject}
+              onPress={() => setDefaultsPanelVisible(false)}
+            />
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <View style={styles.modalHeaderRow}>
+                <Text style={styles.modalTitle}>Preferred Weights</Text>
+                <TouchableOpacity
+                  onPress={() => setDefaultsPanelVisible(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.modalCloseX}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+                {defaultsLoading ? (
+                  <ActivityIndicator color={C.primary} style={{ marginTop: 20 }} />
+                ) : exerciseDefaults.length === 0 ? (
+                  <View style={styles.defaultEmpty}>
+                    <Text style={styles.defaultEmptyTitle}>No defaults yet</Text>
+                    <Text style={styles.hintText}>
+                      Add exercises to prefill your workouts automatically.
+                    </Text>
+                  </View>
+                ) : (
+                  exerciseDefaults.map((exerciseDefault) => {
+                    const editValues = defaultEdits[exerciseDefault.id] || {
+                      sets: '0', reps: '0', weight: '0', rest: '0',
+                    };
+                    const exerciseName = getExerciseDisplayName(exerciseDefault.exerciseId);
+                    const isSaving = savingDefaultId === exerciseDefault.id;
+                    const isRemoving = removingDefaultId === exerciseDefault.id;
+                    const expanded = expandedDefaults[exerciseDefault.id] ?? false;
+                    return (
+                      <View key={exerciseDefault.id} style={styles.defaultCard}>
+                        <TouchableOpacity
+                          style={styles.defaultCardHeader}
+                          onPress={() =>
+                            setExpandedDefaults((prev) => ({
+                              ...prev,
+                              [exerciseDefault.id]: !expanded,
+                            }))
+                          }
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.defaultCardTitle}>{exerciseName}</Text>
+                          <View style={styles.defaultCardRight}>
+                            <Text style={styles.defaultCardSummary}>
+                              {editValues.sets}×{editValues.reps} · {editValues.weight}kg
+                            </Text>
+                            <Text style={styles.chevron}>{expanded ? '⌄' : '›'}</Text>
+                          </View>
+                        </TouchableOpacity>
+
+                        {expanded && (
+                          <View style={styles.defaultCardBody}>
+                            <View style={styles.defaultGrid}>
+                              <View style={styles.defaultGridRow}>
+                                <View style={styles.defaultGridItem}>
+                                  <Text style={styles.defaultGridLabel}>Sets</Text>
+                                  <TextInput
+                                    style={styles.defaultGridInput}
+                                    keyboardType="number-pad"
+                                    value={editValues.sets}
+                                    onChangeText={(t) =>
+                                      handleDefaultFieldChange(exerciseDefault.id, 'sets', t)
+                                    }
+                                  />
+                                </View>
+                                <View style={styles.defaultGridItem}>
+                                  <Text style={styles.defaultGridLabel}>Reps</Text>
+                                  <TextInput
+                                    style={styles.defaultGridInput}
+                                    keyboardType="number-pad"
+                                    value={editValues.reps}
+                                    onChangeText={(t) =>
+                                      handleDefaultFieldChange(exerciseDefault.id, 'reps', t)
+                                    }
+                                  />
+                                </View>
+                              </View>
+                              <View style={styles.defaultGridRow}>
+                                <View style={styles.defaultGridItem}>
+                                  <Text style={styles.defaultGridLabel}>Weight (kg)</Text>
+                                  <TextInput
+                                    style={styles.defaultGridInput}
+                                    keyboardType="decimal-pad"
+                                    value={editValues.weight}
+                                    onChangeText={(t) =>
+                                      handleDefaultFieldChange(exerciseDefault.id, 'weight', t)
+                                    }
+                                  />
+                                </View>
+                                <View style={styles.defaultGridItem}>
+                                  <Text style={styles.defaultGridLabel}>Rest (sec)</Text>
+                                  <TextInput
+                                    style={styles.defaultGridInput}
+                                    keyboardType="number-pad"
+                                    value={editValues.rest}
+                                    onChangeText={(t) =>
+                                      handleDefaultFieldChange(exerciseDefault.id, 'rest', t)
+                                    }
+                                  />
+                                </View>
+                              </View>
+                            </View>
+                            <View style={styles.defaultCardActions}>
+                              <TouchableOpacity
+                                style={[styles.defaultSaveBtn, isSaving && styles.defaultBtnDisabled]}
+                                onPress={() => handleSaveExerciseDefault(exerciseDefault.id)}
+                                disabled={isSaving}
+                              >
+                                <Text style={styles.defaultSaveBtnText}>
+                                  {isSaving ? 'Saving…' : 'Save'}
+                                </Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[styles.defaultRemoveBtn, isRemoving && styles.defaultBtnDisabled]}
+                                onPress={() => handleRemoveExerciseDefault(exerciseDefault.id)}
+                                disabled={isRemoving}
+                              >
+                                <Text style={styles.defaultRemoveBtnText}>Remove</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })
+                )}
+                <TouchableOpacity
+                  style={styles.addDefaultBtn}
+                  onPress={() => setDefaultModalVisible(true)}
+                  disabled={exercisesLoading}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.addDefaultBtnText}>+ Add Exercise</Text>
+                </TouchableOpacity>
+                <View style={{ height: 20 }} />
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
 
         {/* ── Exercise Defaults modal ──────────────────────────────────────── */}
         <Modal
@@ -1569,13 +1591,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 
-  // Exercise defaults panel (inside Training card)
-  defaultsPanel: {
-    borderTopWidth: 1,
-    borderTopColor: C.rowBorder,
-    padding: 12,
-    gap: 8,
-  },
+  // Exercise defaults (Preferred Weights modal)
   hintText: {
     color: C.textSec,
     fontSize: 13,
@@ -1584,75 +1600,82 @@ const styles = StyleSheet.create({
   },
   defaultEmpty: {
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: 8,
+    gap: 6,
+    paddingVertical: 24,
   },
   defaultEmptyTitle: {
     color: C.text,
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: 15,
   },
-  defaultRow: {
+  defaultCard: {
     backgroundColor: C.surface2,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: C.border,
+    marginBottom: 8,
     overflow: 'hidden',
   },
-  defaultRowHeader: {
+  defaultCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 12,
+    padding: 14,
   },
-  defaultRowNameWrap: { flex: 1, paddingRight: 8 },
-  defaultRowTitle: {
-    fontSize: 14,
+  defaultCardTitle: {
+    fontSize: 15,
     fontWeight: '700',
     color: C.text,
+    flex: 1,
   },
-  defaultSummary: {
-    fontSize: 12,
+  defaultCardRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  defaultCardSummary: {
+    fontSize: 13,
     color: C.textSec,
-    marginTop: 3,
+    fontWeight: '500',
   },
-  defaultDetails: {
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    gap: 10,
+  defaultCardBody: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
     borderTopWidth: 1,
     borderTopColor: C.rowBorder,
+    gap: 12,
   },
-  defaultFieldRow: {
+  defaultGrid: {
+    gap: 8,
+    paddingTop: 12,
+  },
+  defaultGridRow: {
     flexDirection: 'row',
     gap: 8,
-    paddingTop: 10,
   },
-  defaultInputGroup: {
+  defaultGridItem: {
     flex: 1,
     gap: 4,
   },
-  defaultInputLabel: {
-    fontSize: 10,
+  defaultGridLabel: {
+    fontSize: 11,
     color: C.textMuted,
-    fontWeight: '700',
+    fontWeight: '600',
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    textAlign: 'center',
+    letterSpacing: 0.5,
   },
-  defaultInput: {
+  defaultGridInput: {
     backgroundColor: C.bg,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: C.border,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     color: C.text,
     fontWeight: '700',
-    textAlign: 'center',
-    fontSize: 14,
+    fontSize: 15,
   },
-  defaultActions: {
+  defaultCardActions: {
     flexDirection: 'row',
     gap: 8,
     justifyContent: 'flex-end',
