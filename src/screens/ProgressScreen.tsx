@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,13 +10,17 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   VictoryAxis,
+  VictoryScatter,
   VictoryBar,
   VictoryChart,
   VictoryGroup,
   VictoryLine,
 } from 'victory-native';
 import { PhasePlan, User, WorkoutLog, WorkoutSessionEntry, StrengthSnapshot, TrackingPreferences } from '../types/domain';
-import { parseYMDToDate } from '../utils/date';
+import { fetchNutritionTotalsForDates, RuntimeDailyNutritionTotals } from '../services/mealRuntimeService';
+import { estimateDailyCalories } from '../utils/calorieGoal';
+import { formatLocalDateYMD, parseYMDToDate } from '../utils/date';
+import { PHYSIQUE_LEVELS } from '../data/physiqueLevels';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -51,6 +55,8 @@ const TIME_RANGES = [
   { id: 'plan', label: 'Plan' },
 ] as const;
 
+const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 } as const;
+
 type ProgressScreenProps = {
   user: User;
   phase: PhasePlan;
@@ -77,15 +83,6 @@ const getWeekNumber = (date: Date) => {
 };
 
 const buildStrengthSeries = (snapshots: StrengthSnapshot[]) => {
-  if (!snapshots.length) {
-    return [
-      { week: 'W1', squat: 185, bench: 155, deadlift: 225, press: 95 },
-      { week: 'W2', squat: 195, bench: 160, deadlift: 235, press: 100 },
-      { week: 'W3', squat: 205, bench: 165, deadlift: 245, press: 105 },
-      { week: 'W4', squat: 215, bench: 170, deadlift: 255, press: 110 },
-    ];
-  }
-
   const today = new Date();
   const weeks: { key: string; start: Date }[] = [];
   for (let i = 3; i >= 0; i -= 1) {
@@ -118,15 +115,7 @@ const buildStrengthSeries = (snapshots: StrengthSnapshot[]) => {
 };
 
 const buildVolumeRows = (workoutLogs: WorkoutLog[]) => {
-  if (!workoutLogs.length) {
-    return [
-      { muscle: 'Legs', sets: 52, color: COLORS.accent },
-      { muscle: 'Back', sets: 48, color: COLORS.blue },
-      { muscle: 'Chest', sets: 42, color: COLORS.pink },
-      { muscle: 'Arms', sets: 38, color: COLORS.orange },
-      { muscle: 'Shoulders', sets: 36, color: '#A78BFA' },
-    ];
-  }
+  if (!workoutLogs.length) return [];
   const totals = new Map<string, number>();
   workoutLogs.forEach((log) => {
     Object.entries(log.muscleVolume || {}).forEach(([key, value]) => {
@@ -145,7 +134,7 @@ const buildVolumeRows = (workoutLogs: WorkoutLog[]) => {
 };
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
-  user: _user,
+  user,
   phase,
   workoutSessions,
   workoutLogs,
@@ -153,6 +142,50 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 }) => {
   const [activeView, setActiveView] = useState<typeof VIEW_TABS[number]['id']>('overview');
   const [timeRange, setTimeRange] = useState<typeof TIME_RANGES[number]['id']>('month');
+
+  const rangeStartDate = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (timeRange === 'week') {
+      const start = new Date(today);
+      start.setDate(today.getDate() - 6);
+      return start;
+    }
+    if (timeRange === 'month') {
+      const start = new Date(today);
+      start.setDate(today.getDate() - 29);
+      return start;
+    }
+    return phase.startDate ? parseYMDToDate(phase.startDate) : today;
+  }, [phase.startDate, timeRange]);
+
+  const filteredSessions = useMemo(
+    () =>
+      workoutSessions.filter((session) => {
+        if (session.phasePlanId !== phase.id) return false;
+        const sessionDate = parseYMDToDate(session.date);
+        return sessionDate >= rangeStartDate;
+      }),
+    [phase.id, rangeStartDate, workoutSessions]
+  );
+  const filteredWorkoutLogs = useMemo(
+    () =>
+      workoutLogs.filter((log) => {
+        if (log.phasePlanId !== phase.id) return false;
+        const logDate = parseYMDToDate(log.date);
+        return logDate >= rangeStartDate;
+      }),
+    [phase.id, rangeStartDate, workoutLogs]
+  );
+  const filteredStrengthSnapshots = useMemo(
+    () =>
+      strengthSnapshots.filter((snapshot) => {
+        if (snapshot.phasePlanId !== phase.id) return false;
+        const snapshotDate = parseYMDToDate(snapshot.date);
+        return snapshotDate >= rangeStartDate;
+      }),
+    [phase.id, rangeStartDate, strengthSnapshots]
+  );
 
   const planProgress = useMemo(() => {
     const sessions = workoutSessions.filter((s) => s.phasePlanId === phase.id);
@@ -176,29 +209,174 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     };
   }, [phase, workoutSessions]);
 
-  const strengthData = useMemo(() => buildStrengthSeries(strengthSnapshots), [strengthSnapshots]);
-  const volumeData = useMemo(() => buildVolumeRows(workoutLogs), [workoutLogs]);
+  const strengthData = useMemo(() => buildStrengthSeries(filteredStrengthSnapshots), [filteredStrengthSnapshots]);
+  const volumeData = useMemo(() => buildVolumeRows(filteredWorkoutLogs), [filteredWorkoutLogs]);
+  const [nutritionTotals, setNutritionTotals] = useState<RuntimeDailyNutritionTotals[]>([]);
 
-  const bodyMetrics = [
-    { date: 'W1', weight: 182, bodyFat: 18.2 },
-    { date: 'W2', weight: 181, bodyFat: 17.8 },
-    { date: 'W3', weight: 180.5, bodyFat: 17.5 },
-    { date: 'W4', weight: 179.8, bodyFat: 17.2 },
-  ];
+  const calorieGoal = useMemo(() => estimateDailyCalories(user).goalCalories, [user]);
+  const macroTargets = useMemo(() => ({
+    protein: Math.round((calorieGoal * MACRO_SPLIT.protein) / 4),
+    carbs: Math.round((calorieGoal * MACRO_SPLIT.carbs) / 4),
+    fats: Math.round((calorieGoal * MACRO_SPLIT.fats) / 9),
+  }), [calorieGoal]);
 
-  const nutritionData = [
-    { day: 'Mon', calories: 95, protein: 98, carbs: 92, fats: 88 },
-    { day: 'Tue', calories: 102, protein: 105, carbs: 98, fats: 95 },
-    { day: 'Wed', calories: 88, protein: 92, carbs: 85, fats: 90 },
-    { day: 'Thu', calories: 98, protein: 100, carbs: 96, fats: 92 },
-    { day: 'Fri', calories: 105, protein: 108, carbs: 102, fats: 98 },
-    { day: 'Sat', calories: 92, protein: 95, carbs: 88, fats: 85 },
-    { day: 'Sun', calories: 100, protein: 102, carbs: 98, fats: 95 },
-  ];
+  const nutritionDates = useMemo(() => {
+    const today = new Date();
+    const planStart = phase.startDate ? parseYMDToDate(phase.startDate) : today;
+    const planDays = Math.max(1, Math.floor((today.getTime() - planStart.getTime()) / 86400000) + 1);
+    const rangeDays = timeRange === 'week' ? 7 : timeRange === 'month' ? 30 : planDays;
+    const days = Math.max(1, Math.min(rangeDays, 90));
+    const dates: string[] = [];
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+      dates.push(formatLocalDateYMD(date));
+    }
+    return dates;
+  }, [phase.startDate, timeRange]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const loadNutrition = async () => {
+      try {
+        const totals = await fetchNutritionTotalsForDates(
+          user.id,
+          phase.id,
+          nutritionDates,
+          user.eatingMode
+        );
+        if (!isCancelled) {
+          setNutritionTotals(totals);
+        }
+      } catch (error) {
+        console.error('Failed to load nutrition progress:', error);
+        if (!isCancelled) {
+          setNutritionTotals([]);
+        }
+      }
+    };
+    void loadNutrition();
+    return () => {
+      isCancelled = true;
+    };
+  }, [nutritionDates, phase.id, user.eatingMode, user.id]);
+
+  const bodyFatRange = useMemo(
+    () =>
+      PHYSIQUE_LEVELS.find((level) => level.id === user.currentPhysiqueLevel)?.bodyFatRange ?? null,
+    [user.currentPhysiqueLevel]
+  );
+  const currentWeightLbs = useMemo(() => {
+    if (!user.weightKg || user.weightKg <= 0) return null;
+    return Math.round(user.weightKg * 2.20462 * 10) / 10;
+  }, [user.weightKg]);
+  const bodyWeightPoint = useMemo(() => {
+    if (!currentWeightLbs) return [];
+    return [{ date: 'Now', weight: currentWeightLbs }];
+  }, [currentWeightLbs]);
+
+  const nutritionData = useMemo(() => {
+    const capPercent = (value: number) => Math.max(0, Math.min(150, Math.round(value)));
+    return nutritionTotals.map((day) => {
+      const date = parseYMDToDate(day.date);
+      const dayLabel =
+        timeRange === 'week'
+          ? date.toLocaleDateString(undefined, { weekday: 'short' })
+          : `${date.getMonth() + 1}/${date.getDate()}`;
+      return {
+        day: dayLabel,
+        calories: capPercent((day.calories / Math.max(calorieGoal, 1)) * 100),
+        protein: capPercent((day.protein / Math.max(macroTargets.protein, 1)) * 100),
+        carbs: capPercent((day.carbs / Math.max(macroTargets.carbs, 1)) * 100),
+        fats: capPercent((day.fats / Math.max(macroTargets.fats, 1)) * 100),
+      };
+    });
+  }, [calorieGoal, macroTargets.carbs, macroTargets.fats, macroTargets.protein, nutritionTotals, timeRange]);
+
+  const nutritionAverages = useMemo(() => {
+    if (!nutritionData.length) {
+      return { protein: 0, carbs: 0, fats: 0 };
+    }
+    const totals = nutritionData.reduce(
+      (sum, item) => ({
+        protein: sum.protein + item.protein,
+        carbs: sum.carbs + item.carbs,
+        fats: sum.fats + item.fats,
+      }),
+      { protein: 0, carbs: 0, fats: 0 }
+    );
+    return {
+      protein: Math.round(totals.protein / nutritionData.length),
+      carbs: Math.round(totals.carbs / nutritionData.length),
+      fats: Math.round(totals.fats / nutritionData.length),
+    };
+  }, [nutritionData]);
+
+  const liftSummaries = useMemo(() => {
+    const lifts = [
+      { id: 'squat', name: 'Squat', color: COLORS.orange },
+      { id: 'bench_press', name: 'Bench Press', color: COLORS.accent },
+      { id: 'deadlift', name: 'Deadlift', color: COLORS.pink },
+      { id: 'overhead_press', name: 'OHP', color: COLORS.success },
+    ];
+
+    return lifts.map((lift) => {
+      const samples = filteredStrengthSnapshots
+        .filter((snap) => snap.lift === lift.id && (snap.weight ?? 0) > 0)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (!samples.length) {
+        return {
+          ...lift,
+          valueText: '—',
+          gainText: '—',
+          prCount: 0,
+        };
+      }
+
+      const start = samples[0].weight ?? 0;
+      const latest = samples[samples.length - 1].weight ?? 0;
+      let maxSoFar = Number.NEGATIVE_INFINITY;
+      let prCount = 0;
+      samples.forEach((sample) => {
+        const weight = sample.weight ?? 0;
+        if (weight > maxSoFar) {
+          maxSoFar = weight;
+          prCount += 1;
+        }
+      });
+      const gain = latest - start;
+      const gainPrefix = gain > 0 ? '+' : '';
+
+      return {
+        ...lift,
+        valueText: `${Math.round(latest)} lbs`,
+        gainText: `${gainPrefix}${Math.round(gain)} lbs`,
+        prCount,
+      };
+    });
+  }, [filteredStrengthSnapshots]);
+
+  const totalPRs = useMemo(
+    () => liftSummaries.reduce((sum, lift) => sum + lift.prCount, 0),
+    [liftSummaries]
+  );
 
   const totalSets = volumeData.reduce((sum, item) => sum + item.sets, 0);
-  const avgWorkoutMinutes = Math.max(30, Math.round((totalSets / Math.max(planProgress.totalWorkouts, 1)) * 3));
+  const avgWorkoutMinutes = filteredSessions.length
+    ? Math.round((totalSets / filteredSessions.length) * 3)
+    : 0;
   const maxSets = Math.max(...volumeData.map((v) => v.sets), 1);
+  const restDays = useMemo(() => {
+    const today = new Date();
+    const totalDays = Math.max(1, Math.floor((today.getTime() - rangeStartDate.getTime()) / 86400000) + 1);
+    const workoutDays = new Set(
+      filteredSessions
+        .filter((session) => session.exercises.some((exercise) => exercise.completed === true))
+        .map((session) => session.date)
+    ).size;
+    return Math.max(0, totalDays - workoutDays);
+  }, [filteredSessions, rangeStartDate]);
 
   return (
     <LinearGradient colors={['#0A0E27', '#0D1229', '#111633']} style={styles.container}>
@@ -308,28 +486,32 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                 </View>
               </View>
               <View style={styles.volumeList}>
-                {volumeData.map((item) => (
-                  <View key={item.muscle} style={styles.volumeRow}>
-                    <View style={styles.volumeRowTop}>
-                      <Text style={styles.volumeLabel}>{item.muscle}</Text>
-                      <Text style={[styles.volumeCount, { color: item.color }]}>{item.sets}</Text>
+                {volumeData.length ? (
+                  volumeData.map((item) => (
+                    <View key={item.muscle} style={styles.volumeRow}>
+                      <View style={styles.volumeRowTop}>
+                        <Text style={styles.volumeLabel}>{item.muscle}</Text>
+                        <Text style={[styles.volumeCount, { color: item.color }]}>{item.sets}</Text>
+                      </View>
+                      <View style={styles.barTrack}>
+                        <View style={[styles.barFill, { width: `${(item.sets / maxSets) * 100}%`, backgroundColor: item.color }]} />
+                      </View>
                     </View>
-                    <View style={styles.barTrack}>
-                      <View style={[styles.barFill, { width: `${(item.sets / maxSets) * 100}%`, backgroundColor: item.color }]} />
-                    </View>
-                  </View>
-                ))}
+                  ))
+                ) : (
+                  <Text style={styles.emptyText}>No completed workout sets yet.</Text>
+                )}
               </View>
             </View>
 
             {/* Stats 2×2 */}
             <View style={styles.statsGrid}>
-              {[
-                { label: 'Avg. Session', value: `${avgWorkoutMinutes}`, unit: 'min', color: COLORS.orange },
-                { label: 'Total PRs', value: '12', unit: 'this plan', color: COLORS.pink },
-                { label: 'Rest Days', value: '8', unit: 'logged', color: '#A78BFA' },
-                { label: 'Consistency', value: `${planProgress.completionRate}`, unit: '%', color: COLORS.success },
-              ].map((stat) => (
+                {[
+                  { label: 'Avg. Session', value: `${avgWorkoutMinutes}`, unit: 'min', color: COLORS.orange },
+                { label: 'Total PRs', value: `${totalPRs}`, unit: timeRange, color: COLORS.pink },
+                { label: 'Rest Days', value: `${restDays}`, unit: timeRange, color: '#A78BFA' },
+                  { label: 'Consistency', value: `${planProgress.completionRate}`, unit: '%', color: COLORS.success },
+                ].map((stat) => (
                 <LinearGradient
                   key={stat.label}
                   colors={[`${stat.color}14`, 'transparent']}
@@ -376,17 +558,12 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </View>
 
             <View style={styles.liftList}>
-              {[
-                { name: 'Squat', color: COLORS.orange, value: '215 lbs', gain: '+30 lbs' },
-                { name: 'Bench Press', color: COLORS.accent, value: '170 lbs', gain: '+15 lbs' },
-                { name: 'Deadlift', color: COLORS.pink, value: '255 lbs', gain: '+30 lbs' },
-                { name: 'OHP', color: COLORS.success, value: '110 lbs', gain: '+15 lbs' },
-              ].map((lift) => (
+              {liftSummaries.map((lift) => (
                 <View key={lift.name} style={styles.liftRow}>
                   <View style={[styles.liftDot, { backgroundColor: lift.color }]} />
                   <Text style={styles.liftName}>{lift.name}</Text>
-                  <Text style={[styles.liftValue, { color: lift.color }]}>{lift.value}</Text>
-                  <Text style={styles.liftGain}>{lift.gain}</Text>
+                  <Text style={[styles.liftValue, { color: lift.color }]}>{lift.valueText}</Text>
+                  <Text style={styles.liftGain}>{lift.gainText}</Text>
                 </View>
               ))}
             </View>
@@ -397,45 +574,61 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         {activeView === 'body' && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Body Composition</Text>
-            <Text style={styles.cardSub}>Weight trend · lbs</Text>
-            <View style={styles.chartWrap}>
-              <VictoryChart
-                width={SCREEN_WIDTH - 64}
-                height={220}
-                padding={{ top: 16, bottom: 36, left: 44, right: 16 }}
-              >
-                <VictoryAxis
-                  style={{
-                    axis: { stroke: 'rgba(255,255,255,0.08)' },
-                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
-                  }}
-                />
-                <VictoryAxis
-                  dependentAxis
-                  style={{
-                    axis: { stroke: 'transparent' },
-                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
-                    grid: { stroke: 'rgba(255,255,255,0.05)' },
-                  }}
-                />
-                <VictoryLine data={bodyMetrics} x="date" y="weight" style={{ data: { stroke: COLORS.accent, strokeWidth: 2.5 } }} />
-              </VictoryChart>
-            </View>
+            <Text style={styles.cardSub}>Profile-linked body metrics</Text>
+            {bodyWeightPoint.length ? (
+              <View style={styles.chartWrap}>
+                <VictoryChart
+                  width={SCREEN_WIDTH - 64}
+                  height={220}
+                  padding={{ top: 16, bottom: 36, left: 44, right: 16 }}
+                >
+                  <VictoryAxis
+                    style={{
+                      axis: { stroke: 'rgba(255,255,255,0.08)' },
+                      tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                    }}
+                  />
+                  <VictoryAxis
+                    dependentAxis
+                    style={{
+                      axis: { stroke: 'transparent' },
+                      tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                      grid: { stroke: 'rgba(255,255,255,0.05)' },
+                    }}
+                  />
+                  <VictoryScatter
+                    data={bodyWeightPoint}
+                    x="date"
+                    y="weight"
+                    size={5}
+                    style={{ data: { fill: COLORS.accent } }}
+                  />
+                </VictoryChart>
+              </View>
+            ) : (
+              <Text style={styles.emptyText}>No weight value found in your profile yet.</Text>
+            )}
             <View style={styles.bodyGrid}>
               <LinearGradient colors={[`${COLORS.accent}18`, 'transparent']} style={styles.bodyCard}>
                 <Text style={styles.bodyCardLabel}>Weight</Text>
-                <Text style={[styles.bodyCardValue, { color: COLORS.accent }]}>179.8</Text>
+                <Text style={[styles.bodyCardValue, { color: COLORS.accent }]}>
+                  {currentWeightLbs !== null ? currentWeightLbs.toFixed(1) : '—'}
+                </Text>
                 <Text style={styles.bodyCardUnit}>lbs</Text>
                 <View style={styles.bodyCardDelta}>
-                  <Text style={styles.bodyCardDeltaText}>↓ 2.2 lbs</Text>
+                  <Text style={styles.bodyCardDeltaText}>from profile</Text>
                 </View>
               </LinearGradient>
               <LinearGradient colors={[`${COLORS.pink}18`, 'transparent']} style={styles.bodyCard}>
                 <Text style={styles.bodyCardLabel}>Body Fat</Text>
-                <Text style={[styles.bodyCardValue, { color: COLORS.pink }]}>17.2</Text>
-                <Text style={styles.bodyCardUnit}>%</Text>
+                <Text style={[styles.bodyCardValue, { color: COLORS.pink }]}>
+                  {bodyFatRange ?? '—'}
+                </Text>
+                <Text style={styles.bodyCardUnit}>est. range</Text>
                 <View style={[styles.bodyCardDelta, { backgroundColor: `${COLORS.pink}15` }]}>
-                  <Text style={[styles.bodyCardDeltaText, { color: COLORS.pink }]}>↓ 1.0%</Text>
+                  <Text style={[styles.bodyCardDeltaText, { color: COLORS.pink }]}>
+                    level {user.currentPhysiqueLevel}
+                  </Text>
                 </View>
               </LinearGradient>
             </View>
@@ -475,9 +668,9 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </View>
             <View style={styles.macroRow}>
               {[
-                { label: 'Protein', avg: 98, color: COLORS.accent },
-                { label: 'Carbs', avg: 93, color: COLORS.orange },
-                { label: 'Fats', avg: 91, color: COLORS.pink },
+                { label: 'Protein', avg: nutritionAverages.protein, color: COLORS.accent },
+                { label: 'Carbs', avg: nutritionAverages.carbs, color: COLORS.orange },
+                { label: 'Fats', avg: nutritionAverages.fats, color: COLORS.pink },
               ].map((macro) => (
                 <View key={macro.label} style={styles.macroCard}>
                   <View style={[styles.macroDot, { backgroundColor: macro.color }]} />
@@ -558,6 +751,7 @@ const styles = StyleSheet.create({
 
   // Volume
   volumeList: { gap: 12 },
+  emptyText: { fontSize: 13, fontWeight: '500', color: COLORS.textMuted },
   volumeRow: {},
   volumeRowTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   volumeLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
