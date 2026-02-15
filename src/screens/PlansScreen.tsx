@@ -10,6 +10,7 @@ import {
   TextInput,
   Pressable,
   AppState,
+  ActivityIndicator,
   Animated,
   Easing,
   PanResponder,
@@ -143,6 +144,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   const [muscleFilter, setMuscleFilter] = useState<(typeof MUSCLE_FILTERS)[number]>('All');
   const [completionMap, setCompletionMap] = useState<Record<string, boolean>>({});
   const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
+  const [isBulkCompleting, setIsBulkCompleting] = useState(false);
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastExercisePickerSignalRef = useRef<number | undefined>(openExercisePickerSignal);
   // Animation values
@@ -833,8 +835,107 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       );
     }
 
+    const completedCount = editingExercises.filter((ex) => ex.completed).length;
+    const totalCount = editingExercises.length;
+    const progress = totalCount > 0 ? completedCount / totalCount : 0;
+
+    const handleMarkAllComplete = () => {
+      if (isBulkCompleting) return;
+      const current = editingExercisesRef.current;
+      if (!current.length) return;
+      const targetCompleted = current.some((ex) => !ex.completed);
+      const changedExercises = current.filter(
+        (ex) => Boolean(ex.completed) !== targetCompleted
+      );
+      if (!changedExercises.length) return;
+
+      const next = current.map((ex) => ({ ...ex, completed: targetCompleted }));
+      editingExercisesRef.current = next;
+      setEditingExercises(next);
+      if (selectedPlan) {
+        localEditsDateRef.current = selectedPlan.dateStr;
+        setCompletionMap((prevMap) => ({ ...prevMap, [selectedPlan.dateStr]: targetCompleted }));
+      }
+      setIsDirty(true);
+      if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
+      autosaveTimeoutRef.current = null;
+
+      // Persist only the exercises whose completion actually changed.
+      void (async () => {
+        setIsBulkCompleting(true);
+        try {
+          if (onToggleComplete) {
+            for (const ex of changedExercises) {
+              await onToggleComplete(selectedDate, ex.name, ex.exerciseId, next);
+            }
+          }
+          if (selectedPlan) {
+            await enqueueSave(selectedPlan, next);
+            refreshCompletionMap();
+          }
+          setIsDirty(false);
+        } catch (err) {
+          console.error('Failed to sync finish-all completion state:', err);
+        } finally {
+          setIsBulkCompleting(false);
+        }
+      })();
+    };
+
     return (
       <View style={styles.workoutCard}>
+        {/* Progress header */}
+        <View style={styles.progressHeader}>
+          <View style={styles.progressBarTrack}>
+            <Animated.View
+              style={[
+                styles.progressBarFill,
+                { width: `${Math.round(progress * 100)}%` as any },
+                allComplete && styles.progressBarComplete,
+              ]}
+            />
+          </View>
+          <View style={styles.progressRow}>
+            <Text style={[styles.progressLabel, allComplete && styles.progressLabelDone]}>
+              {allComplete ? 'All done' : `${completedCount}/${totalCount}`}
+            </Text>
+            {!allComplete && (
+              <TouchableOpacity
+                style={styles.finishAllBtn}
+                disabled={isBulkCompleting}
+                onPress={handleMarkAllComplete}
+                activeOpacity={0.7}
+              >
+                {isBulkCompleting ? (
+                  <View style={styles.bulkActionLoading}>
+                    <ActivityIndicator size="small" color={COLORS.accent} />
+                    <Text style={styles.finishAllText}>Updating</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.finishAllText}>Finish all</Text>
+                )}
+              </TouchableOpacity>
+            )}
+            {allComplete && (
+              <TouchableOpacity
+                style={styles.undoAllBtn}
+                disabled={isBulkCompleting}
+                onPress={handleMarkAllComplete}
+                activeOpacity={0.7}
+              >
+                {isBulkCompleting ? (
+                  <View style={styles.bulkActionLoading}>
+                    <ActivityIndicator size="small" color={COLORS.textTertiary} />
+                    <Text style={styles.undoAllText}>Updating</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.undoAllText}>Undo</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         <View style={styles.exerciseList}>
           {editingExercises.map((exercise, idx) => {
             const cardKey =
@@ -1447,6 +1548,71 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     borderColor: 'transparent',
     marginBottom: 24,
+  },
+  progressHeader: {
+    marginBottom: 14,
+    gap: 8,
+  },
+  progressBarTrack: {
+    height: 3,
+    backgroundColor: COLORS.border,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: COLORS.accent,
+    borderRadius: 2,
+  },
+  progressBarComplete: {
+    backgroundColor: COLORS.success,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  progressLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textTertiary,
+    letterSpacing: 0.2,
+  },
+  progressLabelDone: {
+    color: COLORS.success,
+  },
+  finishAllBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: COLORS.accentDim,
+    borderWidth: 1,
+    borderColor: COLORS.accentGlow,
+  },
+  finishAllText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.accent,
+    letterSpacing: 0.3,
+  },
+  undoAllBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  undoAllText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textTertiary,
+    letterSpacing: 0.3,
+  },
+  bulkActionLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   exerciseList: {
     gap: 8,
