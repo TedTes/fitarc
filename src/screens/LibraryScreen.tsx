@@ -175,14 +175,6 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   const featuredTemplates = useMemo(() => filteredTemplates.filter((t) => t.featured), [filteredTemplates]);
   const regularTemplates = useMemo(() => filteredTemplates.filter((t) => !t.featured), [filteredTemplates]);
 
-  // ─ Phase stats ─
-  const weeksElapsed = useMemo(() => {
-    if (!phase) return 0;
-    const start = new Date(phase.startDate);
-    const now = new Date();
-    return Math.max(1, Math.floor((now.getTime() - start.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1);
-  }, [phase]);
-
   const todaySession = useMemo(
     () => workoutSessions.find((s) => s.phasePlanId === phase?.id && s.date === today),
     [workoutSessions, phase, today]
@@ -347,60 +339,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         {/* ── Header ── */}
         <View style={styles.pageHeader}>
           <Text style={styles.pageTitle}>Workouts</Text>
-          <Text style={styles.pageSubtitle}>Templates & your training plan</Text>
+          <Text style={styles.pageSubtitle}>Browse and apply workout templates</Text>
         </View>
-
-        {/* ── Phase card ── */}
-        {phase ? (
-          <View style={styles.phaseCard}>
-            <LinearGradient
-              colors={['rgba(108,99,255,0.18)', 'rgba(108,99,255,0.06)']}
-              style={styles.phaseGradient}
-            >
-              <View style={styles.phaseTop}>
-                <View>
-                  <Text style={styles.phaseLabel}>ACTIVE PLAN</Text>
-                  <Text style={styles.phaseName}>{phase.name ?? GOAL_LABELS[phase.goalType ?? ''] ?? 'My Plan'}</Text>
-                </View>
-                <View style={styles.phaseWeekBadge}>
-                  <Text style={styles.phaseWeekNum}>W{weeksElapsed}</Text>
-                  <Text style={styles.phaseWeekOf}>of {phase.expectedWeeks}</Text>
-                </View>
-              </View>
-              <View style={styles.phaseStats}>
-                <View style={styles.phaseStat}>
-                  <Text style={styles.phaseStatVal}>{GOAL_LABELS[phase.goalType ?? ''] ?? '—'}</Text>
-                  <Text style={styles.phaseStatLbl}>Goal</Text>
-                </View>
-                <View style={styles.phaseStatDiv} />
-                <View style={styles.phaseStat}>
-                  <Text style={styles.phaseStatVal}>{phase.expectedWeeks}</Text>
-                  <Text style={styles.phaseStatLbl}>Weeks</Text>
-                </View>
-                <View style={styles.phaseStatDiv} />
-                <View style={styles.phaseStat}>
-                  <Text style={styles.phaseStatVal}>{todayExerciseCount || '—'}</Text>
-                  <Text style={styles.phaseStatLbl}>Today</Text>
-                </View>
-              </View>
-              {/* Week progress bar */}
-              <View style={styles.progressBarTrack}>
-                <View
-                  style={[
-                    styles.progressBarFill,
-                    { width: `${Math.min(100, (weeksElapsed / phase.expectedWeeks) * 100)}%` },
-                  ]}
-                />
-              </View>
-            </LinearGradient>
-          </View>
-        ) : (
-          <View style={styles.noPlanCard}>
-            <Text style={styles.noPlanEmoji}>🎯</Text>
-            <Text style={styles.noPlanTitle}>No active plan</Text>
-            <Text style={styles.noPlanText}>Create a plan to unlock personalized workouts.</Text>
-          </View>
-        )}
 
         {/* ── Templates ── */}
         <View style={styles.sectionHeader}>
@@ -624,29 +564,6 @@ const styles = StyleSheet.create({
   pageHeader: { marginBottom: 20 },
   pageTitle: { fontSize: 28, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -0.5 },
   pageSubtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 3, fontWeight: '500' },
-
-  // Phase card
-  phaseCard: { borderRadius: 20, overflow: 'hidden', marginBottom: 28, borderWidth: 1, borderColor: COLORS.borderAccent },
-  phaseGradient: { padding: 20 },
-  phaseTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
-  phaseLabel: { fontSize: 10, fontWeight: '700', color: COLORS.accent, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4 },
-  phaseName: { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -0.3 },
-  phaseWeekBadge: { alignItems: 'center', backgroundColor: 'rgba(108,99,255,0.2)', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 14, borderWidth: 1, borderColor: COLORS.borderAccent },
-  phaseWeekNum: { fontSize: 20, fontWeight: '800', color: COLORS.accent },
-  phaseWeekOf: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted },
-  phaseStats: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
-  phaseStat: { flex: 1, alignItems: 'center' },
-  phaseStatVal: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 2 },
-  phaseStatLbl: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-  phaseStatDiv: { width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.08)' },
-  progressBarTrack: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.08)' },
-  progressBarFill: { height: 4, borderRadius: 2, backgroundColor: COLORS.accent },
-
-  // No plan
-  noPlanCard: { borderRadius: 16, padding: 24, backgroundColor: COLORS.card, alignItems: 'center', marginBottom: 28, borderWidth: 1, borderColor: COLORS.border },
-  noPlanEmoji: { fontSize: 32, marginBottom: 8 },
-  noPlanTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 4 },
-  noPlanText: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center' },
 
   // Section headers
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },

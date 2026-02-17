@@ -31,6 +31,10 @@ import { type AdaptationMode } from '../services/planningRules';
 import { PLAN_INPUT_LABELS, getMissingPlanInputs } from '../utils/planReadiness';
 import { runLayoutAnimation } from '../utils/layoutAnimation';
 import { PlansScreen } from './PlansScreen';
+import {
+  fetchResolvedMealsForDate,
+  type RuntimeMealsByType,
+} from '../services/mealRuntimeService';
 
 // Constants
 const CARD_GRADIENT_DEFAULT = ['rgba(30, 35, 64, 0.8)', 'rgba(21, 25, 50, 0.6)'] as const;
@@ -401,6 +405,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   
   const resolvedPhase = phase ?? homeData?.phase ?? null;
   const hasActivePlan = resolvedPhase?.status === 'active';
+  const [mealsByType, setMealsByType] = useState<RuntimeMealsByType>({});
   const resolvedSessions = useMemo(() => {
     const fallbackSessions = phaseSessions.length
       ? phaseSessions
@@ -422,6 +427,44 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const selectedPlanDay =
     resolvedPlannedWorkouts.find((day) => day.date === selectedDate) || null;
 
+
+  useEffect(() => {
+    if (!hasActivePlan) {
+      setMealsByType({});
+      return;
+    }
+    let cancelled = false;
+    fetchResolvedMealsForDate(user.id, derivedPhaseId ?? null, todayStr, user.eatingMode)
+      .then((result) => {
+        if (!cancelled) setMealsByType(result.mealsByType);
+      })
+      .catch(() => {
+        if (!cancelled) setMealsByType({});
+      });
+    return () => { cancelled = true; };
+  }, [hasActivePlan, user.id, derivedPhaseId, todayStr, user.eatingMode]);
+
+  const mealSummary = useMemo(() => {
+    const types = Object.keys(mealsByType);
+    if (!types.length) return null;
+    let calories = 0, protein = 0, carbs = 0, fats = 0;
+    types.forEach((type) => {
+      mealsByType[type].forEach((entry) => {
+        calories += Number(entry.calories ?? 0);
+        protein += Number(entry.protein ?? 0);
+        carbs += Number(entry.carbs ?? 0);
+        fats += Number(entry.fats ?? 0);
+      });
+    });
+    return {
+      types,
+      totalItems: types.reduce((sum, type) => sum + mealsByType[type].length, 0),
+      calories: Math.round(calories),
+      protein: Math.round(protein),
+      carbs: Math.round(carbs),
+      fats: Math.round(fats),
+    };
+  }, [mealsByType]);
 
   const plannedExercisesForSelectedDate = useMemo<WorkoutSessionExercise[]>(() => {
     if (selectedSession?.exercises?.length || !selectedPlanDay?.workout?.exercises?.length) {
@@ -1131,7 +1174,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
                 {/* Right Side: Exercise Info */}
                 <View style={styles.exerciseRightSection}>
-                  <Text style={[styles.exerciseName, isMarked && styles.exerciseNameCompleted]}>
+                  <Text
+                    numberOfLines={2}
+                    ellipsizeMode="tail"
+                    style={[styles.exerciseName, isMarked && styles.exerciseNameCompleted]}
+                  >
                     {exercise.name}
                   </Text>
 
@@ -1452,6 +1499,56 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           onScrollBeginDrag={handleContentScrollBegin}
         >
           {renderWorkoutsSection()}
+
+          {/* Condensed meal summary */}
+          {hasActivePlan && mealSummary && (
+            <View style={styles.mealSummarySection}>
+              <View style={styles.mealSummaryHeader}>
+                <Text style={styles.mealSummaryTitle}>Today's Nutrition</Text>
+                <Text style={styles.mealSummaryCount}>
+                  {mealSummary.totalItems} items
+                </Text>
+              </View>
+              <LinearGradient
+                colors={CARD_GRADIENT_DEFAULT}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.mealSummaryCard}
+              >
+                <View style={styles.mealMacroRow}>
+                  <View style={styles.mealMacroItem}>
+                    <Text style={styles.mealMacroValue}>{mealSummary.calories}</Text>
+                    <Text style={styles.mealMacroLabel}>kcal</Text>
+                  </View>
+                  <View style={styles.mealMacroDivider} />
+                  <View style={styles.mealMacroItem}>
+                    <Text style={[styles.mealMacroValue, { color: '#60A5FA' }]}>{mealSummary.protein}g</Text>
+                    <Text style={styles.mealMacroLabel}>Protein</Text>
+                  </View>
+                  <View style={styles.mealMacroDivider} />
+                  <View style={styles.mealMacroItem}>
+                    <Text style={[styles.mealMacroValue, { color: '#FBBF24' }]}>{mealSummary.carbs}g</Text>
+                    <Text style={styles.mealMacroLabel}>Carbs</Text>
+                  </View>
+                  <View style={styles.mealMacroDivider} />
+                  <View style={styles.mealMacroItem}>
+                    <Text style={[styles.mealMacroValue, { color: '#F472B6' }]}>{mealSummary.fats}g</Text>
+                    <Text style={styles.mealMacroLabel}>Fats</Text>
+                  </View>
+                </View>
+                <View style={styles.mealSlotRow}>
+                  {mealSummary.types.map((type) => (
+                    <View key={type} style={styles.mealSlotChip}>
+                      <Text style={styles.mealSlotChipText}>{type}</Text>
+                      <Text style={styles.mealSlotChipCount}>
+                        {mealsByType[type].reduce((s, e) => s + Number(e.calories ?? 0), 0)} cal
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </LinearGradient>
+            </View>
+          )}
         </ScrollView>
       </LinearGradient>
 
@@ -2458,6 +2555,95 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: 0.5,
+  },
+
+  // ========================================
+  // MEAL SUMMARY
+  // ========================================
+  mealSummarySection: {
+    paddingHorizontal: 20,
+    marginTop: 20,
+  },
+  mealSummaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  mealSummaryTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+  mealSummaryCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8B93B0',
+  },
+  mealSummaryCard: {
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: 'rgba(108, 99, 255, 0.25)',
+    backgroundColor: '#101427',
+  },
+  mealMacroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  mealMacroItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  mealMacroValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  mealMacroLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#8B93B0',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  mealMacroDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  mealSlotRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.06)',
+  },
+  mealSlotChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  mealSlotChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#C7CCE6',
+  },
+  mealSlotChipCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#8B93B0',
   },
 
   // ========================================
