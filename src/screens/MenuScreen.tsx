@@ -4,6 +4,8 @@ import {
   Alert,
   Animated,
   Dimensions,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   ScrollView,
   StyleSheet,
   Text,
@@ -232,6 +234,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const [mealsByType, setMealsByType] = useState<RuntimeMealsByType>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [activeCarouselIndex, setActiveCarouselIndex] = useState(0);
+
+  const handleCarouselScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const idx = Math.round(e.nativeEvent.contentOffset.x / (CARD_WIDTH + 12));
+      setActiveCarouselIndex(idx);
+    },
+    [],
+  );
 
   const today = useMemo(() => formatLocalDateYMD(new Date()), []);
   const planId = phase?.id ?? null;
@@ -278,6 +289,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const isMuted = !hasMeals && !selectedTemplate;
 
   // ── Data loading ─────────────────────────────────────────────────────────
+
+  const refreshResolvedMeals = useCallback(async () => {
+    const resolved = await fetchResolvedMealsForDate(user.id, planId, today, user.eatingMode);
+    setMealsByType(resolved.mealsByType);
+    setAppliedTemplateId(resolved.template?.id ?? null);
+  }, [planId, today, user.eatingMode, user.id]);
 
   const loadMeals = useCallback(async () => {
     setIsLoading(true);
@@ -327,14 +344,14 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     setIsApplying(true);
     try {
       await applyMealTemplateForDate(user.id, planId, today, templateId);
-      await loadMeals();
+      await refreshResolvedMeals();
     } catch (error) {
       console.error('Failed applying template:', error);
       Alert.alert('Error', 'Could not apply template. Please try again.');
     } finally {
       setIsApplying(false);
     }
-  }, [appliedTemplateId, loadMeals, planId, today, user.id]);
+  }, [appliedTemplateId, planId, refreshResolvedMeals, today, user.id]);
 
   // ── Sorted templates ─────────────────────────────────────────────────────
 
@@ -347,6 +364,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
     });
   }, [templates, user.eatingMode]);
 
+  const isOverCalories = hasMeals && totals.calories > calorieGoal;
   const ringLabel = hasMeals
     ? `${totals.calories} / ${Math.round(calorieGoal)} kcal today`
     : selectedTemplate
@@ -389,7 +407,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                 />
               ))}
             </View>
-            <Text style={[styles.ringLabel, isMuted ? styles.ringLabelMuted : styles.ringLabelActive]}>
+            <Text style={[styles.ringLabel, isMuted ? styles.ringLabelMuted : isOverCalories ? styles.ringLabelOver : styles.ringLabelActive]}>
               {ringLabel}
             </Text>
           </View>
@@ -414,7 +432,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                     </Text>
                   )}
                 </View>
-                {sortedSlots(mealsByType).map(([slotName, entries], idx, arr) => (
+                {sortedSlots(mealsByType).map(([slotName, entries], idx) => (
                   <React.Fragment key={slotName}>
                     {idx > 0 && <View style={styles.slotDivider} />}
                     <MealSlotCard title={slotName} entries={entries} />
@@ -436,25 +454,39 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
             ) : !templates.length ? (
               <Text style={styles.carouselEmpty}>No templates available</Text>
             ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={CARD_WIDTH + 12}
-                decelerationRate="fast"
-                contentContainerStyle={styles.carouselScroll}
-              >
-                {sortedTemplates.map((template) => (
-                  <TemplateCard
-                    key={template.id}
-                    template={template}
-                    active={template.id === selectedTemplateId}
-                    applying={isApplying && template.id === selectedTemplateId}
-                    recommended={(template.eatingMode ?? '').toLowerCase() === user.eatingMode}
-                    calorieTarget={calorieGoal}
-                    onPress={() => handleSelectTemplate(template.id)}
-                  />
-                ))}
-              </ScrollView>
+              <>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  snapToInterval={CARD_WIDTH + 12}
+                  decelerationRate="fast"
+                  contentContainerStyle={styles.carouselScroll}
+                  onScroll={handleCarouselScroll}
+                  scrollEventThrottle={64}
+                >
+                  {sortedTemplates.map((template) => (
+                    <TemplateCard
+                      key={template.id}
+                      template={template}
+                      active={template.id === selectedTemplateId}
+                      applying={isApplying && template.id === selectedTemplateId}
+                      recommended={(template.eatingMode ?? '').toLowerCase() === user.eatingMode}
+                      calorieTarget={calorieGoal}
+                      onPress={() => handleSelectTemplate(template.id)}
+                    />
+                  ))}
+                </ScrollView>
+                {sortedTemplates.length > 1 && (
+                  <View style={styles.carouselDots}>
+                    {sortedTemplates.map((t, i) => (
+                      <View
+                        key={t.id}
+                        style={[styles.carouselDot, i === activeCarouselIndex && styles.carouselDotActive]}
+                      />
+                    ))}
+                  </View>
+                )}
+              </>
             )}
           </View>
 
@@ -502,6 +534,7 @@ const styles = StyleSheet.create({
   },
   ringLabelMuted: { color: C.textMuted, fontStyle: 'italic' },
   ringLabelActive: { color: C.accent },
+  ringLabelOver: { color: '#FF6B6B' },
 
   // Loading
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, justifyContent: 'center' },
@@ -587,6 +620,22 @@ const styles = StyleSheet.create({
   // Template carousel
   carouselScroll: {
     paddingHorizontal: 16,
+  },
+  carouselDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
+  carouselDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  carouselDotActive: {
+    backgroundColor: C.accent,
+    width: 18,
   },
   carouselEmpty: {
     fontSize: 13,

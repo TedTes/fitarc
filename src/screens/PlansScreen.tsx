@@ -883,7 +883,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     };
 
     return (
-      <View style={styles.workoutCard}>
+      <View style={[styles.workoutCard, embedded && styles.workoutCardEmbedded]}>
         {/* Progress header */}
         <View style={styles.progressHeader}>
           <View style={styles.progressBarTrack}>
@@ -1125,7 +1125,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     <View style={[styles.container, embedded && styles.containerEmbedded]}>
       <LinearGradient
         colors={embedded ? (['transparent', 'transparent', 'transparent'] as const) : SCREEN_GRADIENT}
-        style={styles.gradient}
+        style={[styles.gradient, embedded && styles.gradientEmbedded]}
       >
         <ScrollView
           stickyHeaderIndices={[0]}
@@ -1409,9 +1409,13 @@ const styles = StyleSheet.create({
   },
   containerEmbedded: {
     backgroundColor: 'transparent',
+    flex: 0,
   },
   gradient: {
     flex: 1,
+  },
+  gradientEmbedded: {
+    flex: 0,
   },
   gradientCentered: {
     flex: 1,
@@ -1424,6 +1428,7 @@ const styles = StyleSheet.create({
   },
   scrollContentEmbedded: {
     paddingHorizontal: 0,
+    paddingBottom: 0,
   },
   stickyHeader: {
     paddingTop: 60,
@@ -1548,6 +1553,9 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     borderColor: 'transparent',
     marginBottom: 24,
+  },
+  workoutCardEmbedded: {
+    marginBottom: 8,
   },
   progressHeader: {
     marginBottom: 14,
