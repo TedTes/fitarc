@@ -30,10 +30,10 @@ export default function Home() {
   }, [])
 
   const screenshots = [
-    { src: '/images/workouts.png', label: 'Workout Tracking', alt: 'Workouts' },
-    { src: '/images/diet.png', label: 'Meal Planning', alt: 'Nutrition' },
+    { src: '/images/workouts.jpg', label: 'Workout Tracking', alt: 'Workouts' },
+    { src: '/images/dashboard_diet.jpg', label: 'Meal Planning', alt: 'Nutrition' },
     { src: '/images/progress.png', label: 'Progress Insights', alt: 'Progress' },
-    { src: '/images/settings.png', label: 'Personalization', alt: 'Settings' }
+    { src: '/images/settings.jpg', label: 'Personalization', alt: 'Settings' }
   ]
 
   const features = [
@@ -218,7 +218,7 @@ export default function Home() {
                       priority
                     />
                   </div>
-                  <div className="hero-caption">Daily dashboard preview</div>
+        
                 </div>
               </div>
             </div>
