@@ -3,7 +3,7 @@
     "name": "fitarc",
     "slug": "fitarc",
     "scheme": "fitarc",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.fitarc",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Allow Fitarc to access your photos so you can choose a profile picture (e.g., select a photo to use as your avatar)."
@@ -24,7 +24,7 @@
     },
     "android": {
       "package": "com.fitarc",
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "foregroundImage": "./assets/fitarc-logo-android.png",
         "backgroundColor": "#ffffff"

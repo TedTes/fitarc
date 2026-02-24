@@ -39,11 +39,10 @@ import {
   PlanPreferences,
   PrimaryGoal,
   PhotoCheckin,
-  TrackingPreferences,
   User,
 } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
-import { fetchUserProfile, saveUserProfile, updateTrackingPreferences, getSignedAvatarUrl } from './src/services/userProfileService';
+import { fetchUserProfile, saveUserProfile, getSignedAvatarUrl } from './src/services/userProfileService';
 import { fetchHomeData } from './src/services/dashboardService';
 import { formatLocalDateYMD } from './src/utils/date';
 import { hasRequiredPlanInputs } from './src/utils/planReadiness';
@@ -355,23 +354,6 @@ function AppContent() {
     setPhotoCaptureOptional(true);
     setPhotoCaptureVisible(true);
   }, [state?.currentPhase]);
-
-  const handleUpdateTrackingPreferences = useCallback(
-    async (preferences: TrackingPreferences) => {
-      if (!state?.user) return;
-      const nextUser: User = {
-        ...state.user,
-        trackingPreferences: preferences,
-      };
-      updateUser(nextUser);
-      try {
-        await updateTrackingPreferences(nextUser.id, preferences);
-      } catch (err) {
-        console.error('Failed to persist tracking preferences', err);
-      }
-    },
-    [state?.user, updateUser, updateTrackingPreferences]
-  );
 
   const fabConfig = getFabAction(currentRouteName);
   const triggerTabFabPop = useCallback(() => {
@@ -1103,7 +1085,6 @@ function AppContent() {
                   workoutLogs={state.workoutLogs}
                   strengthSnapshots={state.strengthSnapshots}
                   onAddProgress={handleAddProgress}
-                  onUpdateTrackingPreferences={handleUpdateTrackingPreferences}
                 />
               ) : (
                 <TabPlaceholder title="Progress" subtitle="Create a plan to unlock progress tracking." />

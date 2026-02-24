@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,17 +10,11 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   VictoryAxis,
-  VictoryScatter,
-  VictoryBar,
   VictoryChart,
-  VictoryGroup,
   VictoryLine,
 } from 'victory-native';
 import { PhasePlan, User, WorkoutLog, WorkoutSessionEntry, StrengthSnapshot, TrackingPreferences } from '../types/domain';
-import { fetchNutritionTotalsForDates, RuntimeDailyNutritionTotals } from '../services/mealRuntimeService';
-import { estimateDailyCalories } from '../utils/calorieGoal';
-import { formatLocalDateYMD, parseYMDToDate } from '../utils/date';
-import { PHYSIQUE_LEVELS } from '../data/physiqueLevels';
+import { parseYMDToDate } from '../utils/date';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -43,19 +37,24 @@ const COLORS = {
 } as const;
 
 const VIEW_TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'strength', label: 'Strength' },
-  { id: 'body', label: 'Body' },
-  { id: 'nutrition', label: 'Nutrition' },
+  { id: 'workouts', label: 'Workouts' },
+  { id: 'muscles', label: 'Muscles' },
+  { id: 'lifts', label: 'Lifts' },
 ] as const;
 
-const TIME_RANGES = [
-  { id: 'week', label: 'Week' },
-  { id: 'month', label: 'Month' },
-  { id: 'plan', label: 'Plan' },
-] as const;
-
-const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 } as const;
+const normalizeGoal = (value?: string | null):
+  | 'build_muscle'
+  | 'get_stronger'
+  | 'lose_fat'
+  | 'endurance'
+  | 'general_fitness' => {
+  const key = String(value ?? '').toLowerCase();
+  if (key.includes('muscle') || key.includes('hypertrophy')) return 'build_muscle';
+  if (key.includes('strong') || key.includes('strength')) return 'get_stronger';
+  if (key.includes('fat') || key.includes('cut') || key.includes('lose')) return 'lose_fat';
+  if (key.includes('endur')) return 'endurance';
+  return 'general_fitness';
+};
 
 type ProgressScreenProps = {
   user: User;
@@ -140,51 +139,19 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   workoutLogs,
   strengthSnapshots,
 }) => {
-  const [activeView, setActiveView] = useState<typeof VIEW_TABS[number]['id']>('overview');
-  const [timeRange, setTimeRange] = useState<typeof TIME_RANGES[number]['id']>('month');
-
-  const rangeStartDate = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (timeRange === 'week') {
-      const start = new Date(today);
-      start.setDate(today.getDate() - 6);
-      return start;
-    }
-    if (timeRange === 'month') {
-      const start = new Date(today);
-      start.setDate(today.getDate() - 29);
-      return start;
-    }
-    return phase.startDate ? parseYMDToDate(phase.startDate) : today;
-  }, [phase.startDate, timeRange]);
+  const [activeView, setActiveView] = useState<typeof VIEW_TABS[number]['id']>('workouts');
 
   const filteredSessions = useMemo(
-    () =>
-      workoutSessions.filter((session) => {
-        if (session.phasePlanId !== phase.id) return false;
-        const sessionDate = parseYMDToDate(session.date);
-        return sessionDate >= rangeStartDate;
-      }),
-    [phase.id, rangeStartDate, workoutSessions]
+    () => workoutSessions.filter((session) => session.phasePlanId === phase.id),
+    [phase.id, workoutSessions]
   );
   const filteredWorkoutLogs = useMemo(
-    () =>
-      workoutLogs.filter((log) => {
-        if (log.phasePlanId !== phase.id) return false;
-        const logDate = parseYMDToDate(log.date);
-        return logDate >= rangeStartDate;
-      }),
-    [phase.id, rangeStartDate, workoutLogs]
+    () => workoutLogs.filter((log) => log.phasePlanId === phase.id),
+    [phase.id, workoutLogs]
   );
   const filteredStrengthSnapshots = useMemo(
-    () =>
-      strengthSnapshots.filter((snapshot) => {
-        if (snapshot.phasePlanId !== phase.id) return false;
-        const snapshotDate = parseYMDToDate(snapshot.date);
-        return snapshotDate >= rangeStartDate;
-      }),
-    [phase.id, rangeStartDate, strengthSnapshots]
+    () => strengthSnapshots.filter((snapshot) => snapshot.phasePlanId === phase.id),
+    [phase.id, strengthSnapshots]
   );
 
   const planProgress = useMemo(() => {
@@ -211,107 +178,27 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
 
   const strengthData = useMemo(() => buildStrengthSeries(filteredStrengthSnapshots), [filteredStrengthSnapshots]);
   const volumeData = useMemo(() => buildVolumeRows(filteredWorkoutLogs), [filteredWorkoutLogs]);
-  const [nutritionTotals, setNutritionTotals] = useState<RuntimeDailyNutritionTotals[]>([]);
-
-  const calorieGoal = useMemo(() => estimateDailyCalories(user).goalCalories, [user]);
-  const macroTargets = useMemo(() => ({
-    protein: Math.round((calorieGoal * MACRO_SPLIT.protein) / 4),
-    carbs: Math.round((calorieGoal * MACRO_SPLIT.carbs) / 4),
-    fats: Math.round((calorieGoal * MACRO_SPLIT.fats) / 9),
-  }), [calorieGoal]);
-
-  const nutritionDates = useMemo(() => {
-    const today = new Date();
-    const planStart = phase.startDate ? parseYMDToDate(phase.startDate) : today;
-    const planDays = Math.max(1, Math.floor((today.getTime() - planStart.getTime()) / 86400000) + 1);
-    const rangeDays = timeRange === 'week' ? 7 : timeRange === 'month' ? 30 : planDays;
-    const days = Math.max(1, Math.min(rangeDays, 90));
-    const dates: string[] = [];
-    for (let i = days - 1; i >= 0; i -= 1) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      date.setHours(0, 0, 0, 0);
-      dates.push(formatLocalDateYMD(date));
-    }
-    return dates;
-  }, [phase.startDate, timeRange]);
-
-  useEffect(() => {
-    let isCancelled = false;
-    const loadNutrition = async () => {
-      try {
-        const totals = await fetchNutritionTotalsForDates(
-          user.id,
-          phase.id,
-          nutritionDates,
-          user.eatingMode
-        );
-        if (!isCancelled) {
-          setNutritionTotals(totals);
-        }
-      } catch (error) {
-        console.error('Failed to load nutrition progress:', error);
-        if (!isCancelled) {
-          setNutritionTotals([]);
-        }
-      }
-    };
-    void loadNutrition();
-    return () => {
-      isCancelled = true;
-    };
-  }, [nutritionDates, phase.id, user.eatingMode, user.id]);
-
-  const bodyFatRange = useMemo(
+  const completedWorkoutHistory = useMemo(
     () =>
-      PHYSIQUE_LEVELS.find((level) => level.id === user.currentPhysiqueLevel)?.bodyFatRange ?? null,
-    [user.currentPhysiqueLevel]
+      [...filteredSessions]
+        .filter((session) => session.exercises.some((exercise) => exercise.completed === true))
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map((session) => {
+          const completedExercises = session.exercises.filter((exercise) => exercise.completed === true);
+          const completedSets = completedExercises.reduce((sum, exercise) => {
+            const loggedSets = exercise.setDetails?.length ?? 0;
+            return sum + (loggedSets > 0 ? loggedSets : Math.max(0, exercise.sets ?? 0));
+          }, 0);
+          return {
+            id: session.id,
+            date: session.date,
+            completedExercises: completedExercises.length,
+            totalExercises: session.exercises.length,
+            completedSets,
+          };
+        }),
+    [filteredSessions]
   );
-  const currentWeightLbs = useMemo(() => {
-    if (!user.weightKg || user.weightKg <= 0) return null;
-    return Math.round(user.weightKg * 2.20462 * 10) / 10;
-  }, [user.weightKg]);
-  const bodyWeightPoint = useMemo(() => {
-    if (!currentWeightLbs) return [];
-    return [{ date: 'Now', weight: currentWeightLbs }];
-  }, [currentWeightLbs]);
-
-  const nutritionData = useMemo(() => {
-    const capPercent = (value: number) => Math.max(0, Math.min(150, Math.round(value)));
-    return nutritionTotals.map((day) => {
-      const date = parseYMDToDate(day.date);
-      const dayLabel =
-        timeRange === 'week'
-          ? date.toLocaleDateString(undefined, { weekday: 'short' })
-          : `${date.getMonth() + 1}/${date.getDate()}`;
-      return {
-        day: dayLabel,
-        calories: capPercent((day.calories / Math.max(calorieGoal, 1)) * 100),
-        protein: capPercent((day.protein / Math.max(macroTargets.protein, 1)) * 100),
-        carbs: capPercent((day.carbs / Math.max(macroTargets.carbs, 1)) * 100),
-        fats: capPercent((day.fats / Math.max(macroTargets.fats, 1)) * 100),
-      };
-    });
-  }, [calorieGoal, macroTargets.carbs, macroTargets.fats, macroTargets.protein, nutritionTotals, timeRange]);
-
-  const nutritionAverages = useMemo(() => {
-    if (!nutritionData.length) {
-      return { protein: 0, carbs: 0, fats: 0 };
-    }
-    const totals = nutritionData.reduce(
-      (sum, item) => ({
-        protein: sum.protein + item.protein,
-        carbs: sum.carbs + item.carbs,
-        fats: sum.fats + item.fats,
-      }),
-      { protein: 0, carbs: 0, fats: 0 }
-    );
-    return {
-      protein: Math.round(totals.protein / nutritionData.length),
-      carbs: Math.round(totals.carbs / nutritionData.length),
-      fats: Math.round(totals.fats / nutritionData.length),
-    };
-  }, [nutritionData]);
 
   const liftSummaries = useMemo(() => {
     const lifts = [
@@ -369,14 +256,145 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const maxSets = Math.max(...volumeData.map((v) => v.sets), 1);
   const restDays = useMemo(() => {
     const today = new Date();
-    const totalDays = Math.max(1, Math.floor((today.getTime() - rangeStartDate.getTime()) / 86400000) + 1);
+    const planStart = phase.startDate ? parseYMDToDate(phase.startDate) : today;
+    planStart.setHours(0, 0, 0, 0);
+    const totalDays = Math.max(1, Math.floor((today.getTime() - planStart.getTime()) / 86400000) + 1);
     const workoutDays = new Set(
       filteredSessions
         .filter((session) => session.exercises.some((exercise) => exercise.completed === true))
         .map((session) => session.date)
     ).size;
     return Math.max(0, totalDays - workoutDays);
-  }, [filteredSessions, rangeStartDate]);
+  }, [filteredSessions, phase.startDate]);
+  const activeGoal = useMemo(
+    () => normalizeGoal(user.planPreferences?.primaryGoal ?? phase.goalType),
+    [phase.goalType, user.planPreferences?.primaryGoal]
+  );
+  const goalAlignment = useMemo(() => {
+    const expectedWorkoutsByNow = Math.max(
+      1,
+      Math.round((planProgress.currentWeek / Math.max(planProgress.totalWeeks, 1)) * Math.max(planProgress.totalWorkouts, 1))
+    );
+    const completedWorkouts = planProgress.completedWorkouts;
+    const completionVsPlanPct = Math.round((completedWorkouts / expectedWorkoutsByNow) * 100);
+    const completionDelta = completionVsPlanPct - 100;
+
+    const strengthSamples = filteredStrengthSnapshots
+      .filter((snap) => ['squat', 'bench_press', 'deadlift', 'overhead_press'].includes(String(snap.lift)))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const head = strengthSamples.slice(0, 8);
+    const tail = strengthSamples.slice(-8);
+    const headAvg = head.length ? head.reduce((sum, snap) => sum + (snap.weight ?? 0), 0) / head.length : 0;
+    const tailAvg = tail.length ? tail.reduce((sum, snap) => sum + (snap.weight ?? 0), 0) / tail.length : 0;
+    const strengthGainPct = headAvg > 0 ? Math.round(((tailAvg - headAvg) / headAvg) * 100) : 0;
+    const targetStrengthGainNow = Math.round(
+      (planProgress.currentWeek / Math.max(planProgress.totalWeeks, 1)) *
+        (user.experienceLevel === 'beginner' ? 14 : user.experienceLevel === 'intermediate' ? 9 : 6)
+    );
+
+    const targetSetsPerWorkout = user.experienceLevel === 'beginner' ? 14 : user.experienceLevel === 'intermediate' ? 18 : 22;
+    const targetSetsNow = expectedWorkoutsByNow * targetSetsPerWorkout;
+    const setProgressPct = targetSetsNow > 0 ? Math.round((totalSets / targetSetsNow) * 100) : 0;
+    const setDelta = setProgressPct - 100;
+
+    const targetConsistency = activeGoal === 'lose_fat' ? 85 : 75;
+    const consistencyDelta = planProgress.completionRate - targetConsistency;
+
+    if (activeGoal === 'build_muscle') {
+      return {
+        label: 'Volume vs plan target',
+        current: `${totalSets} sets`,
+        target: `${targetSetsNow} sets`,
+        delta: setDelta,
+        accent: COLORS.accent,
+      };
+    }
+    if (activeGoal === 'get_stronger') {
+      return {
+        label: 'Strength gain vs plan target',
+        current: `${strengthGainPct >= 0 ? '+' : ''}${strengthGainPct}%`,
+        target: `+${targetStrengthGainNow}%`,
+        delta: strengthGainPct - targetStrengthGainNow,
+        accent: COLORS.orange,
+      };
+    }
+    if (activeGoal === 'lose_fat') {
+      return {
+        label: 'Consistency vs plan target',
+        current: `${planProgress.completionRate}%`,
+        target: `${targetConsistency}%`,
+        delta: consistencyDelta,
+        accent: COLORS.pink,
+      };
+    }
+    if (activeGoal === 'endurance') {
+      return {
+        label: 'Workout completion vs plan pace',
+        current: `${completedWorkouts}`,
+        target: `${expectedWorkoutsByNow}`,
+        delta: completionDelta,
+        accent: COLORS.blue,
+      };
+    }
+    return {
+      label: 'Plan pace alignment',
+      current: `${completedWorkouts}`,
+      target: `${expectedWorkoutsByNow}`,
+      delta: completionDelta,
+      accent: COLORS.success,
+    };
+  }, [
+    activeGoal,
+    filteredStrengthSnapshots,
+    planProgress.completedWorkouts,
+    planProgress.completionRate,
+    planProgress.currentWeek,
+    planProgress.totalWeeks,
+    planProgress.totalWorkouts,
+    totalSets,
+    user.experienceLevel,
+  ]);
+  const goalProgressSeries = useMemo(() => {
+    const totalWeeks = Math.max(planProgress.totalWeeks, 1);
+    const goalWorkouts = Math.max(planProgress.totalWorkouts, 1);
+    const completedPerWeek = Array.from({ length: totalWeeks }, () => 0);
+    const planStart = phase.startDate ? parseYMDToDate(phase.startDate) : null;
+    const completedSessions = filteredSessions.filter(
+      (session) => session.exercises?.length && session.exercises.every((exercise) => exercise.completed === true)
+    );
+
+    completedSessions.forEach((session, idx) => {
+      if (planStart) {
+        const sessionDate = parseYMDToDate(session.date);
+        const weekOffset = Math.floor((sessionDate.getTime() - planStart.getTime()) / 604800000);
+        const boundedWeek = Math.max(0, Math.min(totalWeeks - 1, weekOffset));
+        completedPerWeek[boundedWeek] += 1;
+      } else {
+        const boundedWeek = Math.min(
+          totalWeeks - 1,
+          Math.floor((idx / Math.max(completedSessions.length, 1)) * totalWeeks)
+        );
+        completedPerWeek[boundedWeek] += 1;
+      }
+    });
+
+    let cumulativeCompleted = 0;
+    return Array.from({ length: totalWeeks }, (_, weekIdx) => {
+      cumulativeCompleted += completedPerWeek[weekIdx];
+      const expectedCompleted = ((weekIdx + 1) / totalWeeks) * goalWorkouts;
+      return {
+        week: `W${weekIdx + 1}`,
+        actualPct: Math.round(Math.min(100, (cumulativeCompleted / goalWorkouts) * 100)),
+        targetPct: Math.round(Math.min(100, (expectedCompleted / goalWorkouts) * 100)),
+      };
+    });
+  }, [filteredSessions, phase.startDate, planProgress.totalWeeks, planProgress.totalWorkouts]);
+  const currentTrajectoryDelta = useMemo(() => {
+    if (!goalProgressSeries.length) return 0;
+    const index = Math.max(0, Math.min(planProgress.currentWeek - 1, goalProgressSeries.length - 1));
+    const point = goalProgressSeries[index];
+    return point.actualPct - point.targetPct;
+  }, [goalProgressSeries, planProgress.currentWeek]);
 
   return (
     <LinearGradient colors={['#0A0E27', '#0D1229', '#111633']} style={styles.container}>
@@ -455,61 +473,129 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           })}
         </View>
 
-        {/* ── Time range ── */}
-        <View style={styles.rangeRow}>
-          {TIME_RANGES.map((range) => {
-            const isActive = timeRange === range.id;
-            return (
-              <TouchableOpacity
-                key={range.id}
-                style={[styles.rangeBtn, isActive && styles.rangeBtnActive]}
-                onPress={() => setTimeRange(range.id)}
-              >
-                <Text style={[styles.rangeText, isActive && styles.rangeTextActive]}>{range.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* ── Overview ── */}
-        {activeView === 'overview' && (
+        {/* ── Workouts ── */}
+        {activeView === 'workouts' && (
           <>
-            {/* Volume card */}
+            <LinearGradient
+              colors={[`${goalAlignment.accent}20`, 'rgba(255,255,255,0.02)']}
+              style={styles.goalCard}
+            >
+              <Text style={styles.goalCardLabel}>Goal Alignment</Text>
+              <Text style={styles.goalCardTitle}>{goalAlignment.label}</Text>
+              <View style={styles.goalRow}>
+                <View style={styles.goalMetric}>
+                  <Text style={styles.goalMetricCaption}>Current</Text>
+                  <Text style={styles.goalMetricValue}>{goalAlignment.current}</Text>
+                </View>
+                <View style={styles.goalMetric}>
+                  <Text style={styles.goalMetricCaption}>Target now</Text>
+                  <Text style={styles.goalMetricValue}>{goalAlignment.target}</Text>
+                </View>
+                <View style={styles.goalMetric}>
+                  <Text style={styles.goalMetricCaption}>Delta</Text>
+                  <Text
+                    style={[
+                      styles.goalMetricValue,
+                      { color: goalAlignment.delta >= 0 ? COLORS.success : COLORS.orange },
+                    ]}
+                  >
+                    {goalAlignment.delta >= 0 ? '+' : ''}{goalAlignment.delta}%
+                  </Text>
+                </View>
+              </View>
+            </LinearGradient>
+
             <View style={styles.card}>
               <View style={styles.cardHead}>
                 <View>
-                  <Text style={styles.cardTitle}>Training Volume</Text>
-                  <Text style={styles.cardSub}>Sets per muscle group</Text>
+                  <Text style={styles.cardTitle}>Plan Trajectory</Text>
+                  <Text style={styles.cardSub}>Actual completion vs target pace</Text>
                 </View>
-                <View style={styles.totalSetsPill}>
-                  <Text style={styles.totalSetsText}>{totalSets} sets</Text>
+                <View style={[styles.totalSetsPill, { backgroundColor: `${COLORS.blue}20`, borderColor: 'rgba(78,168,222,0.35)' }]}>
+                  <Text style={[styles.totalSetsText, { color: currentTrajectoryDelta >= 0 ? COLORS.success : COLORS.orange }]}>
+                    {currentTrajectoryDelta >= 0 ? '+' : ''}{currentTrajectoryDelta}%
+                  </Text>
                 </View>
               </View>
-              <View style={styles.volumeList}>
-                {volumeData.length ? (
-                  volumeData.map((item) => (
-                    <View key={item.muscle} style={styles.volumeRow}>
-                      <View style={styles.volumeRowTop}>
-                        <Text style={styles.volumeLabel}>{item.muscle}</Text>
-                        <Text style={[styles.volumeCount, { color: item.color }]}>{item.sets}</Text>
-                      </View>
-                      <View style={styles.barTrack}>
-                        <View style={[styles.barFill, { width: `${(item.sets / maxSets) * 100}%`, backgroundColor: item.color }]} />
-                      </View>
+              <View style={styles.chartWrap}>
+                <VictoryChart
+                  width={SCREEN_WIDTH - 64}
+                  height={220}
+                  padding={{ top: 16, bottom: 36, left: 44, right: 16 }}
+                >
+                  <VictoryAxis
+                    style={{
+                      axis: { stroke: 'rgba(255,255,255,0.08)' },
+                      tickLabels: { fill: COLORS.textMuted, fontSize: 10, fontWeight: '600' },
+                    }}
+                  />
+                  <VictoryAxis
+                    dependentAxis
+                    tickFormat={(v) => `${v}%`}
+                    style={{
+                      axis: { stroke: 'transparent' },
+                      tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                      grid: { stroke: 'rgba(255,255,255,0.05)' },
+                    }}
+                  />
+                  <VictoryLine
+                    data={goalProgressSeries}
+                    x="week"
+                    y="targetPct"
+                    style={{ data: { stroke: 'rgba(139,147,176,0.8)', strokeWidth: 2, strokeDasharray: '6,4' } }}
+                  />
+                  <VictoryLine
+                    data={goalProgressSeries}
+                    x="week"
+                    y="actualPct"
+                    style={{ data: { stroke: COLORS.accent, strokeWidth: 2.8 } }}
+                  />
+                </VictoryChart>
+              </View>
+              <View style={styles.legendRow}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: COLORS.accent }]} />
+                  <Text style={styles.legendText}>Actual</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: 'rgba(139,147,176,0.85)' }]} />
+                  <Text style={styles.legendText}>Target</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.cardHead}>
+                <View>
+                  <Text style={styles.cardTitle}>Workout History</Text>
+                  <Text style={styles.cardSub}>Completed sessions across your plan</Text>
+                </View>
+                <View style={styles.totalSetsPill}>
+                  <Text style={styles.totalSetsText}>{completedWorkoutHistory.length} workouts</Text>
+                </View>
+              </View>
+              <View style={styles.workoutHistoryList}>
+                {completedWorkoutHistory.length ? (
+                  completedWorkoutHistory.map((entry) => (
+                    <View key={entry.id} style={styles.workoutHistoryRow}>
+                      <Text style={styles.workoutHistoryDate}>{entry.date}</Text>
+                      <Text style={styles.workoutHistoryMeta}>
+                        {entry.completedExercises}/{entry.totalExercises} exercises
+                      </Text>
+                      <Text style={styles.workoutHistorySets}>{entry.completedSets} sets</Text>
                     </View>
                   ))
                 ) : (
-                  <Text style={styles.emptyText}>No completed workout sets yet.</Text>
+                  <Text style={styles.emptyText}>No completed workouts yet.</Text>
                 )}
               </View>
             </View>
 
-            {/* Stats 2×2 */}
             <View style={styles.statsGrid}>
                 {[
                   { label: 'Avg. Session', value: `${avgWorkoutMinutes}`, unit: 'min', color: COLORS.orange },
-                { label: 'Total PRs', value: `${totalPRs}`, unit: timeRange, color: COLORS.pink },
-                { label: 'Rest Days', value: `${restDays}`, unit: timeRange, color: '#A78BFA' },
+                { label: 'Total PRs', value: `${totalPRs}`, unit: 'plan', color: COLORS.pink },
+                { label: 'Rest Days', value: `${restDays}`, unit: 'plan', color: '#A78BFA' },
                   { label: 'Consistency', value: `${planProgress.completionRate}`, unit: '%', color: COLORS.success },
                 ].map((stat) => (
                 <LinearGradient
@@ -526,10 +612,42 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           </>
         )}
 
-        {/* ── Strength ── */}
-        {activeView === 'strength' && (
+        {/* ── Muscles ── */}
+        {activeView === 'muscles' && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Strength Progression</Text>
+            <View style={styles.cardHead}>
+              <View>
+                <Text style={styles.cardTitle}>Muscle Progress</Text>
+                <Text style={styles.cardSub}>Completed sets per muscle group</Text>
+              </View>
+              <View style={styles.totalSetsPill}>
+                <Text style={styles.totalSetsText}>{totalSets} sets</Text>
+              </View>
+            </View>
+            <View style={styles.volumeList}>
+              {volumeData.length ? (
+                volumeData.map((item) => (
+                  <View key={item.muscle} style={styles.volumeRow}>
+                    <View style={styles.volumeRowTop}>
+                      <Text style={styles.volumeLabel}>{item.muscle}</Text>
+                      <Text style={[styles.volumeCount, { color: item.color }]}>{item.sets}</Text>
+                    </View>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${(item.sets / maxSets) * 100}%`, backgroundColor: item.color }]} />
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.emptyText}>No completed workout sets yet.</Text>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* ── Lifts ── */}
+        {activeView === 'lifts' && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Lift Progression</Text>
             <Text style={styles.cardSub}>Max weight per lift · lbs</Text>
             <View style={styles.chartWrap}>
               <VictoryChart
@@ -564,118 +682,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                   <Text style={styles.liftName}>{lift.name}</Text>
                   <Text style={[styles.liftValue, { color: lift.color }]}>{lift.valueText}</Text>
                   <Text style={styles.liftGain}>{lift.gainText}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* ── Body ── */}
-        {activeView === 'body' && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Body Composition</Text>
-            <Text style={styles.cardSub}>Profile-linked body metrics</Text>
-            {bodyWeightPoint.length ? (
-              <View style={styles.chartWrap}>
-                <VictoryChart
-                  width={SCREEN_WIDTH - 64}
-                  height={220}
-                  padding={{ top: 16, bottom: 36, left: 44, right: 16 }}
-                >
-                  <VictoryAxis
-                    style={{
-                      axis: { stroke: 'rgba(255,255,255,0.08)' },
-                      tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
-                    }}
-                  />
-                  <VictoryAxis
-                    dependentAxis
-                    style={{
-                      axis: { stroke: 'transparent' },
-                      tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
-                      grid: { stroke: 'rgba(255,255,255,0.05)' },
-                    }}
-                  />
-                  <VictoryScatter
-                    data={bodyWeightPoint}
-                    x="date"
-                    y="weight"
-                    size={5}
-                    style={{ data: { fill: COLORS.accent } }}
-                  />
-                </VictoryChart>
-              </View>
-            ) : (
-              <Text style={styles.emptyText}>No weight value found in your profile yet.</Text>
-            )}
-            <View style={styles.bodyGrid}>
-              <LinearGradient colors={[`${COLORS.accent}18`, 'transparent']} style={styles.bodyCard}>
-                <Text style={styles.bodyCardLabel}>Weight</Text>
-                <Text style={[styles.bodyCardValue, { color: COLORS.accent }]}>
-                  {currentWeightLbs !== null ? currentWeightLbs.toFixed(1) : '—'}
-                </Text>
-                <Text style={styles.bodyCardUnit}>lbs</Text>
-                <View style={styles.bodyCardDelta}>
-                  <Text style={styles.bodyCardDeltaText}>from profile</Text>
-                </View>
-              </LinearGradient>
-              <LinearGradient colors={[`${COLORS.pink}18`, 'transparent']} style={styles.bodyCard}>
-                <Text style={styles.bodyCardLabel}>Body Fat</Text>
-                <Text style={[styles.bodyCardValue, { color: COLORS.pink }]}>
-                  {bodyFatRange ?? '—'}
-                </Text>
-                <Text style={styles.bodyCardUnit}>est. range</Text>
-                <View style={[styles.bodyCardDelta, { backgroundColor: `${COLORS.pink}15` }]}>
-                  <Text style={[styles.bodyCardDeltaText, { color: COLORS.pink }]}>
-                    level {user.currentPhysiqueLevel}
-                  </Text>
-                </View>
-              </LinearGradient>
-            </View>
-          </View>
-        )}
-
-        {/* ── Nutrition ── */}
-        {activeView === 'nutrition' && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Nutrition Adherence</Text>
-            <Text style={styles.cardSub}>% of daily target met</Text>
-            <View style={styles.chartWrap}>
-              <VictoryChart
-                width={SCREEN_WIDTH - 64}
-                height={200}
-                domainPadding={{ x: 20 }}
-                padding={{ top: 16, bottom: 36, left: 44, right: 16 }}
-              >
-                <VictoryAxis
-                  style={{
-                    axis: { stroke: 'rgba(255,255,255,0.08)' },
-                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
-                  }}
-                />
-                <VictoryAxis
-                  dependentAxis
-                  style={{
-                    axis: { stroke: 'transparent' },
-                    tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
-                    grid: { stroke: 'rgba(255,255,255,0.05)' },
-                  }}
-                />
-                <VictoryGroup data={nutritionData} x="day">
-                  <VictoryBar y="protein" style={{ data: { fill: COLORS.accent, borderRadius: 4 } }} />
-                </VictoryGroup>
-              </VictoryChart>
-            </View>
-            <View style={styles.macroRow}>
-              {[
-                { label: 'Protein', avg: nutritionAverages.protein, color: COLORS.accent },
-                { label: 'Carbs', avg: nutritionAverages.carbs, color: COLORS.orange },
-                { label: 'Fats', avg: nutritionAverages.fats, color: COLORS.pink },
-              ].map((macro) => (
-                <View key={macro.label} style={styles.macroCard}>
-                  <View style={[styles.macroDot, { backgroundColor: macro.color }]} />
-                  <Text style={[styles.macroValue, { color: macro.color }]}>{macro.avg}%</Text>
-                  <Text style={styles.macroLabel}>{macro.label}</Text>
                 </View>
               ))}
             </View>
@@ -733,13 +739,33 @@ const styles = StyleSheet.create({
   tabBtnActive: { backgroundColor: COLORS.accent },
   tabText: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted },
   tabTextActive: { color: '#fff' },
-
-  // Range
-  rangeRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
-  rangeBtn: { paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: 'rgba(255,255,255,0.03)' },
-  rangeBtnActive: { borderColor: COLORS.accent, backgroundColor: COLORS.accentSoft },
-  rangeText: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted },
-  rangeTextActive: { color: COLORS.textPrimary },
+  goalCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    marginBottom: 14,
+  },
+  goalCardLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  goalCardTitle: { marginTop: 6, fontSize: 15, fontWeight: '800', color: COLORS.textPrimary },
+  goalRow: { marginTop: 12, flexDirection: 'row', gap: 10 },
+  goalMetric: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+  },
+  goalMetricCaption: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted },
+  goalMetricValue: { marginTop: 4, fontSize: 13, fontWeight: '800', color: COLORS.textPrimary },
 
   // Card base
   card: { backgroundColor: COLORS.card, borderRadius: 20, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: COLORS.border },
@@ -773,6 +799,10 @@ const styles = StyleSheet.create({
 
   // Chart
   chartWrap: { marginVertical: 8, marginHorizontal: -4 },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 2 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendText: { fontSize: 11, fontWeight: '600', color: COLORS.textMuted },
 
   // Lift list
   liftList: { gap: 10, marginTop: 16 },
@@ -786,20 +816,19 @@ const styles = StyleSheet.create({
   liftName: { flex: 1, fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
   liftValue: { fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
   liftGain: { fontSize: 12, fontWeight: '700', color: COLORS.success, minWidth: 54, textAlign: 'right' },
+  workoutHistoryList: { gap: 8 },
+  workoutHistoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  workoutHistoryDate: { width: 92, fontSize: 12, fontWeight: '700', color: COLORS.textSecondary },
+  workoutHistoryMeta: { flex: 1, fontSize: 12, fontWeight: '600', color: COLORS.textMuted },
+  workoutHistorySets: { fontSize: 12, fontWeight: '800', color: COLORS.accent },
 
-  // Body
-  bodyGrid: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  bodyCard: { flex: 1, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.card, alignItems: 'center' },
-  bodyCardLabel: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
-  bodyCardValue: { fontSize: 32, fontWeight: '900', letterSpacing: -1 },
-  bodyCardUnit: { fontSize: 12, fontWeight: '600', color: COLORS.textMuted, marginTop: 2 },
-  bodyCardDelta: { marginTop: 10, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: `${COLORS.accent}15` },
-  bodyCardDeltaText: { fontSize: 12, fontWeight: '700', color: COLORS.accent },
-
-  // Macros
-  macroRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  macroCard: { flex: 1, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
-  macroDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 8 },
-  macroValue: { fontSize: 22, fontWeight: '900', letterSpacing: -0.5 },
-  macroLabel: { fontSize: 11, fontWeight: '600', color: COLORS.textMuted, marginTop: 4 },
 });
