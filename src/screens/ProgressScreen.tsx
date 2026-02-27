@@ -37,24 +37,9 @@ const COLORS = {
 } as const;
 
 const VIEW_TABS = [
-  { id: 'workouts', label: 'Workouts' },
   { id: 'muscles', label: 'Muscles' },
-  { id: 'lifts', label: 'Lifts' },
+  { id: 'exercises', label: 'Exercises' },
 ] as const;
-
-const normalizeGoal = (value?: string | null):
-  | 'build_muscle'
-  | 'get_stronger'
-  | 'lose_fat'
-  | 'endurance'
-  | 'general_fitness' => {
-  const key = String(value ?? '').toLowerCase();
-  if (key.includes('muscle') || key.includes('hypertrophy')) return 'build_muscle';
-  if (key.includes('strong') || key.includes('strength')) return 'get_stronger';
-  if (key.includes('fat') || key.includes('cut') || key.includes('lose')) return 'lose_fat';
-  if (key.includes('endur')) return 'endurance';
-  return 'general_fitness';
-};
 
 type ProgressScreenProps = {
   user: User;
@@ -81,10 +66,11 @@ const getWeekNumber = (date: Date) => {
   return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 };
 
-const buildStrengthSeries = (snapshots: StrengthSnapshot[]) => {
+const buildExerciseSeries = (snapshots: StrengthSnapshot[], selectedExercise: string | null) => {
+  if (!selectedExercise) return [];
   const today = new Date();
   const weeks: { key: string; start: Date }[] = [];
-  for (let i = 3; i >= 0; i -= 1) {
+  for (let i = 5; i >= 0; i -= 1) {
     const weekStart = new Date(today);
     weekStart.setDate(today.getDate() - today.getDay() - i * 7);
     weekStart.setHours(0, 0, 0, 0);
@@ -99,16 +85,12 @@ const buildStrengthSeries = (snapshots: StrengthSnapshot[]) => {
       const snapDate = new Date(snap.date);
       return snapDate >= week.start && snapDate < end;
     });
-    const maxFor = (lift: string) => {
-      const values = bucket.filter((s) => s.lift === lift).map((s) => s.weight ?? 0);
-      return values.length ? Math.max(...values) : 0;
-    };
+    const values = bucket
+      .filter((s) => (s.exerciseName ?? s.lift ?? '').toLowerCase() === selectedExercise.toLowerCase())
+      .map((s) => s.weight ?? 0);
     return {
       week: week.key,
-      squat: maxFor('squat'),
-      bench: maxFor('bench_press'),
-      deadlift: maxFor('deadlift'),
-      press: maxFor('overhead_press'),
+      weight: values.length ? Math.max(...values) : 0,
     };
   });
 };
@@ -132,14 +114,46 @@ const buildVolumeRows = (workoutLogs: WorkoutLog[]) => {
     .slice(0, 5);
 };
 
+const buildMuscleTrend = (workoutLogs: WorkoutLog[], muscles: string[]) => {
+  const today = new Date();
+  const weeks: { key: string; start: Date; end: Date }[] = [];
+  for (let i = 5; i >= 0; i -= 1) {
+    const start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() - i * 7);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    weeks.push({ key: `W${getWeekNumber(start)}`, start, end });
+  }
+
+  const series = muscles.map((muscle) => {
+    const key = muscle.toLowerCase();
+    return {
+      muscle,
+      data: weeks.map((week) => {
+        const weeklySets = workoutLogs.reduce((sum, log) => {
+          const logDate = parseYMDToDate(log.date);
+          if (logDate < week.start || logDate >= week.end) return sum;
+          const muscleValue = Object.entries(log.muscleVolume ?? {}).find(
+            ([muscleKey]) => muscleKey.toLowerCase() === key
+          )?.[1] ?? 0;
+          return sum + muscleValue;
+        }, 0);
+        return { week: week.key, sets: Math.round(weeklySets) };
+      }),
+    };
+  });
+
+  return { weeks, series };
+};
+
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
-  user,
   phase,
   workoutSessions,
   workoutLogs,
   strengthSnapshots,
 }) => {
-  const [activeView, setActiveView] = useState<typeof VIEW_TABS[number]['id']>('workouts');
+  const [activeView, setActiveView] = useState<typeof VIEW_TABS[number]['id']>('muscles');
 
   const filteredSessions = useMemo(
     () => workoutSessions.filter((session) => session.phasePlanId === phase.id),
@@ -176,226 +190,99 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     };
   }, [phase, workoutSessions]);
 
-  const strengthData = useMemo(() => buildStrengthSeries(filteredStrengthSnapshots), [filteredStrengthSnapshots]);
   const volumeData = useMemo(() => buildVolumeRows(filteredWorkoutLogs), [filteredWorkoutLogs]);
-  const completedWorkoutHistory = useMemo(
-    () =>
-      [...filteredSessions]
-        .filter((session) => session.exercises.some((exercise) => exercise.completed === true))
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .map((session) => {
-          const completedExercises = session.exercises.filter((exercise) => exercise.completed === true);
-          const completedSets = completedExercises.reduce((sum, exercise) => {
-            const loggedSets = exercise.setDetails?.length ?? 0;
-            return sum + (loggedSets > 0 ? loggedSets : Math.max(0, exercise.sets ?? 0));
-          }, 0);
-          return {
-            id: session.id,
-            date: session.date,
-            completedExercises: completedExercises.length,
-            totalExercises: session.exercises.length,
-            completedSets,
-          };
-        }),
-    [filteredSessions]
-  );
 
-  const liftSummaries = useMemo(() => {
-    const lifts = [
-      { id: 'squat', name: 'Squat', color: COLORS.orange },
-      { id: 'bench_press', name: 'Bench Press', color: COLORS.accent },
-      { id: 'deadlift', name: 'Deadlift', color: COLORS.pink },
-      { id: 'overhead_press', name: 'OHP', color: COLORS.success },
-    ];
-
-    return lifts.map((lift) => {
-      const samples = filteredStrengthSnapshots
-        .filter((snap) => snap.lift === lift.id && (snap.weight ?? 0) > 0)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      if (!samples.length) {
+  const [selectedMuscle, setSelectedMuscle] = useState<string | null>(null);
+  const exerciseOptions = useMemo(() => {
+    const groups = new Map<string, StrengthSnapshot[]>();
+    filteredStrengthSnapshots.forEach((snap) => {
+      const label = (snap.exerciseName ?? snap.lift ?? '').trim();
+      if (!label || (snap.weight ?? 0) <= 0) return;
+      const key = label.toLowerCase();
+      const existing = groups.get(key) ?? [];
+      existing.push(snap);
+      groups.set(key, existing);
+    });
+    const colors = [COLORS.orange, COLORS.accent, COLORS.pink, COLORS.success, COLORS.blue];
+    return Array.from(groups.entries())
+      .map(([key, samples], idx) => {
+        const sorted = [...samples].sort((a, b) => a.date.localeCompare(b.date));
+        const latest = sorted[sorted.length - 1]?.weight ?? 0;
+        const first = sorted[0]?.weight ?? 0;
+        const gain = latest - first;
         return {
-          ...lift,
-          valueText: '—',
-          gainText: '—',
-          prCount: 0,
+          id: key,
+          name: sorted[sorted.length - 1]?.exerciseName ?? sorted[sorted.length - 1]?.lift ?? key,
+          color: colors[idx % colors.length],
+          valueText: `${Math.round(latest)} lbs`,
+          gainText: `${gain >= 0 ? '+' : ''}${Math.round(gain)} lbs`,
+          count: samples.length,
         };
-      }
-
-      const start = samples[0].weight ?? 0;
-      const latest = samples[samples.length - 1].weight ?? 0;
-      let maxSoFar = Number.NEGATIVE_INFINITY;
-      let prCount = 0;
-      samples.forEach((sample) => {
-        const weight = sample.weight ?? 0;
-        if (weight > maxSoFar) {
-          maxSoFar = weight;
-          prCount += 1;
-        }
-      });
-      const gain = latest - start;
-      const gainPrefix = gain > 0 ? '+' : '';
-
-      return {
-        ...lift,
-        valueText: `${Math.round(latest)} lbs`,
-        gainText: `${gainPrefix}${Math.round(gain)} lbs`,
-        prCount,
-      };
-    });
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
   }, [filteredStrengthSnapshots]);
-
-  const totalPRs = useMemo(
-    () => liftSummaries.reduce((sum, lift) => sum + lift.prCount, 0),
-    [liftSummaries]
+  const [selectedExercise, setSelectedExercise] = useState<string | null>(null);
+  const activeExercise = selectedExercise ?? exerciseOptions[0]?.id ?? null;
+  const exerciseData = useMemo(
+    () => buildExerciseSeries(filteredStrengthSnapshots, activeExercise),
+    [filteredStrengthSnapshots, activeExercise]
   );
+  const activeMuscle = selectedMuscle ?? volumeData[0]?.muscle ?? null;
 
-  const totalSets = volumeData.reduce((sum, item) => sum + item.sets, 0);
-  const avgWorkoutMinutes = filteredSessions.length
-    ? Math.round((totalSets / filteredSessions.length) * 3)
-    : 0;
-  const maxSets = Math.max(...volumeData.map((v) => v.sets), 1);
-  const restDays = useMemo(() => {
-    const today = new Date();
-    const planStart = phase.startDate ? parseYMDToDate(phase.startDate) : today;
-    planStart.setHours(0, 0, 0, 0);
-    const totalDays = Math.max(1, Math.floor((today.getTime() - planStart.getTime()) / 86400000) + 1);
-    const workoutDays = new Set(
-      filteredSessions
-        .filter((session) => session.exercises.some((exercise) => exercise.completed === true))
-        .map((session) => session.date)
-    ).size;
-    return Math.max(0, totalDays - workoutDays);
-  }, [filteredSessions, phase.startDate]);
-  const activeGoal = useMemo(
-    () => normalizeGoal(user.planPreferences?.primaryGoal ?? phase.goalType),
-    [phase.goalType, user.planPreferences?.primaryGoal]
-  );
-  const goalAlignment = useMemo(() => {
-    const expectedWorkoutsByNow = Math.max(
-      1,
-      Math.round((planProgress.currentWeek / Math.max(planProgress.totalWeeks, 1)) * Math.max(planProgress.totalWorkouts, 1))
-    );
-    const completedWorkouts = planProgress.completedWorkouts;
-    const completionVsPlanPct = Math.round((completedWorkouts / expectedWorkoutsByNow) * 100);
-    const completionDelta = completionVsPlanPct - 100;
-
-    const strengthSamples = filteredStrengthSnapshots
-      .filter((snap) => ['squat', 'bench_press', 'deadlift', 'overhead_press'].includes(String(snap.lift)))
-      .sort((a, b) => a.date.localeCompare(b.date));
-    const head = strengthSamples.slice(0, 8);
-    const tail = strengthSamples.slice(-8);
-    const headAvg = head.length ? head.reduce((sum, snap) => sum + (snap.weight ?? 0), 0) / head.length : 0;
-    const tailAvg = tail.length ? tail.reduce((sum, snap) => sum + (snap.weight ?? 0), 0) / tail.length : 0;
-    const strengthGainPct = headAvg > 0 ? Math.round(((tailAvg - headAvg) / headAvg) * 100) : 0;
-    const targetStrengthGainNow = Math.round(
-      (planProgress.currentWeek / Math.max(planProgress.totalWeeks, 1)) *
-        (user.experienceLevel === 'beginner' ? 14 : user.experienceLevel === 'intermediate' ? 9 : 6)
-    );
-
-    const targetSetsPerWorkout = user.experienceLevel === 'beginner' ? 14 : user.experienceLevel === 'intermediate' ? 18 : 22;
-    const targetSetsNow = expectedWorkoutsByNow * targetSetsPerWorkout;
-    const setProgressPct = targetSetsNow > 0 ? Math.round((totalSets / targetSetsNow) * 100) : 0;
-    const setDelta = setProgressPct - 100;
-
-    const targetConsistency = activeGoal === 'lose_fat' ? 85 : 75;
-    const consistencyDelta = planProgress.completionRate - targetConsistency;
-
-    if (activeGoal === 'build_muscle') {
-      return {
-        label: 'Volume vs plan target',
-        current: `${totalSets} sets`,
-        target: `${targetSetsNow} sets`,
-        delta: setDelta,
-        accent: COLORS.accent,
-      };
-    }
-    if (activeGoal === 'get_stronger') {
-      return {
-        label: 'Strength gain vs plan target',
-        current: `${strengthGainPct >= 0 ? '+' : ''}${strengthGainPct}%`,
-        target: `+${targetStrengthGainNow}%`,
-        delta: strengthGainPct - targetStrengthGainNow,
-        accent: COLORS.orange,
-      };
-    }
-    if (activeGoal === 'lose_fat') {
-      return {
-        label: 'Consistency vs plan target',
-        current: `${planProgress.completionRate}%`,
-        target: `${targetConsistency}%`,
-        delta: consistencyDelta,
-        accent: COLORS.pink,
-      };
-    }
-    if (activeGoal === 'endurance') {
-      return {
-        label: 'Workout completion vs plan pace',
-        current: `${completedWorkouts}`,
-        target: `${expectedWorkoutsByNow}`,
-        delta: completionDelta,
-        accent: COLORS.blue,
-      };
-    }
-    return {
-      label: 'Plan pace alignment',
-      current: `${completedWorkouts}`,
-      target: `${expectedWorkoutsByNow}`,
-      delta: completionDelta,
-      accent: COLORS.success,
-    };
-  }, [
-    activeGoal,
-    filteredStrengthSnapshots,
-    planProgress.completedWorkouts,
-    planProgress.completionRate,
-    planProgress.currentWeek,
-    planProgress.totalWeeks,
-    planProgress.totalWorkouts,
-    totalSets,
-    user.experienceLevel,
-  ]);
-  const goalProgressSeries = useMemo(() => {
-    const totalWeeks = Math.max(planProgress.totalWeeks, 1);
-    const goalWorkouts = Math.max(planProgress.totalWorkouts, 1);
-    const completedPerWeek = Array.from({ length: totalWeeks }, () => 0);
-    const planStart = phase.startDate ? parseYMDToDate(phase.startDate) : null;
-    const completedSessions = filteredSessions.filter(
-      (session) => session.exercises?.length && session.exercises.every((exercise) => exercise.completed === true)
-    );
-
-    completedSessions.forEach((session, idx) => {
-      if (planStart) {
-        const sessionDate = parseYMDToDate(session.date);
-        const weekOffset = Math.floor((sessionDate.getTime() - planStart.getTime()) / 604800000);
-        const boundedWeek = Math.max(0, Math.min(totalWeeks - 1, weekOffset));
-        completedPerWeek[boundedWeek] += 1;
-      } else {
-        const boundedWeek = Math.min(
-          totalWeeks - 1,
-          Math.floor((idx / Math.max(completedSessions.length, 1)) * totalWeeks)
+  const muscleWorkoutHistory = useMemo(() => {
+    if (!activeMuscle) return [];
+    return [...filteredSessions]
+      .filter((session) =>
+        session.exercises.some((exercise) =>
+          exercise.bodyParts.some((part) => part.toLowerCase() === activeMuscle.toLowerCase())
+        )
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map((session) => {
+        const matching = session.exercises.filter((exercise) =>
+          exercise.bodyParts.some((part) => part.toLowerCase() === activeMuscle.toLowerCase())
         );
-        completedPerWeek[boundedWeek] += 1;
-      }
-    });
+        const setCount = matching.reduce((sum, exercise) => {
+          const loggedSets = exercise.setDetails?.length ?? 0;
+          return sum + (loggedSets > 0 ? loggedSets : Math.max(0, exercise.sets ?? 0));
+        }, 0);
+        return {
+          id: session.id,
+          date: session.date,
+          exercises: matching.length,
+          sets: setCount,
+        };
+      });
+  }, [activeMuscle, filteredSessions]);
 
-    let cumulativeCompleted = 0;
-    return Array.from({ length: totalWeeks }, (_, weekIdx) => {
-      cumulativeCompleted += completedPerWeek[weekIdx];
-      const expectedCompleted = ((weekIdx + 1) / totalWeeks) * goalWorkouts;
-      return {
-        week: `W${weekIdx + 1}`,
-        actualPct: Math.round(Math.min(100, (cumulativeCompleted / goalWorkouts) * 100)),
-        targetPct: Math.round(Math.min(100, (expectedCompleted / goalWorkouts) * 100)),
-      };
-    });
-  }, [filteredSessions, phase.startDate, planProgress.totalWeeks, planProgress.totalWorkouts]);
-  const currentTrajectoryDelta = useMemo(() => {
-    if (!goalProgressSeries.length) return 0;
-    const index = Math.max(0, Math.min(planProgress.currentWeek - 1, goalProgressSeries.length - 1));
-    const point = goalProgressSeries[index];
-    return point.actualPct - point.targetPct;
-  }, [goalProgressSeries, planProgress.currentWeek]);
-
+  const exerciseWorkoutHistory = useMemo(() => {
+    if (!activeExercise) return [];
+    return [...filteredSessions]
+      .filter((session) =>
+        session.exercises.some((exercise) => {
+          const name = exercise.name.toLowerCase();
+          return name === activeExercise || name.includes(activeExercise);
+        })
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map((session) => {
+        const matching = session.exercises.filter((exercise) => {
+          const name = exercise.name.toLowerCase();
+          return name === activeExercise || name.includes(activeExercise);
+        });
+        return {
+          id: session.id,
+          date: session.date,
+          exercises: matching.map((exercise) => exercise.name).join(', '),
+        };
+      });
+  }, [activeExercise, filteredSessions]);
+  const totalSets = volumeData.reduce((sum, item) => sum + item.sets, 0);
+  const muscleTrend = useMemo(
+    () => buildMuscleTrend(filteredWorkoutLogs, volumeData.map((item) => item.muscle)),
+    [filteredWorkoutLogs, volumeData]
+  );
   return (
     <LinearGradient colors={['#0A0E27', '#0D1229', '#111633']} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -473,182 +360,104 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           })}
         </View>
 
-        {/* ── Workouts ── */}
-        {activeView === 'workouts' && (
-          <>
-            <LinearGradient
-              colors={[`${goalAlignment.accent}20`, 'rgba(255,255,255,0.02)']}
-              style={styles.goalCard}
-            >
-              <Text style={styles.goalCardLabel}>Goal Alignment</Text>
-              <Text style={styles.goalCardTitle}>{goalAlignment.label}</Text>
-              <View style={styles.goalRow}>
-                <View style={styles.goalMetric}>
-                  <Text style={styles.goalMetricCaption}>Current</Text>
-                  <Text style={styles.goalMetricValue}>{goalAlignment.current}</Text>
-                </View>
-                <View style={styles.goalMetric}>
-                  <Text style={styles.goalMetricCaption}>Target now</Text>
-                  <Text style={styles.goalMetricValue}>{goalAlignment.target}</Text>
-                </View>
-                <View style={styles.goalMetric}>
-                  <Text style={styles.goalMetricCaption}>Delta</Text>
-                  <Text
-                    style={[
-                      styles.goalMetricValue,
-                      { color: goalAlignment.delta >= 0 ? COLORS.success : COLORS.orange },
-                    ]}
-                  >
-                    {goalAlignment.delta >= 0 ? '+' : ''}{goalAlignment.delta}%
-                  </Text>
-                </View>
-              </View>
-            </LinearGradient>
-
-            <View style={styles.card}>
-              <View style={styles.cardHead}>
-                <View>
-                  <Text style={styles.cardTitle}>Plan Trajectory</Text>
-                  <Text style={styles.cardSub}>Actual completion vs target pace</Text>
-                </View>
-                <View style={[styles.totalSetsPill, { backgroundColor: `${COLORS.blue}20`, borderColor: 'rgba(78,168,222,0.35)' }]}>
-                  <Text style={[styles.totalSetsText, { color: currentTrajectoryDelta >= 0 ? COLORS.success : COLORS.orange }]}>
-                    {currentTrajectoryDelta >= 0 ? '+' : ''}{currentTrajectoryDelta}%
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.chartWrap}>
-                <VictoryChart
-                  width={SCREEN_WIDTH - 64}
-                  height={220}
-                  padding={{ top: 16, bottom: 36, left: 44, right: 16 }}
-                >
-                  <VictoryAxis
-                    style={{
-                      axis: { stroke: 'rgba(255,255,255,0.08)' },
-                      tickLabels: { fill: COLORS.textMuted, fontSize: 10, fontWeight: '600' },
-                    }}
-                  />
-                  <VictoryAxis
-                    dependentAxis
-                    tickFormat={(v) => `${v}%`}
-                    style={{
-                      axis: { stroke: 'transparent' },
-                      tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
-                      grid: { stroke: 'rgba(255,255,255,0.05)' },
-                    }}
-                  />
-                  <VictoryLine
-                    data={goalProgressSeries}
-                    x="week"
-                    y="targetPct"
-                    style={{ data: { stroke: 'rgba(139,147,176,0.8)', strokeWidth: 2, strokeDasharray: '6,4' } }}
-                  />
-                  <VictoryLine
-                    data={goalProgressSeries}
-                    x="week"
-                    y="actualPct"
-                    style={{ data: { stroke: COLORS.accent, strokeWidth: 2.8 } }}
-                  />
-                </VictoryChart>
-              </View>
-              <View style={styles.legendRow}>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: COLORS.accent }]} />
-                  <Text style={styles.legendText}>Actual</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: 'rgba(139,147,176,0.85)' }]} />
-                  <Text style={styles.legendText}>Target</Text>
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.card}>
-              <View style={styles.cardHead}>
-                <View>
-                  <Text style={styles.cardTitle}>Workout History</Text>
-                  <Text style={styles.cardSub}>Completed sessions across your plan</Text>
-                </View>
-                <View style={styles.totalSetsPill}>
-                  <Text style={styles.totalSetsText}>{completedWorkoutHistory.length} workouts</Text>
-                </View>
-              </View>
-              <View style={styles.workoutHistoryList}>
-                {completedWorkoutHistory.length ? (
-                  completedWorkoutHistory.map((entry) => (
-                    <View key={entry.id} style={styles.workoutHistoryRow}>
-                      <Text style={styles.workoutHistoryDate}>{entry.date}</Text>
-                      <Text style={styles.workoutHistoryMeta}>
-                        {entry.completedExercises}/{entry.totalExercises} exercises
-                      </Text>
-                      <Text style={styles.workoutHistorySets}>{entry.completedSets} sets</Text>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={styles.emptyText}>No completed workouts yet.</Text>
-                )}
-              </View>
-            </View>
-
-            <View style={styles.statsGrid}>
-                {[
-                  { label: 'Avg. Session', value: `${avgWorkoutMinutes}`, unit: 'min', color: COLORS.orange },
-                { label: 'Total PRs', value: `${totalPRs}`, unit: 'plan', color: COLORS.pink },
-                { label: 'Rest Days', value: `${restDays}`, unit: 'plan', color: '#A78BFA' },
-                  { label: 'Consistency', value: `${planProgress.completionRate}`, unit: '%', color: COLORS.success },
-                ].map((stat) => (
-                <LinearGradient
-                  key={stat.label}
-                  colors={[`${stat.color}14`, 'transparent']}
-                  style={styles.statCard}
-                >
-                  <Text style={[styles.statValue, { color: stat.color }]}>{stat.value}</Text>
-                  <Text style={styles.statUnit}>{stat.unit}</Text>
-                  <Text style={styles.statLabel}>{stat.label}</Text>
-                </LinearGradient>
-              ))}
-            </View>
-          </>
-        )}
-
         {/* ── Muscles ── */}
         {activeView === 'muscles' && (
           <View style={styles.card}>
             <View style={styles.cardHead}>
               <View>
                 <Text style={styles.cardTitle}>Muscle Progress</Text>
-                <Text style={styles.cardSub}>Completed sets per muscle group</Text>
+                <Text style={styles.cardSub}>Weekly set trends by muscle</Text>
               </View>
               <View style={styles.totalSetsPill}>
                 <Text style={styles.totalSetsText}>{totalSets} sets</Text>
               </View>
             </View>
-            <View style={styles.volumeList}>
-              {volumeData.length ? (
-                volumeData.map((item) => (
-                  <View key={item.muscle} style={styles.volumeRow}>
-                    <View style={styles.volumeRowTop}>
-                      <Text style={styles.volumeLabel}>{item.muscle}</Text>
-                      <Text style={[styles.volumeCount, { color: item.color }]}>{item.sets}</Text>
+            {volumeData.length ? (
+              <>
+                <View style={styles.chartWrap}>
+                  <VictoryChart
+                    width={SCREEN_WIDTH - 64}
+                    height={240}
+                    padding={{ top: 16, bottom: 36, left: 44, right: 16 }}
+                  >
+                    <VictoryAxis
+                      style={{
+                        axis: { stroke: 'rgba(255,255,255,0.08)' },
+                        tickLabels: { fill: COLORS.textMuted, fontSize: 10, fontWeight: '600' },
+                      }}
+                    />
+                    <VictoryAxis
+                      dependentAxis
+                      style={{
+                        axis: { stroke: 'transparent' },
+                        tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
+                        grid: { stroke: 'rgba(255,255,255,0.05)' },
+                      }}
+                    />
+                    {muscleTrend.series.map((entry) => {
+                      const item = volumeData.find((volume) => volume.muscle === entry.muscle);
+                      const color = item?.color ?? COLORS.accent;
+                      const isActive = activeMuscle === entry.muscle;
+                      return (
+                        <VictoryLine
+                          key={entry.muscle}
+                          data={entry.data}
+                          x="week"
+                          y="sets"
+                          style={{
+                            data: {
+                              stroke: color,
+                              strokeWidth: isActive ? 3 : 1.5,
+                              opacity: isActive ? 1 : 0.3,
+                            },
+                          }}
+                        />
+                      );
+                    })}
+                  </VictoryChart>
+                </View>
+                <View style={styles.selectorRow}>
+                  {volumeData.map((item) => (
+                    <TouchableOpacity
+                      key={item.muscle}
+                      style={[styles.selectorChip, activeMuscle === item.muscle && styles.selectorChipActive]}
+                      onPress={() => setSelectedMuscle(item.muscle)}
+                    >
+                      <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+                      <Text style={[styles.selectorChipText, activeMuscle === item.muscle && styles.selectorChipTextActive]}>
+                        {item.muscle}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            ) : (
+              <Text style={styles.emptyText}>No completed workout sets yet.</Text>
+            )}
+            {activeMuscle ? (
+              <View style={styles.historyBlock}>
+                <Text style={styles.cardSub}>{activeMuscle} recent sessions</Text>
+                {muscleWorkoutHistory.length ? (
+                  muscleWorkoutHistory.slice(0, 5).map((entry) => (
+                    <View key={entry.id} style={styles.workoutHistoryRow}>
+                      <Text style={styles.workoutHistoryDate}>{entry.date}</Text>
+                      <Text style={styles.workoutHistoryMeta}>{entry.exercises} exercises</Text>
+                      <Text style={styles.workoutHistorySets}>{entry.sets} sets</Text>
                     </View>
-                    <View style={styles.barTrack}>
-                      <View style={[styles.barFill, { width: `${(item.sets / maxSets) * 100}%`, backgroundColor: item.color }]} />
-                    </View>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.emptyText}>No completed workout sets yet.</Text>
-              )}
-            </View>
+                  ))
+                ) : (
+                  <Text style={styles.emptyText}>No workouts found for this muscle.</Text>
+                )}
+              </View>
+            ) : null}
           </View>
         )}
 
         {/* ── Lifts ── */}
-        {activeView === 'lifts' && (
+        {activeView === 'exercises' && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Lift Progression</Text>
-            <Text style={styles.cardSub}>Max weight per lift · lbs</Text>
+            <Text style={styles.cardTitle}>Exercise Progression</Text>
+            <Text style={styles.cardSub}>Select an exercise to highlight its trend</Text>
             <View style={styles.chartWrap}>
               <VictoryChart
                 width={SCREEN_WIDTH - 64}
@@ -667,23 +476,55 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                     axis: { stroke: 'transparent' },
                     tickLabels: { fill: COLORS.textMuted, fontSize: 10 },
                     grid: { stroke: 'rgba(255,255,255,0.05)' },
-                  }}
+                    }}
+                  />
+                <VictoryLine
+                  data={exerciseData}
+                  x="week"
+                  y="weight"
+                  style={{ data: { stroke: COLORS.accent, strokeWidth: 3 } }}
                 />
-                <VictoryLine data={strengthData} x="week" y="squat" style={{ data: { stroke: COLORS.orange, strokeWidth: 2.5 } }} />
-                <VictoryLine data={strengthData} x="week" y="bench" style={{ data: { stroke: COLORS.accent, strokeWidth: 2.5 } }} />
-                <VictoryLine data={strengthData} x="week" y="deadlift" style={{ data: { stroke: COLORS.pink, strokeWidth: 2.5 } }} />
               </VictoryChart>
             </View>
 
-            <View style={styles.liftList}>
-              {liftSummaries.map((lift) => (
-                <View key={lift.name} style={styles.liftRow}>
-                  <View style={[styles.liftDot, { backgroundColor: lift.color }]} />
-                  <Text style={styles.liftName}>{lift.name}</Text>
-                  <Text style={[styles.liftValue, { color: lift.color }]}>{lift.valueText}</Text>
-                  <Text style={styles.liftGain}>{lift.gainText}</Text>
-                </View>
+            <View style={styles.selectorRow}>
+              {exerciseOptions.map((exercise) => (
+                <TouchableOpacity
+                  key={exercise.id}
+                  style={[styles.selectorChip, activeExercise === exercise.id && styles.selectorChipActive]}
+                  onPress={() => setSelectedExercise(exercise.id)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.liftDot, { backgroundColor: exercise.color }]} />
+                  <Text style={[styles.selectorChipText, activeExercise === exercise.id && styles.selectorChipTextActive]}>
+                    {exercise.name}
+                  </Text>
+                </TouchableOpacity>
               ))}
+            </View>
+            <View style={styles.liftSummaryRow}>
+              {exerciseOptions
+                .filter((exercise) => exercise.id === activeExercise)
+                .map((exercise) => (
+                  <View key={exercise.id} style={styles.liftSummaryPill}>
+                    <Text style={styles.liftSummaryLabel}>Latest</Text>
+                    <Text style={[styles.liftSummaryValue, { color: exercise.color }]}>{exercise.valueText}</Text>
+                    <Text style={styles.liftSummaryGain}>{exercise.gainText}</Text>
+                  </View>
+                ))}
+            </View>
+            <View style={styles.historyBlock}>
+              <Text style={styles.cardSub}>Recent sessions</Text>
+              {exerciseWorkoutHistory.length ? (
+                exerciseWorkoutHistory.slice(0, 5).map((entry) => (
+                  <View key={entry.id} style={styles.workoutHistoryRow}>
+                    <Text style={styles.workoutHistoryDate}>{entry.date}</Text>
+                    <Text style={styles.workoutHistoryMeta} numberOfLines={1}>{entry.exercises}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.emptyText}>No workouts found for this lift.</Text>
+              )}
             </View>
           </View>
         )}
@@ -779,6 +620,13 @@ const styles = StyleSheet.create({
   volumeList: { gap: 12 },
   emptyText: { fontSize: 13, fontWeight: '500', color: COLORS.textMuted },
   volumeRow: {},
+  volumeRowActive: {
+    borderWidth: 1,
+    borderColor: COLORS.borderAccent,
+    borderRadius: 10,
+    padding: 8,
+    backgroundColor: COLORS.accentSoft,
+  },
   volumeRowTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   volumeLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
   volumeCount: { fontSize: 13, fontWeight: '800' },
@@ -799,6 +647,36 @@ const styles = StyleSheet.create({
 
   // Chart
   chartWrap: { marginVertical: 8, marginHorizontal: -4 },
+  selectorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+  },
+  selectorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  selectorChipActive: {
+    borderColor: COLORS.borderAccent,
+    backgroundColor: COLORS.accentSoft,
+  },
+  selectorChipText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  selectorChipTextActive: {
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 2 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
@@ -812,10 +690,41 @@ const styles = StyleSheet.create({
     paddingVertical: 12, paddingHorizontal: 14,
     borderWidth: 1, borderColor: COLORS.border,
   },
+  liftRowActive: {
+    borderColor: COLORS.borderAccent,
+    backgroundColor: COLORS.accentSoft,
+  },
   liftDot: { width: 10, height: 10, borderRadius: 5 },
   liftName: { flex: 1, fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
   liftValue: { fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
   liftGain: { fontSize: 12, fontWeight: '700', color: COLORS.success, minWidth: 54, textAlign: 'right' },
+  liftSummaryRow: { marginTop: 12 },
+  liftSummaryPill: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 10,
+  },
+  liftSummaryLabel: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+  },
+  liftSummaryValue: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  liftSummaryGain: {
+    marginLeft: 'auto',
+    fontSize: 12,
+    color: COLORS.success,
+    fontWeight: '700',
+  },
   workoutHistoryList: { gap: 8 },
   workoutHistoryRow: {
     flexDirection: 'row',
@@ -830,5 +739,6 @@ const styles = StyleSheet.create({
   workoutHistoryDate: { width: 92, fontSize: 12, fontWeight: '700', color: COLORS.textSecondary },
   workoutHistoryMeta: { flex: 1, fontSize: 12, fontWeight: '600', color: COLORS.textMuted },
   workoutHistorySets: { fontSize: 12, fontWeight: '800', color: COLORS.accent },
+  historyBlock: { marginTop: 16, gap: 8 },
 
 });
