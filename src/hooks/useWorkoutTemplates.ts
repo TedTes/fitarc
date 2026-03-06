@@ -19,6 +19,7 @@ export type WorkoutTemplate = {
   title: string;
   description?: string | null;
   difficulty?: string | null;
+  equipmentLevel?: string | null;
   estimatedTimeMinutes?: number | null;
   goalTags: string[];
   createdBy?: string | null;
@@ -43,6 +44,7 @@ export const useWorkoutTemplates = (userId?: string | null) => {
         title: row.title,
         description: row.description,
         difficulty: row.difficulty,
+        equipmentLevel: row.equipment_level,
         estimatedTimeMinutes: row.estimated_time_minutes,
         goalTags: (row.goal_tags ?? []).map((tag) => tag.toLowerCase()),
         createdBy: row.created_by,

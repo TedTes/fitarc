@@ -26,9 +26,6 @@ import {
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
-  ProgressScreen,
-  MenuScreen,
-  LibraryScreen,
   PhotoCaptureScreen,
   ProfileScreen,
   ProfileSetupScreen,
@@ -56,9 +53,6 @@ import { deleteAccount as deleteAccountService } from './src/services/accountSer
 
 type RootTabParamList = {
   Today: undefined;
-  Workouts: undefined;
-  Meals: undefined;
-  Progress: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
@@ -73,9 +67,6 @@ type TabConfig = {
 
 const TAB_CONFIG: Record<keyof RootTabParamList, TabConfig> = {
   Today:    { icon: 'today-outline',       activeIcon: 'today',        label: 'Today'    },
-  Workouts: { icon: 'barbell-outline',     activeIcon: 'barbell',      label: 'Workouts' },
-  Meals:    { icon: 'restaurant-outline',  activeIcon: 'restaurant',   label: 'Meals'    },
-  Progress: { icon: 'trending-up-outline', activeIcon: 'trending-up',  label: 'Progress' },
 };
 
 const linking = {
@@ -83,9 +74,6 @@ const linking = {
   config: {
     screens: {
       Today: 'today',
-      Workouts: 'workouts',
-      Meals: 'meals',
-      Progress: 'progress',
     },
   },
 };
@@ -99,10 +87,19 @@ type OnboardingStep =
   | 'complete';
 
 const mapDaysPerWeekToSplit = (daysPerWeek: number): User['trainingSplit'] => {
-  if (daysPerWeek >= 6) return 'upper_lower';
+  if (daysPerWeek >= 6) return 'push_pull_legs';
   if (daysPerWeek >= 5) return 'push_pull_legs';
   if (daysPerWeek >= 4) return 'upper_lower';
   return 'full_body';
+};
+
+const DEFAULT_DAYS_PER_WEEK: 3 | 4 | 5 | 6 = 6;
+const DEFAULT_PLAN_WEEKS = 4;
+
+const addDays = (date: Date, days: number): Date => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 };
 
 const mapGoalToPhaseGoalType = (goal?: PrimaryGoal): string => {
@@ -334,6 +331,8 @@ function AppContent() {
     deleteWorkoutExercise,
     replaceSessionWithTemplate,
     appendExercisesToSession,
+    canUndoWorkoutSwap,
+    undoLastWorkoutSwap,
   } = useAppState();
   
   const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
@@ -347,13 +346,6 @@ function AppContent() {
   const tabFabPop = useRef(new Animated.Value(0)).current;
   const showPlanTabs = Boolean(state?.user);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
-
-  const handleAddProgress = useCallback(() => {
-    if (!state?.currentPhase) return;
-    setPhotoCapturePhaseId(state.currentPhase.id);
-    setPhotoCaptureOptional(true);
-    setPhotoCaptureVisible(true);
-  }, [state?.currentPhase]);
 
   const fabConfig = getFabAction(currentRouteName);
   const triggerTabFabPop = useCallback(() => {
@@ -416,9 +408,7 @@ function AppContent() {
   useEffect(() => {
     if (!navigationRef.isReady()) return;
     if (showPlanTabs) return;
-    if (currentRouteName === 'Meals' || currentRouteName === 'Workouts') {
-      navigationRef.navigate('Today');
-    }
+    if (currentRouteName !== 'Today') navigationRef.navigate('Today');
   }, [currentRouteName, navigationRef, showPlanTabs]);
 
   useEffect(() => {
@@ -497,10 +487,11 @@ function AppContent() {
       injuries: string[];
     }) => {
       if (!state?.user) return;
-      const inferredSplit = mapDaysPerWeekToSplit(input.daysPerWeek);
+      const targetDaysPerWeek = DEFAULT_DAYS_PER_WEEK;
+      const inferredSplit = mapDaysPerWeekToSplit(targetDaysPerWeek);
       const nextPreferences: PlanPreferences = {
         primaryGoal: tempPrimaryGoal,
-        daysPerWeek: input.daysPerWeek,
+        daysPerWeek: targetDaysPerWeek,
         equipmentLevel: input.equipmentLevel,
         injuries: input.injuries,
       };
@@ -527,7 +518,7 @@ function AppContent() {
     } else {
       setTempPlanPreferences({
         primaryGoal: tempPrimaryGoal,
-        daysPerWeek: 4,
+        daysPerWeek: DEFAULT_DAYS_PER_WEEK,
         equipmentLevel: 'full_gym',
         injuries: [],
       });
@@ -582,6 +573,7 @@ function AppContent() {
         name: `Arc ${new Date().getFullYear()}`,
         goalType: selectedGoal,
         startDate: formatLocalDateYMD(new Date()),
+        endDate: formatLocalDateYMD(addDays(new Date(), DEFAULT_PLAN_WEEKS * 7 - 1)),
         currentLevelId: currentLevel,
         targetLevelId,
       });
@@ -741,7 +733,7 @@ function AppContent() {
     setTempPlanPreferences(
       state.user.planPreferences ?? {
         primaryGoal: 'general_fitness',
-        daysPerWeek: 4,
+        daysPerWeek: DEFAULT_DAYS_PER_WEEK,
         equipmentLevel: 'full_gym',
         injuries: [],
       }
@@ -789,7 +781,7 @@ function AppContent() {
     setTempPlanPreferences(
       state.user.planPreferences ?? {
         primaryGoal: 'general_fitness',
-        daysPerWeek: 4,
+        daysPerWeek: DEFAULT_DAYS_PER_WEEK,
         equipmentLevel: 'full_gym',
         injuries: [],
       }
@@ -807,8 +799,7 @@ function AppContent() {
 
     if (phaseId) {
       if (!hadPhase) {
-        setFabAction('Menu', null);
-        setFabAction('Progress', null);
+        setFabAction('Today', null);
       }
     } else {
       const createPlanAction = {
@@ -819,8 +810,7 @@ function AppContent() {
         labelColor: '#6C63FF',
         onPress: handleStartPhaseFromDashboard,
       };
-      setFabAction('Menu', createPlanAction);
-      setFabAction('Progress', createPlanAction);
+      setFabAction('Today', createPlanAction);
     }
 
     previousPhaseIdRef.current = phaseId;
@@ -1039,55 +1029,13 @@ function AppContent() {
                   onSaveCustomSession={saveCustomWorkoutSession}
                   onAddExercise={addWorkoutExercise}
                   onDeleteExercise={deleteWorkoutExercise}
+                  canUndoWorkoutSwap={canUndoWorkoutSwap}
+                  onUndoLastWorkoutSwap={undoLastWorkoutSwap}
+                  onReplaceSessionWithTemplate={replaceSessionWithTemplate}
+                  onAppendExercisesToSession={appendExercisesToSession}
                 />
               ) : (
                 <TabPlaceholder title="Welcome to FitArc" subtitle="Complete onboarding to get started." />
-              )
-            }
-          </Tab.Screen>
-          <Tab.Screen name="Workouts">
-            {() =>
-              state?.user ? (
-                <LibraryScreen
-                  user={state.user}
-                  phase={state.currentPhase}
-                  plannedWorkouts={state.plannedWorkouts}
-                  workoutSessions={state.workoutSessions}
-                  onReplaceSessionWithTemplate={replaceSessionWithTemplate}
-                  onAppendExercisesToSession={appendExercisesToSession}
-                  onNavigateToToday={() => {
-                    setProfileVisible(false);
-                    navigationRef.navigate('Today');
-                  }}
-                />
-              ) : (
-                <TabPlaceholder title="Workouts" subtitle="Create a plan to explore workout templates." />
-              )
-            }
-          </Tab.Screen>
-          <Tab.Screen name="Meals">
-            {() =>
-              state?.user ? (
-                <MenuScreen user={state.user} phase={state.currentPhase} />
-              ) : (
-                <TabPlaceholder title="Meals" subtitle="Create a plan to unlock your meal guide." />
-              )
-            }
-          </Tab.Screen>
-          <Tab.Screen name="Progress">
-            {() =>
-              state?.currentPhase && state?.user ? (
-                <ProgressScreen
-                  user={state.user}
-                  phase={state.currentPhase}
-                  workoutDataVersion={state.workoutDataVersion}
-                  workoutSessions={state.workoutSessions}
-                  workoutLogs={state.workoutLogs}
-                  strengthSnapshots={state.strengthSnapshots}
-                  onAddProgress={handleAddProgress}
-                />
-              ) : (
-                <TabPlaceholder title="Progress" subtitle="Create a plan to unlock progress tracking." />
               )
             }
           </Tab.Screen>
