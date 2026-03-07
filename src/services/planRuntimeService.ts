@@ -44,6 +44,16 @@ type TemplateRow = {
   exercises: TemplateExerciseRow[];
 };
 
+export type RecommendedWorkoutTemplate = {
+  id: string;
+  title: string;
+  difficulty: string | null;
+  equipmentLevel: string | null;
+  goalTags: string[];
+  reason: string[];
+  score: number;
+};
+
 type OverrideRow = {
   id: string;
   user_id: string;
@@ -112,8 +122,16 @@ const mapSplitToTags = (split: User['trainingSplit']): string[] => {
 const inferDaysPerWeek = (split: User['trainingSplit']): 3 | 4 | 5 | 6 => {
   if (split === 'full_body') return 3;
   if (split === 'upper_lower') return 4;
-  if (split === 'push_pull_legs') return 5;
-  return 5;
+  if (split === 'push_pull_legs') return 6;
+  return 6;
+};
+
+const resolveDaysPerWeek = (profile: Pick<User, 'trainingSplit' | 'planPreferences'> | null): 3 | 4 | 5 | 6 => {
+  const preferred = profile?.planPreferences?.daysPerWeek;
+  if (preferred === 3 || preferred === 4 || preferred === 5 || preferred === 6) {
+    return preferred;
+  }
+  return inferDaysPerWeek(profile?.trainingSplit ?? 'full_body');
 };
 
 const shouldTrainOnDate = (date: Date, daysPerWeek: 3 | 4 | 5 | 6): boolean => {
@@ -532,7 +550,7 @@ const buildTemplateBaselineForDate = async (
 ): Promise<Map<string, TemplateBaselineExercise>> => {
   const profile = await fetchUserProfile(userId);
   const split = profile?.trainingSplit ?? 'full_body';
-  const daysPerWeek = inferDaysPerWeek(split);
+  const daysPerWeek = resolveDaysPerWeek(profile);
   if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) {
     return new Map();
   }
@@ -598,6 +616,20 @@ const isSameAsBaseline = (
   );
 };
 
+const hasBodyPartOverlap = (a: string[] = [], b: string[] = []): boolean => {
+  if (!a.length || !b.length) return true;
+  const bSet = new Set(b.map((part) => normalizeKey(part)));
+  return a.some((part) => bSet.has(normalizeKey(part)));
+};
+
+const mergeSwapReason = (notes: string | null | undefined, reason?: string): string | null => {
+  const normalized = normalizeNullableText(notes ?? null);
+  const normalizedReason = normalizeNullableText(reason ?? null);
+  if (!normalizedReason) return normalized;
+  if (!normalized) return `Swap reason: ${normalizedReason}`;
+  return `${normalized}\nSwap reason: ${normalizedReason}`;
+};
+
 export const fetchPlanRange = async (
   userId: string,
   planId: string,
@@ -609,7 +641,7 @@ export const fetchPlanRange = async (
 
   const profile = await fetchUserProfile(userId);
   const split = profile?.trainingSplit ?? 'full_body';
-  const daysPerWeek = inferDaysPerWeek(split);
+  const daysPerWeek = resolveDaysPerWeek(profile);
   const templates = await fetchTemplatesForUser(userId);
   if (!templates.length) return [];
   const storedTemplateMap = await fetchStoredPlanTemplateMap(planId);
@@ -637,6 +669,81 @@ export const fetchPlanRange = async (
   return resolved;
 };
 
+export const fetchRecommendedWorkoutTemplates = async (
+  userId: string,
+  planId: string,
+  limit = 6
+): Promise<RecommendedWorkoutTemplate[]> => {
+  const context = await fetchPlanContext(planId);
+  if (!context || context.userId !== userId) return [];
+
+  const profile = await fetchUserProfile(userId);
+  const templates = await fetchTemplatesForUser(userId);
+  if (!templates.length) return [];
+
+  const splitTags = new Set(mapSplitToTags(profile?.trainingSplit ?? 'full_body').map(normalizeKey));
+  const goalAliases = GOAL_ALIAS_MAP[normalizeKey(context.goalType)] ?? GOAL_ALIAS_MAP.general;
+  const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
+  const experienceLevel = profile?.experienceLevel;
+
+  const scored = templates
+    .map((template) => {
+      let score = 0;
+      const reason: string[] = [];
+      const templateGoalTags = (template.goal_tags ?? []).map(normalizeKey);
+
+      if (templateGoalTags.some((tag) => goalAliases.includes(tag))) {
+        score += 4;
+        reason.push('matches your goal');
+      }
+
+      if (templateGoalTags.some((tag) => splitTags.has(tag))) {
+        score += 2;
+        reason.push('fits your split');
+      }
+
+      if (equipmentLevel) {
+        const templateLevel = normalizeEquipmentLevel(template.equipment_level);
+        if (!templateLevel || EQUIPMENT_RANK[templateLevel] <= EQUIPMENT_RANK[equipmentLevel]) {
+          score += 2;
+          reason.push('fits your equipment');
+        } else {
+          score -= 3;
+        }
+      }
+
+      if (experienceLevel) {
+        const templateDifficulty = normalizeKey(template.difficulty) as User['experienceLevel'];
+        if (templateDifficulty in EXPERIENCE_RANK) {
+          const diffGap = Math.abs(
+            EXPERIENCE_RANK[templateDifficulty] - EXPERIENCE_RANK[experienceLevel]
+          );
+          if (diffGap === 0) {
+            score += 2;
+            reason.push('aligned with your level');
+          } else if (diffGap > 1) {
+            score -= 1;
+          }
+        }
+      }
+
+      return {
+        id: template.id,
+        title: template.title,
+        difficulty: template.difficulty,
+        equipmentLevel: template.equipment_level,
+        goalTags: templateGoalTags,
+        reason: reason.slice(0, 2),
+        score,
+      };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, limit));
+
+  return scored;
+};
+
 export const fetchResolvedPlanForDate = async (
   userId: string,
   planId: string,
@@ -647,7 +754,7 @@ export const fetchResolvedPlanForDate = async (
 
   const profile = await fetchUserProfile(userId);
   const split = profile?.trainingSplit ?? 'full_body';
-  const daysPerWeek = inferDaysPerWeek(split);
+  const daysPerWeek = resolveDaysPerWeek(profile);
   if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) return null;
 
   const templates = await fetchTemplatesForUser(userId);
@@ -779,6 +886,74 @@ export const replacePlanExercisesForDate = async (
   if (!rows.length) return;
   const { error } = await supabase.from('fitarc_plan_overrides').insert(rows);
   if (error) throw error;
+};
+
+export type SwapPlanExerciseForDateInput = {
+  userId: string;
+  planId: string;
+  date: string;
+  targetPlanExerciseId: string;
+  replacement: PlanExerciseInput;
+  reason?: string;
+  enforceGuardrails?: boolean;
+};
+
+export const swapPlanExerciseForDate = async ({
+  userId,
+  planId,
+  date,
+  targetPlanExerciseId,
+  replacement,
+  reason,
+  enforceGuardrails = true,
+}: SwapPlanExerciseForDateInput): Promise<PlanDay | null> => {
+  const resolved = await fetchResolvedPlanForDate(userId, planId, date);
+  const workout = resolved?.workout;
+  if (!workout) {
+    throw new Error('plan_workout_not_found_for_date');
+  }
+
+  const current = toPlanExerciseInputs(workout.exercises);
+  const targetIndex = workout.exercises.findIndex((exercise) => exercise.id === targetPlanExerciseId);
+  if (targetIndex < 0) {
+    throw new Error('target_plan_exercise_not_found');
+  }
+
+  const target = current[targetIndex];
+  const replacementOrder = target.displayOrder ?? targetIndex + 1;
+
+  if (enforceGuardrails) {
+    const targetPattern = normalizeKey(target.movementPattern ?? null);
+    const replacementPattern = normalizeKey(replacement.movementPattern ?? null);
+    if (targetPattern && replacementPattern && targetPattern !== replacementPattern) {
+      throw new Error('swap_guardrail_failed_movement_pattern');
+    }
+
+    if (!hasBodyPartOverlap(target.bodyParts ?? [], replacement.bodyParts ?? [])) {
+      throw new Error('swap_guardrail_failed_body_part_mismatch');
+    }
+
+    const baseSets = target.sets ?? null;
+    const nextSets = replacement.sets ?? null;
+    if (baseSets && nextSets && (nextSets < Math.max(1, Math.floor(baseSets * 0.5)) || nextSets > Math.ceil(baseSets * 1.5))) {
+      throw new Error('swap_guardrail_failed_volume_range');
+    }
+  }
+
+  const next: PlanExerciseInput[] = current.map((exercise, index) =>
+    index !== targetIndex
+      ? exercise
+      : {
+          ...exercise,
+          ...replacement,
+          displayOrder: replacement.displayOrder ?? replacementOrder,
+          sourceTemplateExerciseId: exercise.sourceTemplateExerciseId ?? null,
+          notes: mergeSwapReason(replacement.notes ?? exercise.notes, reason),
+        }
+  );
+
+  await replacePlanExercisesForDate(userId, planId, date, next);
+  return fetchResolvedPlanForDate(userId, planId, date);
 };
 
 export const appendPlanExercisesForDate = async (

@@ -7,7 +7,6 @@ import {
   ScrollView,
   Alert,
   Modal,
-  TextInput,
   Pressable,
   AppState,
   ActivityIndicator,
@@ -35,6 +34,7 @@ import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
 import { fetchWorkoutCompletionMap } from '../services/workoutService';
 import { runLayoutAnimation } from '../utils/layoutAnimation';
+import { uiCopy } from '../content/uiCopy';
 
 
 type PlansScreenProps = {
@@ -46,6 +46,8 @@ type PlansScreenProps = {
   onAddExercise?: (planWorkoutId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
   onDeleteExercise?: (planWorkoutId: string, planExerciseId: string) => Promise<void>;
   onToggleComplete?: (date: string, exerciseName: string, exerciseId?: string, currentExercises?: WorkoutSessionExercise[]) => void | Promise<void>;
+  canUndoWorkoutSwap?: (date: string) => boolean;
+  onUndoLastWorkoutSwap?: (date: string) => Promise<boolean>;
   embedded?: boolean;
   openExercisePickerSignal?: number;
   selectedDateOverride?: string;
@@ -70,7 +72,6 @@ const COLORS = {
 const MAX_LIBRARY_ITEMS = 30;
 const REP_PRESETS = ['5-8', '8-12', '12-15'] as const;
 
-const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = ['All', 'chest', 'back', 'shoulders', 'arms', 'legs', 'core'];
 const KNOWN_BODY_PARTS = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core']);
 
 const formatBodyPartList = (parts: MuscleGroup[]): string => {
@@ -125,6 +126,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onAddExercise,
   onDeleteExercise,
   onToggleComplete,
+  canUndoWorkoutSwap,
+  onUndoLastWorkoutSwap,
   embedded = false,
   openExercisePickerSignal,
   selectedDateOverride,
@@ -140,12 +143,13 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   
   const [selectedDate, setSelectedDate] = useState(() => formatLocalDateYMD(new Date()));
   const [exerciseModalVisible, setExerciseModalVisible] = useState(false);
-  const [exerciseSearch, setExerciseSearch] = useState('');
-  const [muscleFilter, setMuscleFilter] = useState<(typeof MUSCLE_FILTERS)[number]>('All');
   const [completionMap, setCompletionMap] = useState<Record<string, boolean>>({});
   const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
   const [isBulkCompleting, setIsBulkCompleting] = useState(false);
+  const [isUndoingSwap, setIsUndoingSwap] = useState(false);
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSaveErrorAtRef = useRef(0);
+  const lastSaveErrorMessageRef = useRef<string | null>(null);
   const lastExercisePickerSignalRef = useRef<number | undefined>(openExercisePickerSignal);
   // Animation values
   const weekStripSlide = useRef(new Animated.Value(-100)).current;
@@ -444,6 +448,26 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     return embedded ? null : `${completedCount}/${totalExercises} exercises`;
   }, [selectedPlan, editingExercises, completionMap, todayKey, embedded]);
   const showDayHeader = Boolean(selectedDayMeta) && !embedded;
+  const canUndoSelectedDaySwap = useMemo(
+    () => (selectedPlan ? Boolean(canUndoWorkoutSwap?.(selectedPlan.dateStr)) : false),
+    [canUndoWorkoutSwap, selectedPlan]
+  );
+
+  const handleUndoSwapForDay = useCallback(async () => {
+    if (!selectedPlan || !onUndoLastWorkoutSwap || isUndoingSwap) return;
+    setIsUndoingSwap(true);
+    try {
+      const didUndo = await onUndoLastWorkoutSwap(selectedPlan.dateStr);
+      if (!didUndo) {
+        Alert.alert(uiCopy.plans.undoUnavailableTitle, uiCopy.plans.undoUnavailableMessage);
+      }
+    } catch (err) {
+      console.error('Failed to undo workout swap:', err);
+      Alert.alert(uiCopy.plans.undoFailedTitle, uiCopy.plans.undoFailedMessage);
+    } finally {
+      setIsUndoingSwap(false);
+    }
+  }, [isUndoingSwap, onUndoLastWorkoutSwap, selectedPlan]);
 
   const saveCurrentSession = useCallback(
     async (plan: typeof selectedPlan, exercises: WorkoutSessionExercise[]) => {
@@ -475,6 +499,19 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
       setIsDirty(false);
     } catch (err) {
       console.error('Failed to autosave workout session', err);
+      const raw = err instanceof Error ? err.message : '';
+      const message = raw.startsWith('Swap blocked:')
+        ? raw
+        : 'Could not save workout changes. Please try again.';
+      const now = Date.now();
+      const shouldAlert =
+        now - lastSaveErrorAtRef.current > 2500 ||
+        lastSaveErrorMessageRef.current !== message;
+      if (shouldAlert) {
+        Alert.alert(raw.startsWith('Swap blocked:') ? 'Swap blocked' : 'Save failed', message);
+        lastSaveErrorAtRef.current = now;
+        lastSaveErrorMessageRef.current = message;
+      }
     }
   }, [enqueueSave, isDirty, selectedPlan]);
 
@@ -750,6 +787,19 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           setIsDirty(false);
         } catch (err) {
           console.error('Failed to autosave workout session', err);
+          const raw = err instanceof Error ? err.message : '';
+          const message = raw.startsWith('Swap blocked:')
+            ? raw
+            : 'Could not save workout changes. Please try again.';
+          const now = Date.now();
+          const shouldAlert =
+            now - lastSaveErrorAtRef.current > 2500 ||
+            lastSaveErrorMessageRef.current !== message;
+          if (shouldAlert) {
+            Alert.alert(raw.startsWith('Swap blocked:') ? 'Swap blocked' : 'Save failed', message);
+            lastSaveErrorAtRef.current = now;
+            lastSaveErrorMessageRef.current = message;
+          }
         }
       })();
     }, 600);
@@ -789,48 +839,24 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     };
   }, [flushAutosave]);
 
-  const filteredCatalog = useMemo(() => {
-    const term = exerciseSearch.trim().toLowerCase();
-    return exerciseCatalog
-      .filter((entry) => {
-        if (muscleFilter !== 'All') {
-          const parts = [...entry.primaryMuscles, ...entry.secondaryMuscles]
-            .map((name) => mapMuscleNameToGroup(name))
-            .filter((part): part is MuscleGroup => !!part);
-          if (!parts.includes(muscleFilter)) return false;
-        }
-        return true;
-      })
-      .filter((entry) => {
-        if (!term) return true;
-        return (
-          entry.name.toLowerCase().includes(term) ||
-          entry.primaryMuscles.join(' ').toLowerCase().includes(term) ||
-          (entry.movementPattern ?? '').toLowerCase().includes(term)
-        );
-      })
-      .slice(0, MAX_LIBRARY_ITEMS);
-  }, [exerciseCatalog, muscleFilter, exerciseSearch]);
+  const filteredCatalog = useMemo(
+    () => exerciseCatalog.slice(0, MAX_LIBRARY_ITEMS),
+    [exerciseCatalog]
+  );
 
   const renderSession = () => {
     if (!selectedPlan) {
       return (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyIcon}>⚙️</Text>
-          <Text style={styles.emptyTitle}>No data for this date.</Text>
-          <Text style={styles.emptySubtitle}>Pick a day from the strip above.</Text>
+        <View style={styles.inlineEmpty}>
+          <Text style={styles.inlineEmptyText}>No data for this date.</Text>
         </View>
       );
     }
 
     if (!editingExercises.length) {
       return (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyIcon}>💪</Text>
-          <Text style={styles.emptyTitle}>No workout planned</Text>
-          <Text style={styles.emptySubtitle}>
-            Add exercises or apply a template to plan your workout for this day.
-          </Text>
+        <View style={styles.inlineEmpty}>
+          <Text style={styles.inlineEmptyText}>Rest / No session scheduled</Text>
         </View>
       );
     }
@@ -1210,6 +1236,18 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                 <View style={styles.dayInfo}>
                   <Text style={styles.dayMeta}>{selectedDayMeta}</Text>
                 </View>
+                {canUndoSelectedDaySwap && (
+                  <TouchableOpacity
+                    style={styles.undoSwapButton}
+                    onPress={handleUndoSwapForDay}
+                    disabled={isUndoingSwap}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.undoSwapButtonText}>
+                      {isUndoingSwap ? uiCopy.plans.undoingLabel : uiCopy.plans.undoSwapLabel}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : null}
             {renderSession()}
@@ -1242,32 +1280,6 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
               <TouchableOpacity style={styles.closeButton} onPress={() => setExerciseModalVisible(false)}>
                 <Text style={styles.closeButtonText}>×</Text>
               </TouchableOpacity>
-            </View>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search exercises..."
-              placeholderTextColor={COLORS.textTertiary}
-              value={exerciseSearch}
-              onChangeText={setExerciseSearch}
-            />
-            <View style={styles.filterContainer}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterRow}
-              >
-                {MUSCLE_FILTERS.map((filter) => (
-                  <TouchableOpacity
-                    key={filter}
-                    style={[styles.filterChip, muscleFilter === filter && styles.filterChipActive]}
-                    onPress={() => setMuscleFilter(filter)}
-                  >
-                    <Text style={[styles.filterText, muscleFilter === filter && styles.filterTextActive]}>
-                      {filter === 'All' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
             </View>
             <ScrollView style={styles.catalogList} showsVerticalScrollIndicator={false}>
               {catalogLoading ? (
@@ -1545,6 +1557,20 @@ const styles = StyleSheet.create({
   dayMeta: {
     fontSize: 13,
     color: COLORS.textSecondary,
+  },
+  undoSwapButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,160,0.45)',
+    backgroundColor: 'rgba(0,245,160,0.08)',
+  },
+  undoSwapButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.success,
+    letterSpacing: 0.2,
   },
   workoutCard: {
     backgroundColor: 'transparent',
@@ -1966,6 +1992,19 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textAlign: 'center',
   },
+  inlineEmpty: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  inlineEmptyText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -2021,48 +2060,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     color: COLORS.textSecondary,
     fontWeight: '300',
-  },
-  searchInput: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    color: COLORS.textPrimary,
-    marginBottom: 12,
-    fontSize: 15,
-  },
-  filterContainer: {
-    height: 48,
-    marginBottom: 12,
-  },
-  filterRow: {
-    gap: 8,
-    alignItems: 'center',
-  },
-  filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterChipActive: {
-    backgroundColor: COLORS.accentDim,
-    borderColor: COLORS.accent,
-  },
-  filterText: {
-    color: COLORS.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  filterTextActive: {
-    color: COLORS.accent,
   },
   catalogList: {
     flex: 1,

@@ -24,11 +24,17 @@ import {
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
 import {
+  arePlanExerciseValuesEqual,
+  classifyWorkoutSwapReason,
+  mapSwapGuardrailError,
+} from './workoutSwapUtils';
+import {
   fetchPlanRange,
   appendPlanExercisesForDate,
   replacePlanExercisesForDate,
   deletePlanExercise,
   ensurePlanWorkoutForDate,
+  swapPlanExerciseForDate,
 } from '../services/planRuntimeService';
 
 export const useAppState = () => {
@@ -36,6 +42,24 @@ export const useAppState = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const stateRef = useRef<AppState | null>(null);
+  const lastWorkoutSwapRef = useRef<{
+    userId: string;
+    planId: string;
+    date: string;
+    targetPlanExerciseId: string;
+    previous: {
+      exerciseId: string;
+      name: string;
+      bodyParts: string[];
+      movementPattern?: string | null;
+      sets?: number | null;
+      reps?: string | null;
+      displayOrder?: number | null;
+      notes?: string | null;
+      sourceTemplateExerciseId?: string | null;
+    };
+  } | null>(null);
+  const [lastWorkoutSwapVersion, setLastWorkoutSwapVersion] = useState(0);
   const nextWorkoutVersion = (base?: AppState | null) =>
     (base?.workoutDataVersion ?? 0) + 1;
 
@@ -341,28 +365,124 @@ export const useAppState = () => {
         );
         return;
       }
-      await replacePlanExercisesForDate(
-        current.user.id,
-        current.currentPhase.id,
-        date,
-        normalizedExercises.map((exercise) => {
-          const templateId = exercise.id?.startsWith('tpl:')
-            ? exercise.id.split(':').pop() ?? null
-            : null;
-          return {
-            exerciseId: exercise.exerciseId!,
-            name: exercise.name,
-            bodyParts: exercise.bodyParts,
-            movementPattern: exercise.movementPattern ?? null,
-            sets: exercise.sets ?? null,
-            reps: exercise.reps ?? null,
-            displayOrder: exercise.displayOrder ?? null,
-            notes: exercise.notes ?? null,
-            sourceTemplateExerciseId: templateId,
-          };
-        })
+      const nextInputs = normalizedExercises.map((exercise) => {
+        const templateId = exercise.id?.startsWith('tpl:')
+          ? exercise.id.split(':').pop() ?? null
+          : null;
+        return {
+          exerciseId: exercise.exerciseId!,
+          name: exercise.name,
+          bodyParts: exercise.bodyParts,
+          movementPattern: exercise.movementPattern ?? null,
+          sets: exercise.sets ?? null,
+          reps: exercise.reps ?? null,
+          displayOrder: exercise.displayOrder ?? null,
+          notes: exercise.notes ?? null,
+          sourceTemplateExerciseId: templateId,
+        };
+      });
+
+      const currentPlanDay = current.plannedWorkouts.find(
+        (day) => day.planId === current.currentPhase!.id && day.date === date
       );
+      const existingExercises = currentPlanDay?.workout?.exercises ?? [];
+      const sameLength = existingExercises.length === nextInputs.length;
+      const changedIndices: number[] = [];
+      if (sameLength) {
+        for (let index = 0; index < nextInputs.length; index++) {
+          const existing = existingExercises[index];
+          const next = nextInputs[index];
+          if (!existing || !arePlanExerciseValuesEqual(existing, next)) {
+            changedIndices.push(index);
+          }
+        }
+      }
+
+      const shouldUseGuardedSwap = sameLength && changedIndices.length === 1;
+      if (shouldUseGuardedSwap) {
+        const changedIndex = changedIndices[0];
+        const targetExercise = existingExercises[changedIndex];
+        const replacement = nextInputs[changedIndex];
+        if (targetExercise?.id?.startsWith('tpl:') && replacement) {
+          const previousTemplateExerciseId = targetExercise.id.split(':').pop() ?? null;
+          const swapReason = classifyWorkoutSwapReason(targetExercise, replacement);
+          try {
+            await swapPlanExerciseForDate({
+              userId: current.user.id,
+              planId: current.currentPhase.id,
+              date,
+              targetPlanExerciseId: targetExercise.id,
+              replacement,
+              reason: swapReason,
+              enforceGuardrails: true,
+            });
+            lastWorkoutSwapRef.current = {
+              userId: current.user.id,
+              planId: current.currentPhase.id,
+              date,
+              targetPlanExerciseId: targetExercise.id,
+              previous: {
+                exerciseId: targetExercise.exerciseId,
+                name: targetExercise.name,
+                bodyParts: targetExercise.bodyParts,
+                movementPattern: targetExercise.movementPattern ?? null,
+                sets: targetExercise.sets ?? null,
+                reps: targetExercise.reps ?? null,
+                displayOrder: targetExercise.displayOrder ?? null,
+                notes: targetExercise.notes ?? null,
+                sourceTemplateExerciseId: previousTemplateExerciseId,
+              },
+            };
+            setLastWorkoutSwapVersion((value) => value + 1);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : 'swap_failed';
+            const mappedMessage = mapSwapGuardrailError(message);
+            if (mappedMessage) {
+              throw new Error(mappedMessage);
+            }
+            throw err;
+          }
+        } else {
+          await replacePlanExercisesForDate(current.user.id, current.currentPhase.id, date, nextInputs);
+          lastWorkoutSwapRef.current = null;
+          setLastWorkoutSwapVersion((value) => value + 1);
+        }
+      } else {
+        await replacePlanExercisesForDate(current.user.id, current.currentPhase.id, date, nextInputs);
+        lastWorkoutSwapRef.current = null;
+        setLastWorkoutSwapVersion((value) => value + 1);
+      }
       await loadPlannedWorkoutsFromSupabase(current.user.id, current.currentPhase.id);
+    },
+    [loadPlannedWorkoutsFromSupabase]
+  );
+
+  const canUndoWorkoutSwap = useCallback(
+    (date: string): boolean => {
+      const last = lastWorkoutSwapRef.current;
+      if (!last) return false;
+      return last.date === date;
+    },
+    [lastWorkoutSwapVersion]
+  );
+
+  const undoLastWorkoutSwap = useCallback(
+    async (date: string): Promise<boolean> => {
+      const last = lastWorkoutSwapRef.current;
+      if (!last || last.date !== date) return false;
+      await swapPlanExerciseForDate({
+        userId: last.userId,
+        planId: last.planId,
+        date: last.date,
+        targetPlanExerciseId: last.targetPlanExerciseId,
+        replacement: last.previous,
+        reason: 'undo_last_swap',
+        enforceGuardrails: false,
+      });
+      lastWorkoutSwapRef.current = null;
+      setLastWorkoutSwapVersion((value) => value + 1);
+      await loadPlannedWorkoutsFromSupabase(last.userId, last.planId);
+      return true;
     },
     [loadPlannedWorkoutsFromSupabase]
   );
@@ -663,6 +783,8 @@ export const useAppState = () => {
     deleteWorkoutSession,
     replaceSessionWithTemplate,
     appendExercisesToSession,
+    canUndoWorkoutSwap,
+    undoLastWorkoutSwap,
     hydrateFromRemote,
     markAllWorkoutsComplete,
     resetWorkoutData,
