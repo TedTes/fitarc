@@ -11,6 +11,7 @@ import {
   Alert,
   Linking,
   AppState,
+  Image,
 } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -19,13 +20,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ExpoLinking from 'expo-linking';
 import { useAppState } from './src/hooks';
 import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
-import { 
+import {
   WelcomeScreen,
   MainFocusScreen,
   QuickPlanSetupScreen,
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
+  ProgressScreen,
+  MenuScreen,
   PhotoCaptureScreen,
   ProfileScreen,
   ProfileSetupScreen,
@@ -52,7 +55,9 @@ import { supabase } from './src/lib/supabaseClient';
 import { deleteAccount as deleteAccountService } from './src/services/accountService';
 
 type RootTabParamList = {
-  Today: undefined;
+  Today:    undefined;
+  Diet:     undefined;
+  Progress: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
@@ -66,14 +71,18 @@ type TabConfig = {
 };
 
 const TAB_CONFIG: Record<keyof RootTabParamList, TabConfig> = {
-  Today:    { icon: 'today-outline',       activeIcon: 'today',        label: 'Today'    },
+  Today:    { icon: 'barbell-outline',        activeIcon: 'barbell',          label: 'Today'    },
+  Diet:     { icon: 'nutrition-outline',      activeIcon: 'nutrition',        label: 'Diet'     },
+  Progress: { icon: 'bar-chart-outline',      activeIcon: 'bar-chart',        label: 'Stats'    },
 };
 
 const linking = {
   prefixes: ['fitarc://'],
   config: {
     screens: {
-      Today: 'today',
+      Today:    'today',
+      Diet:     'diet',
+      Progress: 'progress',
     },
   },
 };
@@ -178,11 +187,13 @@ const AnimatedTabButton: React.FC<{
         ]}
       >
         <Animated.View style={[styles.tabPill, { backgroundColor: pillBg }]}>
-          <Ionicons
-            name={focused ? activeIcon : icon}
-            size={22}
-            color={focused ? '#6C63FF' : 'rgba(255,255,255,0.45)'}
-          />
+          <View style={styles.tabIconWrap}>
+            <Ionicons
+              name={focused ? activeIcon : icon}
+              size={28}
+              color={focused ? '#6C63FF' : 'rgba(255,255,255,0.45)'}
+            />
+          </View>
           <Text style={[styles.tabLabel, focused && styles.tabLabelActive]} numberOfLines={1}>{label}</Text>
         </Animated.View>
       </Animated.View>
@@ -243,6 +254,7 @@ const AnimatedFAB: React.FC<{
 
   return (
     <Animated.View
+      pointerEvents="box-none"
       style={[
         styles.fabContainer,
         {
@@ -288,24 +300,6 @@ const AnimatedFAB: React.FC<{
         <View style={styles.fabGlowRing} />
       </TouchableOpacity>
       
-      <Animated.Text
-        style={[
-          styles.fabLabel,
-          {
-            color: config.labelColor,
-            transform: [
-              {
-                scale: popAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 1.06],
-                }),
-              },
-            ],
-          },
-        ]}
-      >
-        {config.label}
-      </Animated.Text>
     </Animated.View>
   );
 };
@@ -347,7 +341,7 @@ function AppContent() {
   const showPlanTabs = Boolean(state?.user);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
 
-  const fabConfig = getFabAction(currentRouteName);
+  const fabConfig = getFabAction('Today');
   const triggerTabFabPop = useCallback(() => {
     tabFabPop.setValue(0);
     Animated.sequence([
@@ -1023,7 +1017,6 @@ function AppContent() {
                   phase={state.currentPhase}
                   workoutSessions={state.workoutSessions}
                   plannedWorkouts={state.plannedWorkouts}
-                  onProfilePress={() => setProfileVisible(true)}
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
                   onSaveCustomSession={saveCustomWorkoutSession}
@@ -1039,6 +1032,12 @@ function AppContent() {
               )
             }
           </Tab.Screen>
+          <Tab.Screen name="Diet">
+            {() => <View style={styles.container} />}
+          </Tab.Screen>
+          <Tab.Screen name="Progress">
+            {() => <View style={styles.container} />}
+          </Tab.Screen>
         </Tab.Navigator>
 
         {/* Custom Animated Tab Bar */}
@@ -1052,24 +1051,56 @@ function AppContent() {
           </View>
 
           <View style={styles.tabBarContent} pointerEvents="box-none">
-            {(Object.keys(TAB_CONFIG) as (keyof RootTabParamList)[]).map((name) => {
-              if (!showPlanTabs && name !== 'Today') return null;
-              const cfg = TAB_CONFIG[name];
-              return (
+            {/* Left half: Today + Diet */}
+            <View style={styles.tabHalf}>
+              <AnimatedTabButton
+                focused={currentRouteName === 'Today'}
+                icon={TAB_CONFIG.Today.icon}
+                activeIcon={TAB_CONFIG.Today.activeIcon}
+                label={TAB_CONFIG.Today.label}
+                onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Today'); }}
+              />
+              {showPlanTabs && (
                 <AnimatedTabButton
-                  key={name}
-                  focused={currentRouteName === name}
-                  icon={cfg.icon}
-                  activeIcon={cfg.activeIcon}
-                  label={cfg.label}
-                  onPress={() => {
-                    setProfileVisible(false);
-                    triggerTabFabPop();
-                    navigationRef.navigate(name);
-                  }}
+                  focused={currentRouteName === 'Diet'}
+                  icon={TAB_CONFIG.Diet.icon}
+                  activeIcon={TAB_CONFIG.Diet.activeIcon}
+                  label={TAB_CONFIG.Diet.label}
+                  onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Diet'); }}
                 />
-              );
-            })}
+              )}
+            </View>
+
+            {/* FAB spacer — keeps true center */}
+            <View style={styles.fabSpacer} />
+
+            {/* Right half: Progress + Avatar */}
+            <View style={styles.tabHalf}>
+              {showPlanTabs && (
+                <AnimatedTabButton
+                  focused={currentRouteName === 'Progress'}
+                  icon={TAB_CONFIG.Progress.icon}
+                  activeIcon={TAB_CONFIG.Progress.activeIcon}
+                  label={TAB_CONFIG.Progress.label}
+                  onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Progress'); }}
+                />
+              )}
+              {state?.user && (
+                <TouchableOpacity
+                  style={[styles.tabProfileBtn, isProfileVisible && styles.tabProfileBtnActive]}
+                  onPress={() => setProfileVisible((v) => !v)}
+                  activeOpacity={0.8}
+                >
+                  {state.user.avatarUrl ? (
+                    <Image source={{ uri: state.user.avatarUrl }} style={styles.tabAvatarImg} />
+                  ) : (
+                    <Text style={styles.tabAvatarTxt}>
+                      {(state.user.name ?? 'A').charAt(0).toUpperCase()}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
           <AnimatedFAB config={fabConfig} popAnim={tabFabPop} />
@@ -1077,8 +1108,7 @@ function AppContent() {
       </NavigationContainer>
       
       {isProfileVisible && state?.user && (
-        <View style={styles.profileSheet} pointerEvents="box-none">
-          <View style={styles.profileSheetHandle} />
+        <View style={styles.profileSheet}>
           <View style={styles.profileSheetContent}>
             <ProfileScreen 
               user={state.user}
@@ -1170,20 +1200,11 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     top: 0,
-    bottom: 88,
+    bottom: 104,
     backgroundColor: '#050714',
-    zIndex: 0,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    zIndex: 20,
     paddingTop: 24,
-    paddingHorizontal: 18,
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: -6 },
-    elevation: 16,
+    paddingHorizontal: 0,
   },
   profileSheetHandle: {
     alignSelf: 'center',
@@ -1246,17 +1267,20 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingBottom: 26,
     paddingTop: 12,
-    paddingLeft: 12,
-    paddingRight: 12,
+    paddingHorizontal: 8,
+  },
+  tabHalf: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-evenly',
   },
   tabButton: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: 8,
   },
   tabButtonInner: {
     width: '100%',
@@ -1271,11 +1295,17 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    minWidth: 64,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    width: 64,
     borderRadius: 16,
     gap: 3,
+  },
+  tabIconWrap: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabLabel: {
     fontSize: 10,
@@ -1293,10 +1323,25 @@ const styles = StyleSheet.create({
   fabContainer: {
     position: 'absolute',
     bottom: 28,
-    right: 20,
+    left: 0,
+    right: 0,
     alignItems: 'center',
     gap: 6,
   },
+  tabProfileBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(108,99,255,0.18)',
+    borderWidth: 1.5, borderColor: 'rgba(108,99,255,0.3)',
+    alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden',
+    marginRight: 4,
+  },
+  tabProfileBtnActive: {
+    borderColor: '#6C63FF',
+    backgroundColor: 'rgba(108,99,255,0.28)',
+  },
+  tabAvatarImg: { width: 40, height: 40, borderRadius: 20 },
+  tabAvatarTxt: { fontSize: 16, fontWeight: '800', color: '#FFFFFF' },
   fabButton: {
     width: 64,
     height: 64,
