@@ -9,11 +9,13 @@ import {
   Animated,
   Pressable,
   Alert,
+  LayoutAnimation,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { PhasePlan, User, WorkoutSessionExercise, MuscleGroup, PlanDay, WorkoutSessionEntry } from '../types/domain';
 import { useWorkoutTemplates } from '../hooks/useWorkoutTemplates';
 import { formatLocalDateYMD } from '../utils/date';
+import { fetchRecommendedWorkoutTemplates } from '../services/planRuntimeService';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -57,6 +59,38 @@ const GOAL_LABELS: Record<string, string> = {
   endurance: 'Endurance', general: 'General Fitness',
 };
 
+const GOAL_ALIAS_MAP: Record<string, string[]> = {
+  build_muscle: ['build_muscle', 'hypertrophy', 'muscle', 'general'],
+  get_stronger: ['get_stronger', 'strength', 'power', 'general'],
+  lose_fat: ['lose_fat', 'fat_loss', 'conditioning', 'general_fitness', 'general'],
+  endurance: ['endurance', 'conditioning', 'general_fitness'],
+  general_fitness: ['general_fitness', 'general', 'full_body'],
+};
+
+const EXPERIENCE_RANK: Record<TemplateDifficulty, number> = {
+  beginner: 0,
+  intermediate: 1,
+  advanced: 2,
+};
+
+const EQUIPMENT_RANK: Record<'bodyweight' | 'dumbbells' | 'full_gym', number> = {
+  bodyweight: 0,
+  dumbbells: 1,
+  full_gym: 2,
+};
+
+const normalizeKey = (value?: string | null): string =>
+  (value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+
+const normalizeEquipment = (value?: string | null): 'bodyweight' | 'dumbbells' | 'full_gym' | null => {
+  const key = normalizeKey(value);
+  if (!key) return null;
+  if (key === 'full_gym' || key === 'gym') return 'full_gym';
+  if (key === 'dumbbells' || key === 'dumbbell') return 'dumbbells';
+  if (key === 'bodyweight' || key === 'body_weight') return 'bodyweight';
+  return null;
+};
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +114,7 @@ type WorkoutTemplate = {
   icon: string;
   exercises: TemplateExercise[];
   difficulty: TemplateDifficulty;
+  equipmentLevel?: string;
   estimatedTime: number;
   totalSets: number;
   featured: boolean;
@@ -100,6 +135,8 @@ type LibraryScreenProps = {
   ) => Promise<{ hasProgress: boolean }>;
   onAppendExercisesToSession?: (date: string, exercises: WorkoutSessionExercise[]) => Promise<void>;
   onNavigateToToday?: () => void;
+  embedded?: boolean;
+  targetDate?: string;
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -112,17 +149,22 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   onReplaceSessionWithTemplate,
   onAppendExercisesToSession,
   onNavigateToToday,
+  embedded = false,
+  targetDate,
 }) => {
   const today = formatLocalDateYMD(new Date());
+  const activeDate = targetDate ?? today;
 
   const { templates: remoteTemplates, isLoading, error } = useWorkoutTemplates(user.id);
 
   // ─ Template state ─
-  const [tagFilter, setTagFilter] = useState('all');
   const [selectedModal, setSelectedModal] = useState<WorkoutTemplate | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [appliedThisSession, setAppliedThisSession] = useState<Set<string>>(new Set());
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
+  const [serviceRecommendations, setServiceRecommendations] = useState<
+    Array<{ id: string; reason: string[]; score: number }>
+  >([]);
 
   // ─ Animation ─
   const modalSlide = useRef(new Animated.Value(400)).current;
@@ -153,6 +195,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           movementPattern: ex.movementPattern ?? undefined,
         })),
         difficulty,
+        equipmentLevel: t.equipmentLevel ?? undefined,
         estimatedTime,
         totalSets,
         featured: t.isPublic && t.goalTags.includes('full_body'),
@@ -161,30 +204,135 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     });
   }, [remoteTemplates]);
 
-  const availableTags = useMemo(() => {
-    const tags = new Set<string>();
-    templates.forEach((t) => t.goalTags.forEach((tag) => tags.add(tag)));
-    return ['all', ...Array.from(tags).sort()];
-  }, [templates]);
+  useEffect(() => {
+    let cancelled = false;
+    const loadRecommendations = async () => {
+      if (!phase?.id) {
+        setServiceRecommendations([]);
+        return;
+      }
+      try {
+        const rows = await fetchRecommendedWorkoutTemplates(user.id, phase.id, 6);
+        if (!cancelled) {
+          setServiceRecommendations(rows.map((row) => ({ id: row.id, reason: row.reason, score: row.score })));
+        }
+      } catch (error) {
+        console.error('Failed to load recommended workout templates:', error);
+        if (!cancelled) setServiceRecommendations([]);
+      }
+    };
+    void loadRecommendations();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase?.id, user.id]);
 
-  const filteredTemplates = useMemo(() => {
-    if (tagFilter === 'all') return templates;
-    return templates.filter((t) => t.goalTags.includes(tagFilter));
-  }, [tagFilter, templates]);
+  const filteredTemplates = templates;
 
-  const featuredTemplates = useMemo(() => filteredTemplates.filter((t) => t.featured), [filteredTemplates]);
-  const regularTemplates = useMemo(() => filteredTemplates.filter((t) => !t.featured), [filteredTemplates]);
+  const localRecommendationById = useMemo(() => {
+    const preferredGoal = normalizeKey(user.planPreferences?.primaryGoal ?? phase?.goalType);
+    const goalAliases = GOAL_ALIAS_MAP[preferredGoal] ?? [];
+    const userExperience = user.experienceLevel;
+    const userEquipment = normalizeEquipment(user.planPreferences?.equipmentLevel);
 
-  const todaySession = useMemo(
-    () => workoutSessions.find((s) => s.phasePlanId === phase?.id && s.date === today),
-    [workoutSessions, phase, today]
+    const scored = templates
+      .map((template) => {
+        let score = 0;
+        const reasons: string[] = [];
+        const tags = template.goalTags.map(normalizeKey);
+
+        if (goalAliases.length && tags.some((tag) => goalAliases.includes(tag))) {
+          score += 4;
+          reasons.push('matches your goal');
+        }
+
+        const templateDifficulty = template.difficulty;
+        const diffGap = Math.abs(EXPERIENCE_RANK[templateDifficulty] - EXPERIENCE_RANK[userExperience]);
+        if (diffGap === 0) {
+          score += 3;
+          reasons.push('aligned with your level');
+        } else if (diffGap === 1) {
+          score += 1;
+        }
+
+        if (userEquipment) {
+          const templateEquipment = normalizeEquipment(template.equipmentLevel);
+          if (!templateEquipment || EQUIPMENT_RANK[templateEquipment] <= EQUIPMENT_RANK[userEquipment]) {
+            score += 2;
+            reasons.push('fits your equipment');
+          } else {
+            score -= 3;
+          }
+        }
+
+        if (template.exercises.length >= 4 && template.exercises.length <= 8) {
+          score += 1;
+        }
+
+        return { template, score, reasons };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6);
+
+    return new Map(scored.map((entry) => [entry.template.id, entry.reasons.slice(0, 2)]));
+  }, [templates, user.planPreferences?.primaryGoal, user.planPreferences?.equipmentLevel, user.experienceLevel, phase?.goalType]);
+
+  const serviceRecommendationById = useMemo(
+    () => new Map(serviceRecommendations.map((row) => [row.id, row])),
+    [serviceRecommendations]
   );
 
-  const todayExerciseCount = useMemo(() => {
-    if (todaySession?.exercises?.length) return todaySession.exercises.length;
-    const planned = plannedWorkouts.find((d) => d.planId === phase?.id && d.date === today);
+  const recommendationById = useMemo(
+    () =>
+      serviceRecommendationById.size
+        ? new Map(
+            [...serviceRecommendationById.entries()].map(([id, row]) => [id, row.reason])
+          )
+        : localRecommendationById,
+    [localRecommendationById, serviceRecommendationById]
+  );
+
+  const recommendationScoreById = useMemo(
+    () =>
+      serviceRecommendationById.size
+        ? new Map(
+            [...serviceRecommendationById.entries()].map(([id, row]) => [id, row.score])
+          )
+        : new Map<string, number>(),
+    [serviceRecommendationById]
+  );
+
+  const recommendedTemplates = useMemo(
+    () => filteredTemplates.filter((template) => recommendationById.has(template.id)),
+    [filteredTemplates, recommendationById]
+  );
+
+  const sortedRecommendedTemplates = useMemo(() => {
+    if (!recommendationScoreById.size) return recommendedTemplates;
+    return [...recommendedTemplates].sort(
+      (a, b) => (recommendationScoreById.get(b.id) ?? 0) - (recommendationScoreById.get(a.id) ?? 0)
+    );
+  }, [recommendedTemplates, recommendationScoreById]);
+
+  const nonRecommendedTemplates = useMemo(
+    () => filteredTemplates.filter((template) => !recommendationById.has(template.id)),
+    [filteredTemplates, recommendationById]
+  );
+
+  const featuredTemplates = useMemo(() => nonRecommendedTemplates.filter((t) => t.featured), [nonRecommendedTemplates]);
+  const regularTemplates = useMemo(() => nonRecommendedTemplates.filter((t) => !t.featured), [nonRecommendedTemplates]);
+
+  const targetSession = useMemo(
+    () => workoutSessions.find((s) => s.phasePlanId === phase?.id && s.date === activeDate),
+    [workoutSessions, phase, activeDate]
+  );
+
+  const targetExerciseCount = useMemo(() => {
+    if (targetSession?.exercises?.length) return targetSession.exercises.length;
+    const planned = plannedWorkouts.find((d) => d.planId === phase?.id && d.date === activeDate);
     return planned?.workout?.exercises?.length ?? 0;
-  }, [todaySession, plannedWorkouts, phase, today]);
+  }, [targetSession, plannedWorkouts, phase, activeDate]);
 
   // Modal open/close animation
   useEffect(() => {
@@ -256,22 +404,22 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     if (replaceAll) {
       if (!onReplaceSessionWithTemplate) return;
       // force=true: user already confirmed via the "Replace?" alert, skip hasProgress check
-      void onReplaceSessionWithTemplate(today, sessionExercises, true).catch(() =>
+      void onReplaceSessionWithTemplate(activeDate, sessionExercises, true).catch(() =>
         Alert.alert('Error', 'Could not apply template. Please try again.')
       );
     } else {
       if (!onAppendExercisesToSession) return;
-      void onAppendExercisesToSession(today, sessionExercises).catch(() =>
+      void onAppendExercisesToSession(activeDate, sessionExercises).catch(() =>
         Alert.alert('Error', 'Could not add exercises. Please try again.')
       );
     }
-  }, [today, buildSessionExercises, onReplaceSessionWithTemplate, onAppendExercisesToSession, onNavigateToToday]);
+  }, [activeDate, buildSessionExercises, onReplaceSessionWithTemplate, onAppendExercisesToSession, onNavigateToToday]);
 
   const confirmAndApply = useCallback((template: WorkoutTemplate, exercises: TemplateExercise[], replaceAll: boolean) => {
-    if (replaceAll && todayExerciseCount > 0) {
+    if (replaceAll && targetExerciseCount > 0) {
       Alert.alert(
-        'Replace today\'s workout?',
-        `This will replace your current ${todayExerciseCount} exercise${todayExerciseCount !== 1 ? 's' : ''} with "${template.title}".`,
+        'Replace workout for selected day?',
+        `This will replace your current ${targetExerciseCount} exercise${targetExerciseCount !== 1 ? 's' : ''} with "${template.title}".`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Replace', style: 'destructive', onPress: () => handleApply(template, exercises, replaceAll) },
@@ -280,141 +428,274 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     } else {
       handleApply(template, exercises, replaceAll);
     }
-  }, [todayExerciseCount, handleApply]);
+  }, [targetExerciseCount, handleApply]);
 
   // ─ Render helpers ─
   const formatBodyPart = (bp: string) =>
     bp.charAt(0).toUpperCase() + bp.slice(1).replace(/_/g, ' ');
 
-  const renderTemplateCard = (template: WorkoutTemplate) => {
+  const renderTemplateCard = (template: WorkoutTemplate, recommendationReasons?: string[]) => {
     const isCurrent = currentTemplateId === template.id;
+    const isExpanded = embedded && selectedModal?.id === template.id;
     const muscles = Array.from(
       new Set(template.exercises.flatMap((ex) => ex.bodyParts.map((b) => b.toLowerCase())))
     ).filter((b) => KNOWN_MUSCLES.has(b)).slice(0, 3);
 
+    // Inline selection state (computed per-render; state lives in selectedKeys)
+    const expandedUnappliedKeys = template.exercises
+      .map((ex) => `${template.id}-${ex.exerciseId}`)
+      .filter((k) => !appliedThisSession.has(k));
+    const expandedAllSelected =
+      expandedUnappliedKeys.length > 0 &&
+      expandedUnappliedKeys.every((k) => selectedKeys.has(k));
+    const expandedAddable = isExpanded
+      ? template.exercises.filter((ex) => {
+          const k = `${template.id}-${ex.exerciseId}`;
+          return selectedKeys.has(k) && !appliedThisSession.has(k);
+        })
+      : [];
+
     return (
-      <TouchableOpacity
-        key={template.id}
-        activeOpacity={0.75}
-        onPress={() => setSelectedModal(template)}
-        style={[styles.card, isCurrent && styles.cardCurrent]}
-      >
-        {isCurrent && <View style={styles.activeStrip} />}
+      <View key={template.id}>
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => {
+            if (embedded) {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setSelectedModal((prev) => (prev?.id === template.id ? null : template));
+              return;
+            }
+            setSelectedModal(template);
+          }}
+          style={[
+            styles.card,
+            isCurrent && styles.cardCurrent,
+            isExpanded && styles.cardExpanded,
+          ]}
+        >
+          {isCurrent && <View style={styles.activeStrip} />}
 
-        <View style={styles.cardInner}>
-          <View style={[styles.iconBadge, isCurrent && styles.iconBadgeCurrent]}>
-            <Text style={styles.iconText}>{template.icon}</Text>
-          </View>
+          <View style={styles.cardInner}>
+            <View style={[styles.iconBadge, isCurrent && styles.iconBadgeCurrent]}>
+              <Text style={styles.iconText}>{template.icon}</Text>
+            </View>
 
-          <View style={styles.cardBody}>
-            <Text style={[styles.cardTitle, isCurrent && { color: COLORS.success }]} numberOfLines={1}>
-              {template.title}
-            </Text>
-            <Text style={styles.cardMeta} numberOfLines={1}>
-              {template.difficulty.charAt(0).toUpperCase() + template.difficulty.slice(1)}
-              {' · '}{template.exercises.length} exercises{' · '}{template.estimatedTime} min
-              {muscles.length > 0 ? '  ·  ' + muscles.map(formatBodyPart).join(', ') : ''}
-            </Text>
-          </View>
+            <View style={styles.cardBody}>
+              <Text style={[styles.cardTitle, isCurrent && { color: COLORS.success }]} numberOfLines={1}>
+                {template.title}
+              </Text>
+              <Text style={styles.cardMeta} numberOfLines={1}>
+                {template.difficulty.charAt(0).toUpperCase() + template.difficulty.slice(1)}
+                {' · '}{template.exercises.length} ex{' · '}{template.estimatedTime} min
+                {muscles.length > 0 ? '  ·  ' + muscles.map(formatBodyPart).join(', ') : ''}
+              </Text>
+              {recommendationReasons?.length ? (
+                <Text style={styles.recommendationText} numberOfLines={1}>
+                  ✦ {recommendationReasons.join(' · ')}
+                </Text>
+              ) : null}
+            </View>
 
-          <View style={styles.cardRight}>
-            {isCurrent ? (
-              <Text style={styles.activeCheck}>✓</Text>
-            ) : (
-              <Text style={styles.cardChevron}>›</Text>
-            )}
+            <View style={styles.cardRight}>
+              {isCurrent ? (
+                <Text style={styles.activeCheck}>✓</Text>
+              ) : (
+                <Text style={[styles.cardChevron, isExpanded && styles.cardChevronOpen]}>
+                  {isExpanded ? '⌄' : '›'}
+                </Text>
+              )}
+            </View>
           </View>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+
+        {isExpanded && (
+          <View style={styles.inlineExpand}>
+            {/* Select row */}
+            <View style={styles.inlineSelectRow}>
+              <Text style={styles.inlineSelectCount}>
+                {expandedAddable.length > 0
+                  ? `${expandedAddable.length} of ${expandedUnappliedKeys.length} selected`
+                  : 'Tap exercises to select'}
+              </Text>
+              <TouchableOpacity onPress={toggleAllKeys}>
+                <Text style={styles.inlineSelectAll}>
+                  {expandedAllSelected ? 'Clear' : 'Select all'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Exercise rows */}
+            {template.exercises.map((ex) => {
+              const key = `${template.id}-${ex.exerciseId}`;
+              const wasAdded = appliedThisSession.has(key);
+              const isSelected = selectedKeys.has(key);
+              const primaryMuscle = ex.bodyParts[0]?.toLowerCase() ?? '';
+              const mc = MUSCLE_COLORS[primaryMuscle] ?? {
+                bg: 'rgba(255,255,255,0.06)', text: '#8B93B0', border: 'rgba(255,255,255,0.1)',
+              };
+              return (
+                <TouchableOpacity
+                  key={key}
+                  style={[styles.inlineExRow, (isSelected || wasAdded) && styles.inlineExRowSelected]}
+                  onPress={() => toggleKey(key, wasAdded)}
+                  disabled={wasAdded}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.inlineColorBar, { backgroundColor: mc.text }]} />
+                  <View style={styles.inlineExInfo}>
+                    <Text
+                      style={[styles.inlineExName, wasAdded && { color: COLORS.textMuted }]}
+                      numberOfLines={1}
+                    >
+                      {ex.name}
+                    </Text>
+                    {primaryMuscle ? (
+                      <Text style={[styles.inlineExMuscle, { color: mc.text }]}>
+                        {formatBodyPart(primaryMuscle)}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text style={styles.inlineExSets}>{ex.sets}×{ex.reps}</Text>
+                  <View style={[styles.inlineCheckbox, (isSelected || wasAdded) && styles.inlineCheckboxOn]}>
+                    {(isSelected || wasAdded) && <Text style={styles.inlineCheckMark}>✓</Text>}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Action row */}
+            <View style={styles.inlineActions}>
+              <TouchableOpacity
+                style={[
+                  styles.inlineBtn,
+                  styles.inlineBtnSecondary,
+                  expandedAddable.length === 0 && styles.inlineBtnDisabled,
+                ]}
+                disabled={expandedAddable.length === 0}
+                onPress={() => confirmAndApply(template, expandedAddable, false)}
+              >
+                <Text style={[styles.inlineBtnTxt, expandedAddable.length === 0 && styles.inlineBtnTxtMuted]}>
+                  {expandedAddable.length === 0 ? 'None selected' : `Add ${expandedAddable.length}`}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.inlineBtn, styles.inlineBtnPrimary]}
+                onPress={() => confirmAndApply(template, template.exercises, true)}
+              >
+                <Text style={styles.inlineBtnTxt}>Replace All</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
     );
   };
 
-  return (
-    <LinearGradient colors={['#0A0E27', '#151932', '#1E2340']} style={styles.container}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── Header ── */}
+  const listContent = (
+    <>
+      {/* ── Header (non-embedded only) ── */}
+      {!embedded && (
         <View style={styles.pageHeader}>
           <Text style={styles.pageTitle}>Workouts</Text>
-          <Text style={styles.pageSubtitle}>Browse and apply workout templates</Text>
+          <Text style={styles.pageSubtitle}>Apply templates matched to your active plan</Text>
         </View>
-
-        {/* ── Templates ── */}
+      )}
+      {!embedded && (
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Workout Templates</Text>
           {templates.length > 0 && (
             <Text style={styles.sectionCount}>{templates.length} templates</Text>
           )}
         </View>
+      )}
 
-        {/* Filter chips */}
-        {availableTags.length > 2 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-          >
-            {availableTags.map((tag) => (
-              <TouchableOpacity
-                key={tag}
-                style={[styles.filterChip, tagFilter === tag && styles.filterChipActive]}
-                onPress={() => setTagFilter(tag)}
-              >
-                <Text style={[styles.filterChipText, tagFilter === tag && styles.filterChipTextActive]}>
-                  {tag === 'all' ? 'All' : tag.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
+      {/* Loading / error */}
+      {isLoading && <Text style={styles.loadingText}>Loading templates…</Text>}
+      {!isLoading && error && <Text style={styles.loadingText}>Failed to load templates.</Text>}
 
-        {/* Loading */}
-        {isLoading && (
-          <Text style={styles.loadingText}>Loading templates…</Text>
-        )}
-        {!isLoading && error && (
-          <Text style={styles.loadingText}>Failed to load templates.</Text>
-        )}
+      {!isLoading && (
+        <>
+          {/* ── Embedded: flat list, recommended first ── */}
+          {embedded && (
+            <>
+              {sortedRecommendedTemplates.map((t) =>
+                renderTemplateCard(t, recommendationById.get(t.id))
+              )}
+              {sortedRecommendedTemplates.length > 0 && nonRecommendedTemplates.length > 0 && (
+                <View style={styles.sectionDivider} />
+              )}
+              {nonRecommendedTemplates.map((t) => renderTemplateCard(t))}
+            </>
+          )}
 
-        {/* Featured */}
-        {!isLoading && featuredTemplates.length > 0 && (
-          <>
-            <View style={styles.subHeader}>
-              <Text style={styles.subHeaderText}>⭐ Featured</Text>
+          {/* ── Non-embedded: full sections with subheaders ── */}
+          {!embedded && (
+            <>
+              {sortedRecommendedTemplates.length > 0 && (
+                <>
+                  <View style={styles.subHeader}>
+                    <Text style={styles.subHeaderText}>Plan-Matched Templates</Text>
+                  </View>
+                  {sortedRecommendedTemplates.map((t) =>
+                    renderTemplateCard(t, recommendationById.get(t.id))
+                  )}
+                </>
+              )}
+              {featuredTemplates.length > 0 && (
+                <>
+                  <View style={styles.subHeader}>
+                    <Text style={styles.subHeaderText}>⭐ Featured</Text>
+                  </View>
+                  {featuredTemplates.map((t) => renderTemplateCard(t))}
+                </>
+              )}
+              {regularTemplates.length > 0 && (
+                <>
+                  <View style={styles.subHeader}>
+                    <Text style={styles.subHeaderText}>All Templates</Text>
+                  </View>
+                  {regularTemplates.map((t) => renderTemplateCard(t))}
+                </>
+              )}
+            </>
+          )}
+
+          {filteredTemplates.length === 0 && (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyEmoji}>📦</Text>
+              <Text style={styles.emptyTitle}>No templates yet</Text>
+              <Text style={styles.emptyText}>Templates will appear here once added.</Text>
             </View>
-            {featuredTemplates.map(renderTemplateCard)}
-          </>
-        )}
+          )}
+        </>
+      )}
 
-        {/* All */}
-        {!isLoading && regularTemplates.length > 0 && (
-          <>
-            <View style={styles.subHeader}>
-              <Text style={styles.subHeaderText}>All Templates</Text>
-            </View>
-            {regularTemplates.map(renderTemplateCard)}
-          </>
-        )}
+      {!embedded && <View style={{ height: 120 }} />}
+    </>
+  );
 
-        {!isLoading && filteredTemplates.length === 0 && (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyEmoji}>📦</Text>
-            <Text style={styles.emptyTitle}>No templates yet</Text>
-            <Text style={styles.emptyText}>Templates will appear here once added.</Text>
-          </View>
-        )}
-
-        <View style={{ height: 120 }} />
-      </ScrollView>
+  return (
+    <LinearGradient
+      colors={embedded ? (['transparent', 'transparent', 'transparent'] as const) : (['#0A0E27', '#151932', '#1E2340'] as const)}
+      style={embedded ? styles.containerEmbedded : styles.container}
+    >
+      {embedded ? (
+        <View style={styles.embeddedContent}>{listContent}</View>
+      ) : (
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {listContent}
+        </ScrollView>
+      )}
 
       {/* ── Template modal ── */}
       <Modal
         transparent
         animationType="none"
-        visible={selectedModal !== null}
+        visible={!embedded && selectedModal !== null}
         onRequestClose={() => setSelectedModal(null)}
       >
         <View style={styles.modalOverlay}>
@@ -427,8 +708,6 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                 const k = `${selectedModal.id}-${ex.exerciseId}`;
                 return selectedKeys.has(k) && !appliedThisSession.has(k);
               });
-              const isAll = addable.length === selectedModal.exercises.length;
-              const btnLabel = addable.length === 0 ? 'Nothing to add' : isAll ? 'Use Template' : `Add ${addable.length} Exercise${addable.length !== 1 ? 's' : ''}`;
               const unappliedKeys = selectedModal.exercises
                 .map((ex) => `${selectedModal.id}-${ex.exerciseId}`)
                 .filter((k) => !appliedThisSession.has(k));
@@ -530,18 +809,30 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
                   {/* Footer */}
                   <View style={styles.modalFooter}>
-                    {addable.length > 0 && !isAll && (
+                    {addable.length > 0 && (
                       <Text style={styles.footerHint}>
                         {addable.length} of {selectedModal.exercises.length} selected · tap to deselect
                       </Text>
                     )}
-                    <TouchableOpacity
-                      style={[styles.applyBtn, isAll && styles.applyBtnPrimary, addable.length === 0 && styles.applyBtnDisabled]}
-                      disabled={addable.length === 0}
-                      onPress={() => confirmAndApply(selectedModal, addable, isAll)}
-                    >
-                      <Text style={styles.applyBtnText}>{btnLabel}</Text>
-                    </TouchableOpacity>
+                    <View style={styles.modalActionsRow}>
+                      <TouchableOpacity
+                        style={[styles.applyBtn, styles.applyBtnSecondary, addable.length === 0 && styles.applyBtnDisabled]}
+                        disabled={addable.length === 0}
+                        onPress={() => confirmAndApply(selectedModal, addable, false)}
+                      >
+                        <Text style={styles.applyBtnText}>
+                          {addable.length === 0
+                            ? 'Nothing selected'
+                            : `Add ${addable.length} Selected`}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.applyBtn, styles.applyBtnPrimary]}
+                        onPress={() => confirmAndApply(selectedModal, selectedModal.exercises, true)}
+                      >
+                        <Text style={styles.applyBtnText}>Replace All</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </>
               );
@@ -557,6 +848,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  containerEmbedded: { width: '100%' },
+  embeddedContent: { paddingTop: 6 },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingTop: 60 },
 
@@ -564,20 +857,16 @@ const styles = StyleSheet.create({
   pageHeader: { marginBottom: 20 },
   pageTitle: { fontSize: 28, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -0.5 },
   pageSubtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 3, fontWeight: '500' },
+  embeddedHeader: { marginBottom: 10, paddingHorizontal: 2 },
+  embeddedSubtitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 2, fontWeight: '500' },
 
   // Section headers
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  sectionHeaderEmbedded: { alignItems: 'flex-end', marginBottom: 10 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.3 },
   sectionCount: { fontSize: 12, fontWeight: '600', color: COLORS.textMuted },
   subHeader: { marginBottom: 10, marginTop: 4 },
   subHeaderText: { fontSize: 13, fontWeight: '700', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-
-  // Filter chips
-  filterRow: { paddingBottom: 14, gap: 8 },
-  filterChip: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 20, backgroundColor: COLORS.overlay, borderWidth: 1.5, borderColor: COLORS.border },
-  filterChipActive: { backgroundColor: 'rgba(108,99,255,0.2)', borderColor: 'rgba(108,99,255,0.45)' },
-  filterChipText: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted },
-  filterChipTextActive: { color: COLORS.accent },
 
   loadingText: { fontSize: 13, color: COLORS.textMuted, marginVertical: 12, fontWeight: '500' },
 
@@ -588,6 +877,12 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardCurrent: { borderColor: 'rgba(0,245,160,0.3)', backgroundColor: '#0C1A17' },
+  cardExpanded: {
+    borderColor: COLORS.borderAccent,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    marginBottom: 0,
+  },
   activeStrip: { position: 'absolute', top: 0, bottom: 0, left: 0, width: 3, backgroundColor: COLORS.success },
   cardInner: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 14 },
   iconBadge: { width: 40, height: 40, borderRadius: 12, backgroundColor: COLORS.overlay, alignItems: 'center', justifyContent: 'center' },
@@ -596,9 +891,92 @@ const styles = StyleSheet.create({
   cardBody: { flex: 1 },
   cardTitle: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.2, marginBottom: 3 },
   cardMeta: { fontSize: 12, fontWeight: '500', color: COLORS.textMuted },
+  recommendationText: { marginTop: 4, fontSize: 11, fontWeight: '600', color: '#9FA5FF' },
   cardRight: { paddingLeft: 4 },
   activeCheck: { fontSize: 16, fontWeight: '700', color: COLORS.success },
   cardChevron: { fontSize: 22, color: COLORS.textMuted, fontWeight: '300', marginTop: -1 },
+  cardChevronOpen: { color: COLORS.accent },
+
+  // ── Inline expand ─────────────────────────────────────────────────────────
+  inlineExpand: {
+    marginBottom: 8,
+    borderTopWidth: 0,
+    borderWidth: 1,
+    borderColor: COLORS.borderAccent,
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 14,
+    backgroundColor: 'rgba(108,99,255,0.03)',
+    overflow: 'hidden',
+  },
+  inlineSelectRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  inlineSelectCount: { fontSize: 11, fontWeight: '500', color: COLORS.textMuted },
+  inlineSelectAll: { fontSize: 11, fontWeight: '700', color: COLORS.accent },
+  inlineExRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.04)',
+    overflow: 'hidden',
+  },
+  inlineExRowSelected: { backgroundColor: 'rgba(108,99,255,0.08)' },
+  inlineColorBar: { width: 3, alignSelf: 'stretch', minHeight: 48 },
+  inlineExInfo: { flex: 1, paddingVertical: 11, paddingLeft: 12 },
+  inlineExName: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary, marginBottom: 2 },
+  inlineExMuscle: { fontSize: 10, fontWeight: '600', letterSpacing: 0.2 },
+  inlineExSets: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted, paddingHorizontal: 10 },
+  inlineCheckbox: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: 12,
+  },
+  inlineCheckboxOn: { backgroundColor: 'rgba(0,245,160,0.15)', borderColor: 'rgba(0,245,160,0.45)' },
+  inlineCheckMark: { fontSize: 11, fontWeight: '900', color: COLORS.success },
+  inlineActions: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.06)',
+  },
+  inlineBtn: {
+    flex: 1, paddingVertical: 11, borderRadius: 10,
+    alignItems: 'center', borderWidth: 1,
+  },
+  inlineBtnSecondary: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  inlineBtnPrimary: {
+    backgroundColor: COLORS.accent,
+    borderColor: 'transparent',
+    shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25, shadowRadius: 8, elevation: 4,
+  },
+  inlineBtnDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderColor: 'rgba(255,255,255,0.06)',
+    shadowOpacity: 0, elevation: 0,
+  },
+  inlineBtnTxt: { fontSize: 13, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: 0.2 },
+  inlineBtnTxtMuted: { color: COLORS.textMuted },
+
+  // Divider between recommended and rest in embedded mode
+  sectionDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginVertical: 10,
+    marginHorizontal: 4,
+  },
 
   // Empty state
   emptyCard: { borderRadius: 16, padding: 32, backgroundColor: COLORS.card, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
@@ -663,8 +1041,10 @@ const styles = StyleSheet.create({
 
   // Footer
   modalFooter: { paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)' },
+  modalActionsRow: { flexDirection: 'row', gap: 10 },
   footerHint: { fontSize: 11, color: COLORS.textMuted, textAlign: 'center', marginBottom: 10, fontWeight: '500' },
-  applyBtn: { paddingVertical: 14, borderRadius: 12, backgroundColor: '#252A4A', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(108,99,255,0.25)' },
+  applyBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: '#252A4A', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(108,99,255,0.25)' },
+  applyBtnSecondary: { backgroundColor: '#1F2440' },
   applyBtnPrimary: { backgroundColor: COLORS.accent, borderColor: 'transparent', shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
   applyBtnDisabled: { backgroundColor: '#181D35', borderColor: 'rgba(255,255,255,0.06)', shadowOpacity: 0, elevation: 0 },
   applyBtnText: { fontSize: 15, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },

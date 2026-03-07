@@ -437,6 +437,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     onToggleWorkoutExercise?.(day.date, ex.name, exId);
   };
 
+  const toggleAllExercises = (day: TDay) => {
+    const exercises = getDayExercises(day);
+    if (!exercises.length) return;
+    const allCurrentlyDone = exercises.every((ex) =>
+      isExDone(day, ex.name, 'completed' in ex ? ex.completed : undefined)
+    );
+    const updates: Record<string, boolean> = {};
+    exercises.forEach((ex) => { updates[`${day.date}::${ex.name}`] = !allCurrentlyDone; });
+    setLocalDone((prev) => ({ ...prev, ...updates }));
+    exercises.forEach((ex) => {
+      const currentDone = isExDone(day, ex.name, 'completed' in ex ? ex.completed : undefined);
+      if (currentDone !== !allCurrentlyDone) {
+        const exId = 'exerciseId' in ex ? ex.exerciseId : undefined;
+        onToggleWorkoutExercise?.(day.date, ex.name, exId);
+      }
+    });
+  };
+
   function openWeekTemplate(week: TWeek) {
     setTemplateWeek(week);
     setTemplateDay(pickDefaultDayForWeek(week));
@@ -511,15 +529,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const renderDayCard = (day: TDay) => {
     const rest        = day.planIsRest;
     const expanded    = expandedDate === day.date && !rest;
-    const sessionDone = !rest && day.session ? isSessionDone(day.session) : false;
+
     const exCount     = rest ? 0 : (day.session?.exercises?.length ?? day.planDay?.workout?.exercises?.length ?? 0);
+    const dayExercises = rest ? [] : getDayExercises(day);
+    const allExDone   = !rest && dayExercises.length > 0 && dayExercises.every((ex) =>
+      isExDone(day, ex.name, 'completed' in ex ? ex.completed : undefined)
+    );
 
     // Dot colour on rail
     let dotColor: string, dotGlow: string | undefined;
-    if (rest)           { dotColor = C.textFaint;               dotGlow = undefined; }
-    else if (sessionDone){ dotColor = C.success;                dotGlow = 'rgba(0,245,160,0.45)'; }
-    else if (day.isToday){ dotColor = C.success;                dotGlow = 'rgba(0,245,160,0.45)'; }
-    else                 { dotColor = 'rgba(255,255,255,0.12)'; dotGlow = undefined; }
+    if (rest)            { dotColor = C.textFaint;               dotGlow = undefined; }
+    else if (allExDone)  { dotColor = C.success;                 dotGlow = 'rgba(0,245,160,0.45)'; }
+    else if (day.isToday){ dotColor = C.success;                 dotGlow = 'rgba(0,245,160,0.45)'; }
+    else                 { dotColor = 'rgba(255,255,255,0.12)';  dotGlow = undefined; }
 
     return (
       <View
@@ -537,7 +559,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </View>
 
         {/* ── Card ── */}
-        <View style={[s.dayCard, day.isToday && s.dayCardToday, expanded && s.dayCardExpanded]}>
+        <View style={[s.dayCard, allExDone && s.dayCardDone, day.isToday && s.dayCardToday, expanded && s.dayCardExpanded]}>
 
           {/* Card header — always visible */}
           <TouchableOpacity
@@ -551,7 +573,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           >
             {/* Left: day + date */}
             <View style={s.cardDateGroup}>
-              <Text style={[s.cardDayName, day.isToday && s.cardDayNameToday, rest && s.cardDayNameRest]}>
+              <Text style={[s.cardDayName, allExDone && s.cardDayNameDone, day.isToday && s.cardDayNameToday, rest && s.cardDayNameRest]}>
                 {day.dayName}
               </Text>
               <Text style={[s.cardDateLabel, rest && s.cardDateLabelRest]}>
@@ -562,15 +584,23 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
             {/* Right: status + toggle */}
             <View style={s.cardHeaderRight}>
-              {/* Status badge */}
-              {!rest && sessionDone && (
-                <View style={s.doneBadge}><Text style={s.doneBadgeTxt}>✓ Done</Text></View>
-              )}
-              {!rest && day.isToday && !sessionDone && (
+              {!rest && day.isToday && !allExDone && (
                 <View style={s.todayBadge}><Text style={s.todayBadgeTxt}>Today</Text></View>
               )}
-              {!rest && !sessionDone && !day.isToday && exCount > 0 && (
+              {!rest && !allExDone && !day.isToday && exCount > 0 && (
                 <Text style={s.exCntBadge}>{exCount} ex</Text>
+              )}
+
+              {/* Day checkbox */}
+              {!rest && (
+                <TouchableOpacity
+                  onPress={() => toggleAllExercises(day)}
+                  style={[s.dayCheckbox, allExDone && s.dayCheckboxDone]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.7}
+                >
+                  {allExDone && <Text style={s.dayCheckboxTick}>✓</Text>}
+                </TouchableOpacity>
               )}
 
               {/* Chevron (workout days only) */}
@@ -667,7 +697,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       animationType="slide"
       onRequestClose={closeTemplateModal}
     >
-      <View style={s.modalOverlay}>
+      <View style={s.modalOverlay} pointerEvents="box-none">
         <Pressable style={StyleSheet.absoluteFillObject} onPress={closeTemplateModal} />
         <View style={s.modalSheet}>
           <View style={s.sheetHandle} />
@@ -689,6 +719,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
           {templateWeek && (
             <>
+              {/* Week picker — sticky */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -713,6 +744,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 })}
               </ScrollView>
 
+              {/* Day picker — sticky */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -735,26 +767,34 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 })}
               </ScrollView>
 
+              {/* Template list — scrollable */}
               {templateDay && (
-                <LibraryScreen
-                  key={templateWeek?.weekIdx ?? 0}
-                  embedded
-                  targetDate={templateDay.date}
-                  user={user}
-                  phase={phase}
-                  plannedWorkouts={plannedWorkouts}
-                  workoutSessions={workoutSessions}
-                  onReplaceSessionWithTemplate={async (date, exercises, force) => {
-                    const r = await (onReplaceSessionWithTemplate?.(date, exercises, force) ?? Promise.resolve({ hasProgress: false }));
-                    closeTemplateModal();
-                    return r;
-                  }}
-                  onAppendExercisesToSession={async (date, exercises) => {
-                    await onAppendExercisesToSession?.(date, exercises);
-                    closeTemplateModal();
-                  }}
-                  onNavigateToToday={closeTemplateModal}
-                />
+                <ScrollView
+                  style={s.sheetTemplateScroll}
+                  showsVerticalScrollIndicator={false}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <LibraryScreen
+                    key={`${templateWeek.weekIdx}-${templateDay.date}`}
+                    embedded
+                    targetDate={templateDay.date}
+                    user={user}
+                    phase={phase}
+                    plannedWorkouts={plannedWorkouts}
+                    workoutSessions={workoutSessions}
+                    onReplaceSessionWithTemplate={async (date, exercises, force) => {
+                      const r = await (onReplaceSessionWithTemplate?.(date, exercises, force) ?? Promise.resolve({ hasProgress: false }));
+                      closeTemplateModal();
+                      return r;
+                    }}
+                    onAppendExercisesToSession={async (date, exercises) => {
+                      await onAppendExercisesToSession?.(date, exercises);
+                      closeTemplateModal();
+                    }}
+                    onNavigateToToday={closeTemplateModal}
+                  />
+                </ScrollView>
               )}
             </>
           )}
@@ -887,23 +927,23 @@ const s = StyleSheet.create({
   // ── Plan card ───────────────────────────────────────────────────────────
   planCard: {
     marginHorizontal: 16, marginBottom: 24,
-    borderRadius: 20, padding: 18,
+    borderRadius: 20, padding: 22,
     borderWidth: 1.5, borderColor: C.accentBorder,
   },
-  planCardTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 12 },
-  planName:    { fontSize: 16, fontWeight: '800', color: C.text, letterSpacing: -0.3, marginBottom: 4 },
-  planMeta:    { fontSize: 12, color: C.textMuted, fontWeight: '500' },
+  planCardTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 14 },
+  planName:    { fontSize: 22, fontWeight: '800', color: C.text, letterSpacing: -0.5, marginBottom: 6 },
+  planMeta:    { fontSize: 13, color: C.textMuted, fontWeight: '500', lineHeight: 18 },
   ringWrap: {
-    width: 52, height: 52, borderRadius: 26,
+    width: 64, height: 64, borderRadius: 32,
     backgroundColor: 'rgba(108,99,255,0.18)', borderWidth: 1.5, borderColor: C.accentBorder,
     alignItems: 'center', justifyContent: 'center',
   },
-  ringPct:  { fontSize: 13, fontWeight: '900', color: C.accent, letterSpacing: -0.4 },
-  ringLbl:  { fontSize: 8, fontWeight: '700', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-  planBarBg:   { height: 3, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden', marginBottom: 8 },
-  planBarFill: { height: 3, backgroundColor: C.accent, borderRadius: 2 },
+  ringPct:  { fontSize: 16, fontWeight: '900', color: C.accent, letterSpacing: -0.5 },
+  ringLbl:  { fontSize: 9, fontWeight: '700', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+  planBarBg:   { height: 4, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden', marginBottom: 10 },
+  planBarFill: { height: 4, backgroundColor: C.accent, borderRadius: 2 },
   planBarRow:  { flexDirection: 'row', justifyContent: 'space-between' },
-  planBarStat: { fontSize: 11, color: C.textMuted, fontWeight: '500' },
+  planBarStat: { fontSize: 12, color: C.textMuted, fontWeight: '500' },
 
   // ── Week ────────────────────────────────────────────────────────────────
   weekBlock: { marginBottom: 4 },
@@ -994,6 +1034,10 @@ const s = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
     marginBottom: 6,
   },
+  dayCardDone: {
+    backgroundColor: 'rgba(0,245,160,0.04)',
+    borderColor: 'rgba(0,245,160,0.18)',
+  },
   dayCardToday: {
     borderColor: C.accentBorder,
     backgroundColor: C.accentDim,
@@ -1011,6 +1055,7 @@ const s = StyleSheet.create({
   },
   cardDateGroup: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   cardDayName:   { fontSize: 15, fontWeight: '700', color: C.textSub, letterSpacing: 0.1 },
+  cardDayNameDone:  { color: C.success },
   cardDayNameToday: { color: C.accent },
   cardDayNameRest:  { color: C.textFaint },
   cardDateLabel:    { fontSize: 13, fontWeight: '400', color: C.textMuted },
@@ -1020,7 +1065,7 @@ const s = StyleSheet.create({
 
   // Status badges
   doneBadge:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: C.successDim, borderWidth: 1, borderColor: C.successBorder },
-  doneBadgeTxt: { fontSize: 10, fontWeight: '700', color: C.success },
+  doneBadgeTxt: { fontSize: 15, fontWeight: '700', color: C.success },
   todayBadge:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: C.accentDim },
   todayBadgeTxt:{ fontSize: 10, fontWeight: '700', color: C.accent },
   restLbl:      { fontSize: 11, color: C.rest, fontWeight: '500' },
@@ -1042,6 +1087,17 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   restToggleActiveTxt: { fontSize: 16, fontWeight: '400', color: C.accent, lineHeight: 20 },
+
+  dayCheckbox: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  dayCheckboxDone: {
+    borderColor: C.success,
+    backgroundColor: C.successDim,
+  },
+  dayCheckboxTick: { fontSize: 12, fontWeight: '700', color: C.success, lineHeight: 14 },
 
   chevron:     { fontSize: 16, color: 'rgba(255,255,255,0.4)', lineHeight: 20 },
   chevronOpen: { transform: [{ rotate: '180deg' }] },
@@ -1220,7 +1276,12 @@ const s = StyleSheet.create({
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     borderTopWidth: 1.5, borderLeftWidth: 1, borderRightWidth: 1,
     borderColor: C.accentBorder,
-    maxHeight: '85%', paddingBottom: 40,
+    maxHeight: '85%',
+    flex: 0,
+  },
+  sheetTemplateScroll: {
+    flexGrow: 1,
+    paddingBottom: 40,
   },
   sheetHandle: {
     alignSelf: 'center', width: 34, height: 4,
