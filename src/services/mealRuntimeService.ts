@@ -97,6 +97,41 @@ export type RuntimeDailyNutritionTotals = {
   fats: number;
 };
 
+export type RecommendedMealTemplate = {
+  id: string;
+  title: string;
+  eatingMode?: string;
+  goalTags: string[];
+  estimatedCalories?: number;
+  reason: string[];
+  score: number;
+};
+
+export type MealSwapReplacementInput = {
+  mealType?: string | null;
+  foodId?: string | null;
+  foodName: string;
+  quantity?: number | null;
+  unit?: string | null;
+  calories?: number | null;
+  protein?: number | null;
+  carbs?: number | null;
+  fats?: number | null;
+  displayOrder?: number | null;
+  notes?: string | null;
+};
+
+export type SwapMealEntryForDateInput = {
+  userId: string;
+  planId: string;
+  date: string;
+  eatingMode: EatingMode;
+  targetEntryId: string;
+  replacement: MealSwapReplacementInput;
+  reason?: string;
+  enforceGuardrails?: boolean;
+};
+
 const normalizeKey = (value?: string | null): string =>
   (value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
 
@@ -108,6 +143,25 @@ const normalizeMealType = (value?: string | null): string => {
   if (key === 'dinner') return 'Dinner';
   if (key === 'snack') return 'Snack';
   return value ?? 'Meal';
+};
+
+const mergeReasonIntoNotes = (notes?: string | null, reason?: string): string | null => {
+  const normalizedNotes = (notes ?? '').trim();
+  const normalizedReason = (reason ?? '').trim();
+  if (!normalizedReason) return normalizedNotes || null;
+  if (!normalizedNotes) return `Swap reason: ${normalizedReason}`;
+  return `${normalizedNotes}\nSwap reason: ${normalizedReason}`;
+};
+
+const withinRatio = (
+  base: number | null | undefined,
+  next: number | null | undefined,
+  minRatio: number,
+  maxRatio: number
+): boolean => {
+  if (base == null || next == null || base <= 0) return true;
+  const ratio = next / base;
+  return ratio >= minRatio && ratio <= maxRatio;
 };
 
 const toRuntimeEntry = (row: MealTemplateEntryRow): RuntimeMealEntry => ({
@@ -365,6 +419,54 @@ export const fetchMealTemplates = async (userId: string): Promise<RuntimeMealTem
   }));
 };
 
+export const fetchRecommendedMealTemplates = async (
+  userId: string,
+  eatingMode: EatingMode,
+  limit = 6
+): Promise<RecommendedMealTemplate[]> => {
+  const templates = await fetchMealTemplates(userId);
+  const normalizedMode = normalizeKey(eatingMode);
+  const preferredGoalHints: string[] =
+    normalizedMode === 'lean_bulk'
+      ? ['hypertrophy', 'build_muscle', 'strength']
+      : normalizedMode === 'mild_deficit'
+        ? ['fat_loss', 'conditioning', 'general_fitness']
+        : ['general', 'general_fitness'];
+
+  return templates
+    .map((template) => {
+      let score = 0;
+      const reason: string[] = [];
+      const templateMode = normalizeKey(template.eatingMode);
+      const tags = (template.goalTags ?? []).map(normalizeKey);
+
+      if (templateMode && templateMode === normalizedMode) {
+        score += 4;
+        reason.push('matches your eating mode');
+      }
+      if (tags.some((tag) => preferredGoalHints.includes(tag))) {
+        score += 2;
+        reason.push('matches your goal focus');
+      }
+      if ((template.entries ?? []).length >= 3) {
+        score += 1;
+      }
+
+      return {
+        id: template.id,
+        title: template.title,
+        eatingMode: template.eatingMode,
+        goalTags: tags,
+        estimatedCalories: template.estimatedCalories,
+        reason: reason.slice(0, 2),
+        score,
+      };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, limit));
+};
+
 export const fetchResolvedMealsForDate = async (
   userId: string,
   planId: string | null,
@@ -492,4 +594,83 @@ export const applyMealTemplateForDate = async (
     .eq('plan_id', planId)
     .eq('day_date', date);
   if (clearError) throw clearError;
+};
+
+export const swapMealEntryForDate = async ({
+  userId,
+  planId,
+  date,
+  eatingMode,
+  targetEntryId,
+  replacement,
+  reason,
+  enforceGuardrails = true,
+}: SwapMealEntryForDateInput): Promise<{ template: RuntimeMealTemplate | null; mealsByType: RuntimeMealsByType }> => {
+  const resolved = await fetchResolvedMealsForDate(userId, planId, date, eatingMode);
+  const allEntries = Object.values(resolved.mealsByType).flat();
+  const target = allEntries.find((entry) => entry.id === targetEntryId);
+  if (!target) {
+    throw new Error('target_meal_entry_not_found');
+  }
+
+  if (enforceGuardrails) {
+    if (!withinRatio(target.calories, replacement.calories, 0.7, 1.3)) {
+      throw new Error('swap_guardrail_failed_calorie_range');
+    }
+    if (!withinRatio(target.protein, replacement.protein, 0.5, 1.5)) {
+      throw new Error('swap_guardrail_failed_protein_range');
+    }
+    if (!withinRatio(target.carbs, replacement.carbs, 0.5, 1.5)) {
+      throw new Error('swap_guardrail_failed_carbs_range');
+    }
+    if (!withinRatio(target.fats, replacement.fats, 0.5, 1.5)) {
+      throw new Error('swap_guardrail_failed_fats_range');
+    }
+  }
+
+  const payload = {
+    user_id: userId,
+    plan_id: planId,
+    day_date: date,
+    template_entry_id: target.templateEntryId ?? null,
+    action_type: target.templateEntryId ? 'replace' : 'add',
+    meal_slot: normalizeMealType(replacement.mealType ?? target.mealType),
+    food_id: replacement.foodId ?? target.foodId ?? null,
+    food_name: replacement.foodName,
+    quantity: replacement.quantity ?? target.quantity ?? null,
+    unit: replacement.unit ?? target.unit ?? null,
+    calories: replacement.calories ?? target.calories ?? null,
+    protein_g: replacement.protein ?? target.protein ?? null,
+    carbs_g: replacement.carbs ?? target.carbs ?? null,
+    fats_g: replacement.fats ?? target.fats ?? null,
+    display_order: replacement.displayOrder ?? target.displayOrder ?? null,
+    notes: mergeReasonIntoNotes(replacement.notes ?? target.notes, reason),
+    is_active: true,
+  };
+
+  if (target.id.startsWith('ovr:')) {
+    const overrideId = target.id.slice(4);
+    const { error: deactivateError } = await supabase
+      .from('fitarc_meal_overrides')
+      .update({ is_active: false })
+      .eq('id', overrideId)
+      .eq('user_id', userId)
+      .eq('plan_id', planId);
+    if (deactivateError) throw deactivateError;
+  } else if (target.templateEntryId) {
+    const { error: deactivateError } = await supabase
+      .from('fitarc_meal_overrides')
+      .update({ is_active: false })
+      .eq('user_id', userId)
+      .eq('plan_id', planId)
+      .eq('day_date', date)
+      .eq('template_entry_id', target.templateEntryId)
+      .eq('is_active', true);
+    if (deactivateError) throw deactivateError;
+  }
+
+  const { error: insertError } = await supabase.from('fitarc_meal_overrides').insert(payload);
+  if (insertError) throw insertError;
+
+  return fetchResolvedMealsForDate(userId, planId, date, eatingMode);
 };

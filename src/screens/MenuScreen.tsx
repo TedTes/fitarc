@@ -4,8 +4,10 @@ import {
   Alert,
   Animated,
   Dimensions,
+  Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,19 +23,41 @@ import { useFabAction } from '../contexts/FabActionContext';
 import { estimateDailyCalories } from '../utils/calorieGoal';
 import {
   applyMealTemplateForDate,
+  fetchRecommendedMealTemplates,
   fetchMealTemplates,
   fetchResolvedMealsForDate,
+  RecommendedMealTemplate,
   RuntimeMealEntry,
   RuntimeMealTemplate,
   RuntimeMealsByType,
+  swapMealEntryForDate,
 } from '../services/mealRuntimeService';
 import { formatLocalDateYMD } from '../utils/date';
+import {
+  buildStructuredMealSwapReason,
+  findMealEntry,
+  sortedSlots,
+  sumMacro,
+  SWAP_REASONS,
+  type SwapReasonKey,
+} from './menuUtils';
+import { uiCopy } from '../content/uiCopy';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MenuScreenProps = {
   user: User;
   phase: PhasePlan | null;
+};
+
+type LastMealSwap = {
+  previous: RuntimeMealEntry;
+  current: {
+    id?: string;
+    mealType: string;
+    foodName: string;
+    displayOrder?: number | null;
+  };
 };
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -57,18 +81,6 @@ const C = {
 const CARD_WIDTH = Dimensions.get('window').width - 56;
 
 const MACRO_SPLIT = { protein: 0.3, carbs: 0.4, fats: 0.3 };
-
-const MEAL_ORDER = ['Breakfast', 'Lunch', 'Dinner', 'Snack', 'Meal'];
-
-const sumMacro = (entries: RuntimeMealEntry[], key: 'calories' | 'protein' | 'carbs' | 'fats') =>
-  Math.round(entries.reduce((s, e) => s + ((e[key] as number | null | undefined) ?? 0), 0));
-
-const sortedSlots = (mealsByType: RuntimeMealsByType) =>
-  Object.entries(mealsByType).sort(([a], [b]) => {
-    const ai = MEAL_ORDER.indexOf(a);
-    const bi = MEAL_ORDER.indexOf(b);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
 
 // ─── Macro ring ───────────────────────────────────────────────────────────────
 
@@ -139,7 +151,11 @@ const SLOT_COLORS: Record<string, string> = {
   Meal: '#8B93B0',
 };
 
-const MealSlotCard: React.FC<{ title: string; entries: RuntimeMealEntry[] }> = ({ title, entries }) => {
+const MealSlotCard: React.FC<{
+  title: string;
+  entries: RuntimeMealEntry[];
+  onEntryLongPress?: (entry: RuntimeMealEntry) => void;
+}> = ({ title, entries, onEntryLongPress }) => {
   const color = SLOT_COLORS[title] ?? SLOT_COLORS.Meal;
   const kcal = sumMacro(entries, 'calories');
   const protein = sumMacro(entries, 'protein');
@@ -156,14 +172,20 @@ const MealSlotCard: React.FC<{ title: string; entries: RuntimeMealEntry[] }> = (
         </View>
       </View>
       {entries.map((entry, i) => (
-        <View key={entry.id} style={[styles.slotEntry, i < entries.length - 1 && styles.slotEntryDivider]}>
+        <TouchableOpacity
+          key={entry.id}
+          activeOpacity={0.8}
+          style={[styles.slotEntry, i < entries.length - 1 && styles.slotEntryDivider]}
+          onLongPress={() => onEntryLongPress?.(entry)}
+          delayLongPress={250}
+        >
           <Text style={styles.slotEntryName} numberOfLines={1}>{entry.foodName}</Text>
           {entry.quantity != null && (
             <Text style={styles.slotEntryQty}>
               {entry.quantity}{entry.unit ? ` ${entry.unit}` : ''}
             </Text>
           )}
-        </View>
+        </TouchableOpacity>
       ))}
       {(carbs > 0 || fats > 0) && (
         <View style={styles.slotFooter}>
@@ -182,9 +204,10 @@ const TemplateCard: React.FC<{
   active: boolean;
   applying: boolean;
   recommended: boolean;
+  recommendationReason?: string | null;
   calorieTarget: number;
   onPress: () => void;
-}> = ({ template, active, applying, recommended, calorieTarget, onPress }) => {
+}> = ({ template, active, applying, recommended, recommendationReason, calorieTarget, onPress }) => {
   const mealSlots = useMemo(() => {
     const slots = new Set(template.entries.map((e) => e.mealType));
     return slots.size || 3;
@@ -214,9 +237,14 @@ const TemplateCard: React.FC<{
         </Text>
         {recommended && (
           <View style={[styles.forYouBadge, { marginTop: 4 }]}>
-            <Text style={styles.forYouText}>For you</Text>
+            <Text style={styles.forYouText}>{uiCopy.menu.forYouBadge}</Text>
           </View>
         )}
+        {recommendationReason ? (
+          <Text style={styles.recommendationText} numberOfLines={1}>
+            {uiCopy.menu.recommendationPrefix} {recommendationReason}
+          </Text>
+        ) : null}
       </View>
       {active && <View style={styles.carouselActiveBar} />}
     </TouchableOpacity>
@@ -234,7 +262,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const [mealsByType, setMealsByType] = useState<RuntimeMealsByType>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [isSwapping, setIsSwapping] = useState(false);
   const [activeCarouselIndex, setActiveCarouselIndex] = useState(0);
+  const [recommendedTemplates, setRecommendedTemplates] = useState<RecommendedMealTemplate[]>([]);
+  const [swapEntry, setSwapEntry] = useState<RuntimeMealEntry | null>(null);
+  const [swapReason, setSwapReason] = useState<SwapReasonKey>('preference');
+  const [lastSwap, setLastSwap] = useState<LastMealSwap | null>(null);
 
   const handleCarouselScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -262,6 +295,27 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const hasMeals = Object.keys(mealsByType).length > 0;
   const allEntries = useMemo(() => Object.values(mealsByType).flat(), [mealsByType]);
 
+  const swapCandidates = useMemo(() => {
+    if (!swapEntry) return [];
+    const targetSlot = swapEntry.mealType;
+    const targetName = swapEntry.foodName.trim().toLowerCase();
+    const seen = new Set<string>();
+    const candidates = templates
+      .flatMap((template) =>
+        template.entries
+          .filter((entry) => entry.mealType === targetSlot)
+          .map((entry) => ({ templateTitle: template.title, entry }))
+      )
+      .filter(({ entry }) => entry.foodName.trim().toLowerCase() !== targetName)
+      .filter(({ entry }) => {
+        const key = `${entry.mealType}:${entry.foodName.trim().toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    return candidates.slice(0, 12);
+  }, [swapEntry, templates]);
+
   const totals = useMemo(() => ({
     calories: sumMacro(allEntries, 'calories'),
     protein: sumMacro(allEntries, 'protein'),
@@ -279,10 +333,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           fat: selectedTemplate?.estimatedFats ?? macroTargets.fats,
         };
     return [
-      { label: 'Calories', value: Math.round(base.cal), unit: 'kcal', color: C.calories, progress: base.cal / calorieGoal },
-      { label: 'Protein', value: Math.round(base.prot), unit: 'g', color: C.protein, progress: base.prot / macroTargets.protein },
-      { label: 'Carbs', value: Math.round(base.carb), unit: 'g', color: C.carbs, progress: base.carb / macroTargets.carbs },
-      { label: 'Fat', value: Math.round(base.fat), unit: 'g', color: C.fats, progress: base.fat / macroTargets.fats },
+      { label: uiCopy.menu.macroLabels.calories, value: Math.round(base.cal), unit: 'kcal', color: C.calories, progress: base.cal / calorieGoal },
+      { label: uiCopy.menu.macroLabels.protein, value: Math.round(base.prot), unit: 'g', color: C.protein, progress: base.prot / macroTargets.protein },
+      { label: uiCopy.menu.macroLabels.carbs, value: Math.round(base.carb), unit: 'g', color: C.carbs, progress: base.carb / macroTargets.carbs },
+      { label: uiCopy.menu.macroLabels.fats, value: Math.round(base.fat), unit: 'g', color: C.fats, progress: base.fat / macroTargets.fats },
     ];
   }, [hasMeals, totals, selectedTemplate, calorieGoal, macroTargets]);
 
@@ -299,12 +353,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
   const loadMeals = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [templateRows, resolved] = await Promise.all([
+      const [templateRows, resolved, recommendedRows] = await Promise.all([
         fetchMealTemplates(user.id),
         fetchResolvedMealsForDate(user.id, planId, today, user.eatingMode),
+        fetchRecommendedMealTemplates(user.id, user.eatingMode, 6),
       ]);
       setTemplates(templateRows);
       setMealsByType(resolved.mealsByType);
+      setRecommendedTemplates(recommendedRows);
+      setLastSwap(null);
 
       const currentId = resolved.template?.id ?? null;
       setAppliedTemplateId(currentId);
@@ -337,7 +394,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       return;
     }
     if (!planId) {
-      Alert.alert('No active plan', 'Start a training plan before applying meal templates.');
+      Alert.alert(uiCopy.menu.noActivePlanTitle, uiCopy.menu.noActivePlanApplyTemplate);
       return;
     }
     setSelectedTemplateId(templateId);
@@ -347,29 +404,149 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
       await refreshResolvedMeals();
     } catch (error) {
       console.error('Failed applying template:', error);
-      Alert.alert('Error', 'Could not apply template. Please try again.');
+      Alert.alert(uiCopy.menu.genericErrorTitle, uiCopy.menu.applyTemplateFailed);
     } finally {
       setIsApplying(false);
     }
   }, [appliedTemplateId, planId, refreshResolvedMeals, today, user.id]);
 
+  const handleEntryLongPress = useCallback((entry: RuntimeMealEntry) => {
+    if (!planId) {
+      Alert.alert(uiCopy.menu.noActivePlanTitle, uiCopy.menu.noActivePlanSwapMeal);
+      return;
+    }
+    setSwapReason('preference');
+    setSwapEntry(entry);
+  }, [planId]);
+
+  const handleSwapMealEntry = useCallback(
+    async (candidate: { templateTitle: string; entry: RuntimeMealEntry }) => {
+      if (!swapEntry || !planId) return;
+      setIsSwapping(true);
+      try {
+        const resolved = await swapMealEntryForDate({
+          userId: user.id,
+          planId,
+          date: today,
+          eatingMode: user.eatingMode,
+          targetEntryId: swapEntry.id,
+          replacement: {
+            mealType: candidate.entry.mealType,
+            foodId: candidate.entry.foodId ?? null,
+            foodName: candidate.entry.foodName,
+            quantity: candidate.entry.quantity ?? null,
+            unit: candidate.entry.unit ?? null,
+            calories: candidate.entry.calories ?? null,
+            protein: candidate.entry.protein ?? null,
+            carbs: candidate.entry.carbs ?? null,
+            fats: candidate.entry.fats ?? null,
+            displayOrder: swapEntry.displayOrder ?? candidate.entry.displayOrder ?? null,
+            notes: candidate.entry.notes ?? null,
+          },
+          reason: buildStructuredMealSwapReason({
+            userReason: swapReason,
+            from: swapEntry,
+            to: candidate.entry,
+          }),
+          enforceGuardrails: true,
+        });
+        setMealsByType(resolved.mealsByType);
+        const swappedTo = findMealEntry(resolved.mealsByType, {
+          mealType: candidate.entry.mealType,
+          foodName: candidate.entry.foodName,
+          displayOrder: swapEntry.displayOrder ?? candidate.entry.displayOrder ?? null,
+        });
+        setLastSwap({
+          previous: swapEntry,
+          current: {
+            id: swappedTo?.id,
+            mealType: candidate.entry.mealType,
+            foodName: candidate.entry.foodName,
+            displayOrder: swapEntry.displayOrder ?? candidate.entry.displayOrder ?? null,
+          },
+        });
+        setSwapEntry(null);
+      } catch (err) {
+        console.error('Failed to swap meal entry:', err);
+        const message = err instanceof Error ? err.message : '';
+        const guardrailMessages = uiCopy.menu.swapGuardrailMessages;
+        Alert.alert(
+          message in guardrailMessages ? uiCopy.menu.swapBlockedTitle : uiCopy.menu.swapFailedTitle,
+          guardrailMessages[message] ?? uiCopy.menu.swapFailedMessage
+        );
+      } finally {
+        setIsSwapping(false);
+      }
+    },
+    [swapEntry, planId, swapReason, user.id, user.eatingMode, today]
+  );
+
+  const handleUndoLastSwap = useCallback(async () => {
+    if (!lastSwap || !planId) return;
+    const target = findMealEntry(mealsByType, lastSwap.current);
+    if (!target) {
+      Alert.alert(uiCopy.menu.undoUnavailableTitle, uiCopy.menu.undoUnavailableMessage);
+      return;
+    }
+    setIsSwapping(true);
+    try {
+      const resolved = await swapMealEntryForDate({
+        userId: user.id,
+        planId,
+        date: today,
+        eatingMode: user.eatingMode,
+        targetEntryId: target.id,
+        replacement: {
+          mealType: lastSwap.previous.mealType,
+          foodId: lastSwap.previous.foodId ?? null,
+          foodName: lastSwap.previous.foodName,
+          quantity: lastSwap.previous.quantity ?? null,
+          unit: lastSwap.previous.unit ?? null,
+          calories: lastSwap.previous.calories ?? null,
+          protein: lastSwap.previous.protein ?? null,
+          carbs: lastSwap.previous.carbs ?? null,
+          fats: lastSwap.previous.fats ?? null,
+          displayOrder: lastSwap.previous.displayOrder ?? null,
+          notes: lastSwap.previous.notes ?? null,
+        },
+        reason: 'swap_reason:undo_last_swap',
+        enforceGuardrails: false,
+      });
+      setMealsByType(resolved.mealsByType);
+      setLastSwap(null);
+    } catch (err) {
+      console.error('Failed to undo meal swap:', err);
+      Alert.alert(uiCopy.menu.undoFailedTitle, uiCopy.menu.undoFailedMessage);
+    } finally {
+      setIsSwapping(false);
+    }
+  }, [lastSwap, mealsByType, planId, today, user.eatingMode, user.id]);
+
   // ── Sorted templates ─────────────────────────────────────────────────────
 
   const sortedTemplates = useMemo(() => {
+    const recommendationById = new Map(
+      recommendedTemplates.map((row) => [row.id, row] as const)
+    );
     return [...templates].sort((a, b) => {
-      const aRec = (a.eatingMode ?? '').toLowerCase() === user.eatingMode;
-      const bRec = (b.eatingMode ?? '').toLowerCase() === user.eatingMode;
-      if (aRec === bRec) return a.title.localeCompare(b.title);
-      return bRec ? 1 : -1;
+      const aScore = recommendationById.get(a.id)?.score ?? 0;
+      const bScore = recommendationById.get(b.id)?.score ?? 0;
+      if (aScore !== bScore) return bScore - aScore;
+      return a.title.localeCompare(b.title);
     });
-  }, [templates, user.eatingMode]);
+  }, [templates, recommendedTemplates]);
+
+  const recommendationByTemplateId = useMemo(
+    () => new Map(recommendedTemplates.map((row) => [row.id, row] as const)),
+    [recommendedTemplates]
+  );
 
   const isOverCalories = hasMeals && totals.calories > calorieGoal;
   const ringLabel = hasMeals
-    ? `${totals.calories} / ${Math.round(calorieGoal)} kcal today`
+    ? uiCopy.menu.ringLabelWithMeals(totals.calories, Math.round(calorieGoal))
     : selectedTemplate
-      ? `${selectedTemplate.title} — targets`
-      : `${Math.round(calorieGoal)} kcal daily target`;
+      ? uiCopy.menu.ringLabelWithTemplate(selectedTemplate.title)
+      : uiCopy.menu.ringLabelNoTemplate(Math.round(calorieGoal));
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -384,7 +561,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
         >
           {/* Page header */}
           <View style={styles.pageHeader}>
-            <Text style={styles.pageTitle}>Meals</Text>
+            <Text style={styles.pageTitle}>{uiCopy.menu.pageTitle}</Text>
             <Text style={styles.pageSubtitle}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
             </Text>
@@ -416,7 +593,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
           {isLoading && (
             <View style={styles.loadingRow}>
               <ActivityIndicator size="small" color={C.textMuted} />
-              <Text style={styles.loadingText}>Loading…</Text>
+              <Text style={styles.loadingText}>{uiCopy.menu.loading}</Text>
             </View>
           )}
 
@@ -425,17 +602,29 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
             <View style={styles.section}>
               <View style={styles.todayCard}>
                 <View style={styles.todayHeader}>
-                  <Text style={styles.todayLabel}>Today's Meals</Text>
-                  {appliedTemplateId && (
-                    <Text style={styles.todayBadge}>
-                      {templates.find((t) => t.id === appliedTemplateId)?.title ?? ''}
-                    </Text>
-                  )}
+                  <Text style={styles.todayLabel}>{uiCopy.menu.todayMeals}</Text>
+                  <View style={styles.todayHeaderActions}>
+                    {lastSwap && (
+                      <TouchableOpacity onPress={handleUndoLastSwap} disabled={isSwapping}>
+                        <Text style={styles.undoSwapText}>{uiCopy.menu.undoSwap}</Text>
+                      </TouchableOpacity>
+                    )}
+                    {appliedTemplateId && (
+                      <Text style={styles.todayBadge}>
+                        {templates.find((t) => t.id === appliedTemplateId)?.title ?? ''}
+                      </Text>
+                    )}
+                  </View>
                 </View>
+                <Text style={styles.todayHint}>{uiCopy.menu.longPressHint}</Text>
                 {sortedSlots(mealsByType).map(([slotName, entries], idx) => (
                   <React.Fragment key={slotName}>
                     {idx > 0 && <View style={styles.slotDivider} />}
-                    <MealSlotCard title={slotName} entries={entries} />
+                    <MealSlotCard
+                      title={slotName}
+                      entries={entries}
+                      onEntryLongPress={handleEntryLongPress}
+                    />
                   </React.Fragment>
                 ))}
               </View>
@@ -444,15 +633,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
 
           {/* Template carousel */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>TEMPLATES</Text>
+            <Text style={styles.sectionTitle}>{uiCopy.menu.templatesTitle}</Text>
 
             {isLoading && !templates.length ? (
               <View style={styles.loadingRow}>
                 <ActivityIndicator size="small" color={C.textMuted} />
-                <Text style={styles.loadingText}>Loading…</Text>
+                <Text style={styles.loadingText}>{uiCopy.menu.loading}</Text>
               </View>
             ) : !templates.length ? (
-              <Text style={styles.carouselEmpty}>No templates available</Text>
+              <Text style={styles.carouselEmpty}>{uiCopy.menu.noTemplates}</Text>
             ) : (
               <>
                 <ScrollView
@@ -470,7 +659,8 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
                       template={template}
                       active={template.id === selectedTemplateId}
                       applying={isApplying && template.id === selectedTemplateId}
-                      recommended={(template.eatingMode ?? '').toLowerCase() === user.eatingMode}
+                      recommended={recommendationByTemplateId.has(template.id)}
+                      recommendationReason={recommendationByTemplateId.get(template.id)?.reason?.join(' + ') ?? null}
                       calorieTarget={calorieGoal}
                       onPress={() => handleSelectTemplate(template.id)}
                     />
@@ -492,6 +682,79 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ user, phase }) => {
 
           <View style={{ height: 60 }} />
         </ScrollView>
+
+        <Modal
+          transparent
+          animationType="fade"
+          visible={swapEntry !== null}
+          onRequestClose={() => setSwapEntry(null)}
+        >
+          <View style={styles.swapModalOverlay}>
+            <Pressable style={styles.swapModalBackdrop} onPress={() => setSwapEntry(null)} />
+            <View style={styles.swapModalSheet}>
+            <View style={styles.swapHeaderRow}>
+              <Text style={styles.swapTitle}>{uiCopy.menu.swapModalTitle}</Text>
+              <TouchableOpacity onPress={() => setSwapEntry(null)}>
+                <Text style={styles.swapClose}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.swapSubtitle} numberOfLines={1}>
+              {swapEntry?.foodName ?? uiCopy.menu.swapModalSelectReplacement}
+            </Text>
+            <View style={styles.reasonRow}>
+              {SWAP_REASONS.map((option) => (
+                <TouchableOpacity
+                  key={option.key}
+                  style={[
+                    styles.reasonChip,
+                    swapReason === option.key && styles.reasonChipActive,
+                  ]}
+                  onPress={() => setSwapReason(option.key)}
+                >
+                  <Text
+                    style={[
+                      styles.reasonChipText,
+                      swapReason === option.key && styles.reasonChipTextActive,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {isSwapping ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator size="small" color={C.accent} />
+                <Text style={styles.loadingText}>{uiCopy.menu.swapApplying}</Text>
+              </View>
+              ) : swapCandidates.length === 0 ? (
+                <Text style={styles.swapEmpty}>
+                  {uiCopy.menu.swapEmpty}
+                </Text>
+              ) : (
+                <ScrollView style={styles.swapList} showsVerticalScrollIndicator={false}>
+                  {swapCandidates.map((candidate, index) => (
+                    <TouchableOpacity
+                      key={`${candidate.entry.id}-${index}`}
+                      style={styles.swapItem}
+                      onPress={() => handleSwapMealEntry(candidate)}
+                    >
+                      <View style={styles.swapItemTextWrap}>
+                        <Text style={styles.swapItemTitle} numberOfLines={1}>
+                          {candidate.entry.foodName}
+                        </Text>
+                        <Text style={styles.swapItemMeta} numberOfLines={1}>
+                          {candidate.templateTitle} · {Math.round(candidate.entry.calories ?? 0)} kcal
+                        </Text>
+                      </View>
+                      <Text style={styles.swapItemArrow}>›</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </Modal>
 
       </LinearGradient>
     </View>
@@ -563,6 +826,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.06)',
   },
+  todayHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   todayLabel: {
     fontSize: 14,
     fontWeight: '700',
@@ -572,6 +840,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: C.accent,
+  },
+  undoSwapText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.protein,
+  },
+  todayHint: {
+    fontSize: 11,
+    color: C.textMuted,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 2,
   },
 
   // Meal slot (row within todayCard)
@@ -699,6 +979,107 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   forYouText: { fontSize: 10, fontWeight: '700', color: '#A89FFF', textTransform: 'uppercase', letterSpacing: 0.3 },
+  recommendationText: { fontSize: 11, color: C.textMuted, fontWeight: '600', marginTop: 4 },
+
+  // Swap modal
+  swapModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end',
+  },
+  swapModalBackdrop: { flex: 1 },
+  swapModalSheet: {
+    backgroundColor: '#101427',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 24,
+    maxHeight: '65%',
+  },
+  swapHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  swapTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: C.text,
+  },
+  swapClose: {
+    fontSize: 24,
+    color: C.textMuted,
+    lineHeight: 24,
+  },
+  swapSubtitle: {
+    marginTop: 6,
+    marginBottom: 12,
+    fontSize: 12,
+    color: C.textSec,
+    fontWeight: '600',
+  },
+  swapList: { maxHeight: 320 },
+  reasonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  reasonChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  reasonChipActive: {
+    backgroundColor: 'rgba(108,99,255,0.22)',
+    borderColor: 'rgba(108,99,255,0.45)',
+  },
+  reasonChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.textMuted,
+  },
+  reasonChipTextActive: {
+    color: '#A89FFF',
+  },
+  swapItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  swapItemTextWrap: { flex: 1, marginRight: 8 },
+  swapItemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: C.text,
+  },
+  swapItemMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    color: C.textMuted,
+  },
+  swapItemArrow: {
+    fontSize: 20,
+    color: C.textMuted,
+  },
+  swapEmpty: {
+    fontSize: 13,
+    color: C.textMuted,
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
 });
 
 export default MenuScreen;
