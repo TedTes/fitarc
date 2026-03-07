@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,8 @@ import {
 } from 'victory-native';
 import { PhasePlan, User, WorkoutLog, WorkoutSessionEntry, StrengthSnapshot, TrackingPreferences } from '../types/domain';
 import { parseYMDToDate } from '../utils/date';
+import { fetchSwapReasonSignals, SwapReasonSignal } from '../services/progressService';
+import { uiCopy } from '../content/uiCopy';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -37,8 +39,8 @@ const COLORS = {
 } as const;
 
 const VIEW_TABS = [
-  { id: 'muscles', label: 'Muscles' },
-  { id: 'exercises', label: 'Exercises' },
+  { id: 'muscles', label: uiCopy.progress.viewTabs.muscles },
+  { id: 'exercises', label: uiCopy.progress.viewTabs.exercises },
 ] as const;
 
 type ProgressScreenProps = {
@@ -148,12 +150,14 @@ const buildMuscleTrend = (workoutLogs: WorkoutLog[], muscles: string[]) => {
 };
 
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
+  user,
   phase,
   workoutSessions,
   workoutLogs,
   strengthSnapshots,
 }) => {
   const [activeView, setActiveView] = useState<typeof VIEW_TABS[number]['id']>('muscles');
+  const [swapSignals, setSwapSignals] = useState<SwapReasonSignal[]>([]);
 
   const filteredSessions = useMemo(
     () => workoutSessions.filter((session) => session.phasePlanId === phase.id),
@@ -179,7 +183,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       ? Math.min(totalWeeks, Math.max(1, Math.floor((Date.now() - startDate.getTime()) / 604800000) + 1))
       : Math.min(4, totalWeeks);
     return {
-      name: phase.name ?? 'Training Plan',
+      name: phase.name ?? uiCopy.progress.trainingPlanFallback,
       startDate: formatShortDate(startDate),
       endDate: formatShortDate(endDate),
       currentWeek,
@@ -283,6 +287,68 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     () => buildMuscleTrend(filteredWorkoutLogs, volumeData.map((item) => item.muscle)),
     [filteredWorkoutLogs, volumeData]
   );
+  const weeklyAction = useMemo(() => {
+    const topSignal = swapSignals[0];
+    const completionRate = planProgress.completionRate;
+
+    if (completionRate < 60) {
+      return {
+        title: uiCopy.progress.actionSimplifyTitle,
+        body: uiCopy.progress.actionSimplifyBody,
+      };
+    }
+
+    if (topSignal?.source === 'meal' && topSignal.key.includes('user_availability')) {
+      return {
+        title: uiCopy.progress.actionAvailabilityTitle,
+        body: uiCopy.progress.actionAvailabilityBody,
+      };
+    }
+
+    if (topSignal?.source === 'meal' && topSignal.key.includes('user_time')) {
+      return {
+        title: uiCopy.progress.actionTimeTitle,
+        body: uiCopy.progress.actionTimeBody,
+      };
+    }
+
+    if (topSignal?.source === 'workout' && topSignal.key.includes('volume_adjustment')) {
+      return {
+        title: uiCopy.progress.actionVolumeTitle,
+        body: uiCopy.progress.actionVolumeBody,
+      };
+    }
+
+    if (completionRate >= 80) {
+      return {
+        title: uiCopy.progress.actionProgressiveTitle,
+        body: uiCopy.progress.actionProgressiveBody,
+      };
+    }
+
+    return {
+      title: uiCopy.progress.actionKeepTitle,
+      body: uiCopy.progress.actionKeepBody,
+    };
+  }, [planProgress.completionRate, swapSignals]);
+
+  useEffect(() => {
+    let mounted = true;
+    const run = async () => {
+      try {
+        const signals = await fetchSwapReasonSignals(user.id, phase.id, 7);
+        if (mounted) setSwapSignals(signals);
+      } catch (error) {
+        console.error('Failed to load swap reason signals:', error);
+        if (mounted) setSwapSignals([]);
+      }
+    };
+    void run();
+    return () => {
+      mounted = false;
+    };
+  }, [phase.id, user.id]);
+
   return (
     <LinearGradient colors={['#0A0E27', '#0D1229', '#111633']} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -290,12 +356,14 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         {/* ── Header ── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Text style={styles.headerTitle}>Progress</Text>
-            <Text style={styles.headerSub}>Week {planProgress.currentWeek} of {planProgress.totalWeeks}</Text>
+            <Text style={styles.headerTitle}>{uiCopy.progress.pageTitle}</Text>
+            <Text style={styles.headerSub}>
+              {uiCopy.progress.weekOf(planProgress.currentWeek, planProgress.totalWeeks)}
+            </Text>
           </View>
           <View style={styles.adherencePill}>
             <Text style={styles.adherencePillValue}>{planProgress.completionRate}%</Text>
-            <Text style={styles.adherencePillLabel}>on track</Text>
+            <Text style={styles.adherencePillLabel}>{uiCopy.progress.onTrackLabel}</Text>
           </View>
         </View>
 
@@ -307,7 +375,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           <View style={styles.planCardInner}>
             <View style={styles.planTop}>
               <View style={styles.planTopLeft}>
-                <Text style={styles.planLabel}>CURRENT PLAN</Text>
+                <Text style={styles.planLabel}>{uiCopy.progress.currentPlanLabel}</Text>
                 <Text style={styles.planName} numberOfLines={1}>{planProgress.name}</Text>
                 <Text style={styles.planDates}>{planProgress.startDate} → {planProgress.endDate}</Text>
               </View>
@@ -343,6 +411,36 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
             </View>
           </View>
         </LinearGradient>
+
+        <View style={styles.signalCard}>
+          <View style={styles.signalHeader}>
+            <Text style={styles.signalTitle}>{uiCopy.progress.adaptationSignalsTitle}</Text>
+            <Text style={styles.signalWindow}>{uiCopy.progress.adaptationSignalsWindow}</Text>
+          </View>
+          {swapSignals.length ? (
+            <View style={styles.signalList}>
+              {swapSignals.map((signal) => (
+                <View key={`${signal.source}:${signal.key}`} style={styles.signalRow}>
+                  <Text style={styles.signalLabel} numberOfLines={1}>
+                    {signal.source === 'workout'
+                      ? uiCopy.progress.signalSourceWorkout
+                      : uiCopy.progress.signalSourceMeal}
+                    : {signal.label}
+                  </Text>
+                  <Text style={styles.signalCount}>{signal.count}</Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.signalEmpty}>{uiCopy.progress.adaptationSignalsEmpty}</Text>
+          )}
+        </View>
+
+        <View style={styles.actionCard}>
+          <Text style={styles.actionLabel}>{uiCopy.progress.nextWeekActionLabel}</Text>
+          <Text style={styles.actionTitle}>{weeklyAction.title}</Text>
+          <Text style={styles.actionBody}>{weeklyAction.body}</Text>
+        </View>
 
         {/* ── Tab row ── */}
         <View style={styles.tabRow}>
@@ -564,6 +662,90 @@ const styles = StyleSheet.create({
   planStatValue: { fontSize: 22, fontWeight: '900', color: COLORS.textPrimary, letterSpacing: -0.5 },
   planStatLabel: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted, marginTop: 2 },
   planStatDiv: { width: 1, height: 28, backgroundColor: 'rgba(255,255,255,0.1)' },
+  signalCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    marginBottom: 16,
+  },
+  signalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  signalTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+    letterSpacing: 0.2,
+  },
+  signalWindow: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  signalList: {
+    gap: 8,
+  },
+  signalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  signalLabel: {
+    flex: 1,
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+    marginRight: 10,
+  },
+  signalCount: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.accent,
+  },
+  signalEmpty: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '500',
+  },
+  actionCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderAccent,
+    backgroundColor: 'rgba(108,99,255,0.08)',
+    padding: 14,
+    marginBottom: 16,
+  },
+  actionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  actionTitle: {
+    marginTop: 6,
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+  },
+  actionBody: {
+    marginTop: 6,
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
 
   weekRow: { flexDirection: 'row', gap: 4, marginBottom: 6, alignItems: 'flex-end' },
   weekSlot: { flex: 1, position: 'relative', alignItems: 'center' },

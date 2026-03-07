@@ -12,15 +12,11 @@ export type ProgressData = {
   strengthSnapshots: StrengthSnapshot[];
 };
 
-export type MuscleGroupOption = {
-  id: string;
-  name: string;
-};
-
-export type ExerciseOption = {
-  id: string;
-  name: string;
-  movementPattern?: string | null;
+export type SwapReasonSignal = {
+  key: string;
+  label: string;
+  count: number;
+  source: 'workout' | 'meal';
 };
 
 export const fetchProgressData = async (
@@ -111,46 +107,93 @@ export const fetchProgressData = async (
   };
 };
 
-export const fetchMuscleGroups = async (): Promise<MuscleGroupOption[]> => {
-  const { data, error } = await supabase
-    .from('fitarc_muscle_groups')
-    .select('id, name')
-    .order('name', { ascending: true });
+const startOfLocalDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
-  if (error) {
-    throw error;
-  }
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    name: row.name,
-  }));
+const formatDateYmd = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
-export const fetchExercises = async (): Promise<ExerciseOption[]> => {
-  const { data, error } = await supabase
-    .from('fitarc_exercises')
-    .select('id, name, movement_pattern')
-    .order('name', { ascending: true });
+const parseSwapReasonKeys = (notes?: string | null): string[] => {
+  if (!notes) return [];
+  const normalized = notes.toLowerCase();
+  const direct = normalized.match(/swap_reason:[a-z0-9_]+/g) ?? [];
+  if (direct.length) return Array.from(new Set(direct));
 
-  if (error) {
-    throw error;
-  }
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    name: row.name,
-    movementPattern: row.movement_pattern,
-  }));
+  const reasonIdx = normalized.indexOf('swap reason:');
+  if (reasonIdx < 0) return [];
+  const trailing = normalized.slice(reasonIdx + 'swap reason:'.length).trim();
+  const token = trailing.match(/^([a-z0-9_:-]+)/)?.[1];
+  if (!token) return [];
+  return [token.startsWith('swap_reason:') ? token : `swap_reason:${token}`];
 };
 
-export const deriveMovementPatterns = (exercises: ExerciseOption[]): string[] => {
-  const patterns = new Set<string>();
-  exercises.forEach((exercise) => {
-    const pattern = exercise.movementPattern?.trim();
-    if (pattern) {
-      patterns.add(pattern);
-    }
-  });
-  return Array.from(patterns).sort((a, b) => a.localeCompare(b));
+const reasonLabel = (key: string): string => {
+  const normalized = key.replace(/^swap_reason:/, '');
+  if (normalized.startsWith('user_')) {
+    const value = normalized.replace(/^user_/, '');
+    return `Meal: ${value.replace(/_/g, ' ')}`;
+  }
+  if (normalized === 'undo_last_swap') return 'Undo swap';
+  return normalized.replace(/_/g, ' ');
+};
+
+export const fetchSwapReasonSignals = async (
+  userId: string,
+  planId: string,
+  windowDays = 7
+): Promise<SwapReasonSignal[]> => {
+  const today = startOfLocalDay(new Date());
+  const from = new Date(today);
+  from.setDate(today.getDate() - Math.max(0, windowDays - 1));
+  const fromDate = formatDateYmd(from);
+  const toDate = formatDateYmd(today);
+
+  const [workoutRes, mealRes] = await Promise.all([
+    supabase
+      .from('fitarc_plan_overrides')
+      .select('notes')
+      .eq('user_id', userId)
+      .eq('plan_id', planId)
+      .eq('is_active', true)
+      .gte('day_date', fromDate)
+      .lte('day_date', toDate),
+    supabase
+      .from('fitarc_meal_overrides')
+      .select('notes')
+      .eq('user_id', userId)
+      .eq('plan_id', planId)
+      .eq('is_active', true)
+      .gte('day_date', fromDate)
+      .lte('day_date', toDate),
+  ]);
+
+  if (workoutRes.error) throw workoutRes.error;
+  if (mealRes.error) throw mealRes.error;
+
+  const counts = new Map<string, SwapReasonSignal>();
+  const consume = (notes: string | null, source: 'workout' | 'meal') => {
+    parseSwapReasonKeys(notes).forEach((key) => {
+      const scopedKey = `${source}:${key}`;
+      const existing = counts.get(scopedKey);
+      if (existing) {
+        existing.count += 1;
+        return;
+      }
+      counts.set(scopedKey, {
+        key,
+        label: reasonLabel(key),
+        count: 1,
+        source,
+      });
+    });
+  };
+
+  (workoutRes.data ?? []).forEach((row: any) => consume(row.notes ?? null, 'workout'));
+  (mealRes.data ?? []).forEach((row: any) => consume(row.notes ?? null, 'meal'));
+
+  return Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 6);
 };
