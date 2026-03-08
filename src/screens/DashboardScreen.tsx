@@ -481,6 +481,42 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }));
   }, []);
 
+  // ── Consecutive-day awareness ─────────────────────────────────────────────────
+
+  const todayDay = useMemo(() => {
+    for (const week of weeks) {
+      const d = week.days.find((dd) => dd.isToday);
+      if (d) return d;
+    }
+    return null;
+  }, [weeks]);
+
+  const tomorrowStr = useMemo(() => {
+    const t = new Date();
+    t.setDate(t.getDate() + 1);
+    return formatLocalDateYMD(t);
+  }, []);
+
+  const todayComplete = useMemo(() => {
+    if (!todayDay) return false;
+    // Rest day counts as complete — highlight tomorrow
+    if (todayDay.planIsRest) return true;
+    const exercises = getDayExercises(todayDay);
+    if (!exercises.length) return false;
+    return exercises.every((ex) =>
+      (localDone[`${todayDay.date}::${ex.name}`] ??
+        ('completed' in ex ? ex.completed : false)) === true
+    );
+  }, [todayDay, getDayExercises, localDone]);
+
+  // Auto-open tomorrow's card once today is done (or is a rest day)
+  useEffect(() => {
+    if (todayComplete) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setExpandedDate(tomorrowStr);
+    }
+  }, [todayComplete, tomorrowStr]);
+
   // ── Exercise list (inside expanded card) ────────────────────────────────────
 
   const renderExercises = (day: TDay) => {
@@ -489,8 +525,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         ? day.session.exercises
         : (day.planDay?.workout?.exercises ?? []);
 
+    const allDone = exercises.length > 0 && exercises.every((ex) =>
+      isExDone(day, ex.name, 'completed' in ex ? ex.completed : undefined)
+    );
+
     return (
       <View style={s.exSection}>
+        {/* Completion banner — shown when today's workout is fully done */}
+        {day.isToday && allDone && (
+          <View style={s.completionBanner}>
+            <Text style={s.completionBannerIcon}>✓</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={s.completionBannerText}>Workout complete!</Text>
+              <Text style={s.completionBannerSub}>Rest up — see you tomorrow</Text>
+            </View>
+          </View>
+        )}
         {/* Exercise rows */}
         <View style={s.exRows}>
           {exercises.length === 0 ? (
@@ -529,6 +579,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const renderDayCard = (day: TDay) => {
     const rest        = day.planIsRest;
     const expanded    = expandedDate === day.date && !rest;
+    const isNextUp    = todayComplete && day.date === tomorrowStr && !rest;
 
     const exCount     = rest ? 0 : (day.session?.exercises?.length ?? day.planDay?.workout?.exercises?.length ?? 0);
     const dayExercises = rest ? [] : getDayExercises(day);
@@ -541,6 +592,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     if (rest)            { dotColor = C.textFaint;               dotGlow = undefined; }
     else if (allExDone)  { dotColor = C.success;                 dotGlow = 'rgba(0,245,160,0.45)'; }
     else if (day.isToday){ dotColor = C.success;                 dotGlow = 'rgba(0,245,160,0.45)'; }
+    else if (isNextUp)   { dotColor = C.accent;                  dotGlow = 'rgba(108,99,255,0.4)'; }
     else                 { dotColor = 'rgba(255,255,255,0.12)';  dotGlow = undefined; }
 
     return (
@@ -559,7 +611,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </View>
 
         {/* ── Card ── */}
-        <View style={[s.dayCard, allExDone && s.dayCardDone, day.isToday && s.dayCardToday, expanded && s.dayCardExpanded]}>
+        <View style={[s.dayCard, allExDone && s.dayCardDone, day.isToday && s.dayCardToday, isNextUp && s.dayCardNextUp, expanded && s.dayCardExpanded]}>
 
           {/* Card header — always visible */}
           <TouchableOpacity
@@ -587,7 +639,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               {!rest && day.isToday && !allExDone && (
                 <View style={s.todayBadge}><Text style={s.todayBadgeTxt}>Today</Text></View>
               )}
-              {!rest && !allExDone && !day.isToday && exCount > 0 && (
+              {isNextUp && (
+                <View style={s.nextUpBadge}><Text style={s.nextUpBadgeTxt}>Next Up</Text></View>
+              )}
+              {!rest && !allExDone && !day.isToday && !isNextUp && exCount > 0 && (
                 <Text style={s.exCntBadge}>{exCount} ex</Text>
               )}
 
@@ -1320,4 +1375,23 @@ const s = StyleSheet.create({
     shadowColor: C.accent, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14, elevation: 8,
   },
   startBtnTxt: { fontSize: 15, fontWeight: '800', color: C.text, letterSpacing: 0.4 },
+
+  // ── Consecutive day ─────────────────────────────────────────────────────────
+  completionBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: 'rgba(0,245,160,0.07)',
+    borderRadius: 10, borderWidth: 1, borderColor: 'rgba(0,245,160,0.2)',
+    padding: 12, marginBottom: 12,
+  },
+  completionBannerIcon: { fontSize: 22, color: C.success },
+  completionBannerText: { fontSize: 14, fontWeight: '700', color: C.success, marginBottom: 2 },
+  completionBannerSub:  { fontSize: 11, color: C.textMuted },
+
+  nextUpBadge:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: C.accentDim, borderWidth: 1, borderColor: C.accentBorder },
+  nextUpBadgeTxt: { fontSize: 10, fontWeight: '700', color: C.accent },
+
+  dayCardNextUp: {
+    borderColor: C.accentBorder,
+    backgroundColor: 'rgba(108,99,255,0.05)',
+  },
 });
