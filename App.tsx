@@ -27,6 +27,7 @@ import {
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
+  DietScreen,
   ProgressScreen,
   MenuScreen,
   PhotoCaptureScreen,
@@ -170,7 +171,7 @@ const AnimatedTabButton: React.FC<{
     onPress();
   };
 
-  const pillBg = pillAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(108,99,255,0)', 'rgba(108,99,255,0.18)'] });
+  const pillBg = pillAnim.interpolate({ inputRange: [0, 1], outputRange: ['rgba(108,99,255,0)', 'rgba(108,99,255,0)'] });
 
   return (
     <TouchableOpacity
@@ -341,7 +342,10 @@ function AppContent() {
   const showPlanTabs = Boolean(state?.user);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
 
-  const fabConfig = getFabAction('Today');
+  const lastFabConfigRef = useRef<FabActionConfig | null>(null);
+  const currentFabConfig = getFabAction(currentRouteName);
+  if (currentFabConfig) lastFabConfigRef.current = currentFabConfig;
+  const fabConfig = currentFabConfig ?? lastFabConfigRef.current;
   const triggerTabFabPop = useCallback(() => {
     tabFabPop.setValue(0);
     Animated.sequence([
@@ -1033,7 +1037,7 @@ function AppContent() {
             }
           </Tab.Screen>
           <Tab.Screen name="Diet">
-            {() => <View style={styles.container} />}
+            {() => <DietScreen />}
           </Tab.Screen>
           <Tab.Screen name="Progress">
             {() => <View style={styles.container} />}
