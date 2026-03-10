@@ -27,7 +27,6 @@ import {
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
-  DietScreen,
   ProgressScreen,
   MenuScreen,
   PhotoCaptureScreen,
@@ -57,7 +56,6 @@ import { deleteAccount as deleteAccountService } from './src/services/accountSer
 
 type RootTabParamList = {
   Today:    undefined;
-  Diet:     undefined;
   Progress: undefined;
 };
 
@@ -73,7 +71,6 @@ type TabConfig = {
 
 const TAB_CONFIG: Record<keyof RootTabParamList, TabConfig> = {
   Today:    { icon: 'barbell-outline',        activeIcon: 'barbell',          label: 'Today'    },
-  Diet:     { icon: 'nutrition-outline',      activeIcon: 'nutrition',        label: 'Diet'     },
   Progress: { icon: 'bar-chart-outline',      activeIcon: 'bar-chart',        label: 'Stats'    },
 };
 
@@ -82,7 +79,6 @@ const linking = {
   config: {
     screens: {
       Today:    'today',
-      Diet:     'diet',
       Progress: 'progress',
     },
   },
@@ -1036,9 +1032,6 @@ function AppContent() {
               )
             }
           </Tab.Screen>
-          <Tab.Screen name="Diet">
-            {() => <DietScreen />}
-          </Tab.Screen>
           <Tab.Screen name="Progress">
             {() => <View style={styles.container} />}
           </Tab.Screen>
@@ -1055,7 +1048,7 @@ function AppContent() {
           </View>
 
           <View style={styles.tabBarContent} pointerEvents="box-none">
-            {/* Left half: Today + Diet */}
+            {/* Left half: Today */}
             <View style={styles.tabHalf}>
               <AnimatedTabButton
                 focused={currentRouteName === 'Today'}
@@ -1064,15 +1057,6 @@ function AppContent() {
                 label={TAB_CONFIG.Today.label}
                 onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Today'); }}
               />
-              {showPlanTabs && (
-                <AnimatedTabButton
-                  focused={currentRouteName === 'Diet'}
-                  icon={TAB_CONFIG.Diet.icon}
-                  activeIcon={TAB_CONFIG.Diet.activeIcon}
-                  label={TAB_CONFIG.Diet.label}
-                  onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Diet'); }}
-                />
-              )}
             </View>
 
             {/* FAB spacer — keeps true center */}
