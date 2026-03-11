@@ -93,8 +93,7 @@ const MON_FIRST = [1, 2, 3, 4, 5, 6, 0] as const; // Mon … Sun day-of-week ord
 const dayOrder  = (d: Date) => MON_FIRST.indexOf(d.getDay() as typeof MON_FIRST[number]);
 
 const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const fmtDate = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+const fmtDate = (d: Date) => `${d.getDate()}`;
 
 // Return the Monday on or before `d`
 const mondayOf = (d: Date) => {
@@ -763,9 +762,6 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               <Text style={s.sheetTitle}>
                 {templateWeek ? templateWeek.label : 'Apply Template'}
               </Text>
-              {templateDay && (
-                <Text style={s.sheetSub}>{templateDay.dayName} · {templateDay.dateLabel}</Text>
-              )}
             </View>
             <TouchableOpacity style={s.sheetCloseBtn} onPress={closeTemplateModal}>
               <Text style={s.sheetCloseTxt}>✕</Text>
@@ -774,53 +770,77 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
           {templateWeek && (
             <>
-              {/* Week picker — sticky */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={s.weekPickerRow}
-              >
-                {weeks.map((w) => {
-                  const selectedWeek = w.weekIdx === templateWeek.weekIdx;
-                  return (
-                    <TouchableOpacity
-                      key={w.weekIdx}
-                      style={[s.weekChip, selectedWeek && s.weekChipSelected]}
-                      onPress={() => {
-                        setTemplateWeek(w);
-                        setTemplateDay(pickDefaultDayForWeek(w));
-                      }}
-                    >
-                      <Text style={[s.weekChipText, selectedWeek && s.weekChipTextSelected]}>
-                        {w.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              <View style={s.pickerSection}>
+                <Text style={s.pickerLabel}>Week</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={s.weekPickerRow}
+                >
+                  {weeks.map((w) => {
+                    const selectedWeek = w.weekIdx === templateWeek.weekIdx;
+                    return (
+                      <TouchableOpacity
+                        key={w.weekIdx}
+                        style={[s.weekChip, selectedWeek && s.weekChipSelected]}
+                        onPress={() => {
+                          setTemplateWeek(w);
+                          setTemplateDay(pickDefaultDayForWeek(w));
+                        }}
+                      >
+                        <Text
+                          numberOfLines={1}
+                          allowFontScaling={false}
+                          style={[s.weekChipText, selectedWeek && s.weekChipTextSelected]}
+                        >
+                          {w.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
 
-              {/* Day picker — sticky */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={s.dayPickerRow}
-              >
-                {templateWeek.days.map((d) => {
-                  const selected = d.date === templateDay?.date;
-                  const rest = d.planIsRest;
-                  return (
-                    <TouchableOpacity
-                      key={d.date}
-                      style={[s.dayChip, selected && s.dayChipSelected, rest && s.dayChipRest]}
-                      onPress={() => setTemplateDay(d)}
-                    >
-                      <Text style={[s.dayChipDate, selected && s.dayChipDateSelected]}>
-                        {d.dateLabel}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              <View style={s.pickerSection}>
+                <Text style={s.pickerLabel}>Day</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={s.dayPickerRow}
+                >
+                  {templateWeek.days.map((d) => {
+                    const selected = d.date === templateDay?.date;
+                    const rest = d.planIsRest;
+                    const dayNumber = parseYMD(d.date).getDate();
+                    return (
+                      <TouchableOpacity
+                        key={d.date}
+                        style={[s.dayChip, selected && s.dayChipSelected, rest && s.dayChipRest]}
+                        onPress={() => setTemplateDay(d)}
+                      >
+                        <Text
+                          numberOfLines={1}
+                          allowFontScaling={false}
+                          style={[
+                            s.dayChipDay,
+                            selected && s.dayChipDaySelected,
+                            rest && s.dayChipDayRest,
+                          ]}
+                        >
+                          {d.dayName}
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          allowFontScaling={false}
+                          style={[s.dayChipDate, selected && s.dayChipDateSelected]}
+                        >
+                          {dayNumber}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
 
               {/* Template list — scrollable */}
               {templateDay && (
@@ -1240,37 +1260,63 @@ const s = StyleSheet.create({
   actBtnDangerTxt: { color: C.danger },
 
   // ── Day picker (inside template modal) ────────────────────────────────────
+  pickerSection: {
+    paddingHorizontal: 16,
+    marginTop: 6,
+  },
+  pickerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.textMuted,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
   weekPickerRow: {
-    flexDirection: 'row', gap: 8,
-    paddingHorizontal: 16, paddingTop: 10, paddingBottom: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 2,
+    paddingBottom: 2,
   },
   weekChip: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
+    height: 34,
     paddingVertical: 7,
     borderRadius: 10,
     borderWidth: 1,
     backgroundColor: 'rgba(255,255,255,0.04)',
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexShrink: 0,
+    marginRight: 8,
   },
   weekChipSelected: { backgroundColor: C.accentDim, borderColor: C.accentBorder },
-  weekChipText: { fontSize: 11, fontWeight: '700', color: C.textMuted },
+  weekChipText: { fontSize: 12, lineHeight: 15, fontWeight: '700', color: C.textMuted },
   weekChipTextSelected: { color: C.accent },
   dayPickerRow: {
-    flexDirection: 'row', gap: 8,
-    paddingHorizontal: 16, paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 2,
+    paddingBottom: 10,
   },
   dayChip: {
-    alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 54,
+    width: 64,
     borderRadius: 10, borderWidth: 1,
-    backgroundColor: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.12)',
+    flexShrink: 0,
+    marginRight: 8,
   },
   dayChipSelected:  { backgroundColor: C.accentDim, borderColor: C.accentBorder },
   dayChipRest:      { borderColor: 'rgba(58,63,92,0.8)', backgroundColor: 'rgba(58,63,92,0.22)' },
-  dayChipDay:       { fontSize: 11, fontWeight: '700', color: C.textMuted, marginBottom: 2 },
+  dayChipDay:       { fontSize: 11, lineHeight: 14, fontWeight: '700', color: C.textMuted, marginBottom: 2 },
   dayChipDaySelected: { color: C.accent },
   dayChipDayRest:   { color: C.textMuted },
-  dayChipDate:      { fontSize: 10, fontWeight: '400', color: C.textFaint },
-  dayChipDateSelected: { color: C.textSub },
+  dayChipDate:      { fontSize: 15, lineHeight: 18, fontWeight: '800', color: C.textSub },
+  dayChipDateSelected: { color: C.text },
 
   // ── Template modal ─────────────────────────────────────────────────────────
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.75)' },
