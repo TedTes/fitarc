@@ -4,6 +4,18 @@ import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
 import { MuscleGroup, WorkoutSessionEntry } from '../types/domain';
 
 const extractBodyParts = (exerciseRow: any): MuscleGroup[] => {
+  if (Array.isArray(exerciseRow?.body_parts)) {
+    return exerciseRow.body_parts
+      .map((part: any) => mapMuscleNameToGroup(part))
+      .filter((m: MuscleGroup | null | undefined): m is MuscleGroup => !!m);
+  }
+
+  if (Array.isArray(exerciseRow?.bodyParts)) {
+    return exerciseRow.bodyParts
+      .map((part: any) => mapMuscleNameToGroup(part))
+      .filter((m: MuscleGroup | null | undefined): m is MuscleGroup => !!m);
+  }
+
   const links = Array.isArray(exerciseRow)
     ? exerciseRow
     : exerciseRow?.exercise?.muscle_links || [];
@@ -68,9 +80,10 @@ export const mapSessionRow = (
       const derivedReps = repsNote ?? (repsFromSets != null ? String(repsFromSets) : '8-12');
       return {
         id: se.id,
-        exerciseId: se.exercise?.id,
-        name: se.exercise?.name || 'Unknown',
-        bodyParts: extractBodyParts(se.exercise?.muscle_links || []),
+        exerciseId: se.exercise_id ?? se.exercise?.id,
+        name: se.exercise_name || se.exercise?.name || se.exercise_id || 'Unknown',
+        bodyParts: extractBodyParts(se),
+        movementPattern: se.movement_pattern ?? se.exercise?.movement_pattern ?? undefined,
         sets: derivedSets,
         reps: derivedReps,
         completed: se.complete || false,
