@@ -6,7 +6,6 @@ export { CurrentPhysiqueSelectionScreen } from './CurrentPhysiqueSelectionScreen
 export { TargetPhysiqueSelectionScreen } from './TargetPhysiqueSelectionScreen';
 export { PhotoCaptureScreen } from './PhotoCaptureScreen';
 export { DashboardScreen } from './DashboardScreen';
-export { DietScreen } from './DietScreen';
 export { PlansScreen } from './PlansScreen';
 export { ProgressScreen } from './ProgressScreen';
 export { PhaseCompleteScreen } from './PhaseCompleteScreen';

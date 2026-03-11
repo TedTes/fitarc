@@ -56,18 +56,10 @@ export const fetchProgressData = async (
       complete,
       session_exercises:fitarc_workout_session_exercises (
         id,
+        exercise_id,
         display_order,
         notes,
         complete,
-        exercise:fitarc_exercises (
-          id,
-          name,
-          movement_pattern,
-          muscle_links:fitarc_exercise_muscle_groups (
-            role,
-            muscle:fitarc_muscle_groups ( name )
-          )
-        ),
         sets:fitarc_workout_sets (
           set_number,
           reps,
