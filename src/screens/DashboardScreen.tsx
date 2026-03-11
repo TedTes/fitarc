@@ -94,6 +94,7 @@ const dayOrder  = (d: Date) => MON_FIRST.indexOf(d.getDay() as typeof MON_FIRST[
 
 const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const fmtDate = (d: Date) => `${d.getDate()}`;
+const UUID_LIKE_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Return the Monday on or before `d`
 const mondayOf = (d: Date) => {
@@ -464,7 +465,38 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   };
 
   const getDayExercises = useCallback((day: TDay): WorkoutSessionExercise[] => {
-    if (day.session?.exercises?.length) return day.session.exercises;
+    if (day.session?.exercises?.length) {
+      const planExercises = day.planDay?.workout?.exercises ?? [];
+      const nameByExerciseId = new Map<string, string>();
+      const nameByDisplayOrder = new Map<number, string>();
+      planExercises.forEach((exercise) => {
+        if (exercise.exerciseId && exercise.name) {
+          nameByExerciseId.set(exercise.exerciseId, exercise.name);
+        }
+        if (exercise.displayOrder && exercise.name) {
+          nameByDisplayOrder.set(exercise.displayOrder, exercise.name);
+        }
+      });
+      return day.session.exercises.map((exercise) => {
+        const rawName = (exercise.name ?? '').trim();
+        const fallbackById = exercise.exerciseId
+          ? nameByExerciseId.get(exercise.exerciseId)
+          : undefined;
+        const fallbackByOrder =
+          typeof exercise.displayOrder === 'number'
+            ? nameByDisplayOrder.get(exercise.displayOrder)
+            : undefined;
+        const fallbackName = fallbackById ?? fallbackByOrder;
+        const resolvedName =
+          rawName && !UUID_LIKE_REGEX.test(rawName)
+            ? rawName
+            : fallbackName ?? (rawName || 'Exercise');
+        return {
+          ...exercise,
+          name: resolvedName,
+        };
+      });
+    }
     if (!day.planDay?.workout?.exercises?.length) return [];
     return day.planDay.workout.exercises.map((exercise) => ({
       id: exercise.id,
@@ -519,10 +551,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   // ── Exercise list (inside expanded card) ────────────────────────────────────
 
   const renderExercises = (day: TDay) => {
-    const exercises: Array<PlanWorkoutExercise | WorkoutSessionExercise> =
-      day.session?.exercises?.length
-        ? day.session.exercises
-        : (day.planDay?.workout?.exercises ?? []);
+    const exercises: Array<PlanWorkoutExercise | WorkoutSessionExercise> = getDayExercises(day);
 
     const allDone = exercises.length > 0 && exercises.every((ex) =>
       isExDone(day, ex.name, 'completed' in ex ? ex.completed : undefined)
