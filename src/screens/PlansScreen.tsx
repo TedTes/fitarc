@@ -96,6 +96,7 @@ const formatDateLabel = (dateStr: string) => {
   const date = parseLocalDateFromYMD(dateStr);
   return {
     weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
+    dayNumber: date.getDate(),
   };
 };
 
@@ -1188,7 +1189,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                   contentContainerStyle={styles.weekStrip}
                 >
                   {weekPlans.map((plan) => {
-                    const { weekday } = formatDateLabel(plan.dateStr);
+                    const { weekday, dayNumber } = formatDateLabel(plan.dateStr);
                     const isActive = plan.dateStr === selectedDate;
                     const hasWorkout =
                       plan.planDay?.workout && plan.planDay.workout.exercises.length > 0;
@@ -1208,14 +1209,22 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                         <Text style={[styles.dayLabel, isActive && styles.dayLabelActive]}>
                           {weekday}
                         </Text>
-                        <View
-                          style={[
-                            styles.dayDot,
-                            hasWorkout && styles.dayDotVisible,
-                            isCompletedDay && styles.dayDotComplete,
-                          ]}
-                        />
-                        {isCompletedDay && <Text style={styles.dayCheckMark}>✓</Text>}
+                        <Text style={[styles.dayNumber, isActive && styles.dayNumberActive]}>
+                          {dayNumber}
+                        </Text>
+                        <View style={styles.dayStatusRow}>
+                          {isCompletedDay ? (
+                            <Text style={styles.dayCheckMark}>✓</Text>
+                          ) : (
+                            <View
+                              style={[
+                                styles.dayDot,
+                                hasWorkout && styles.dayDotVisible,
+                                isCompletedDay && styles.dayDotComplete,
+                              ]}
+                            />
+                          )}
+                        </View>
                       </TouchableOpacity>
                     );
                   })}
@@ -1487,18 +1496,18 @@ const styles = StyleSheet.create({
   },
   weekStrip: {
     paddingVertical: 4,
+    paddingHorizontal: 2,
     gap: 8,
   },
   dayChip: {
-    minWidth: 70,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    minWidth: 68,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.surface,
-    position: 'relative',
   },
   dayChipActive: {
     backgroundColor: COLORS.accent,
@@ -1508,12 +1517,28 @@ const styles = StyleSheet.create({
     borderColor: COLORS.success,
   },
   dayLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
     color: COLORS.textSecondary,
+    textTransform: 'uppercase',
   },
   dayLabelActive: {
     color: COLORS.textPrimary,
+  },
+  dayNumber: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  dayNumberActive: {
+    color: COLORS.textPrimary,
+  },
+  dayStatusRow: {
+    marginTop: 4,
+    minHeight: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   dayDot: {
     width: 4,
@@ -1531,11 +1556,8 @@ const styles = StyleSheet.create({
     opacity: 1,
   },
   dayCheckMark: {
-    position: 'absolute',
-    top: 4,
-    right: 6,
     color: COLORS.success,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
   },
   content: {

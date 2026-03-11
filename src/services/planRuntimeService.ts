@@ -73,6 +73,23 @@ type OverrideRow = {
   created_at: string;
 };
 
+type PersistedPlanDayRow = {
+  id: string;
+  day_date: string;
+  template_id?: string | null;
+  split_tag?: string | null;
+  is_rest_day?: boolean | null;
+  source_type?: string | null;
+};
+
+type PersistedPlanDayAssignment = {
+  id: string;
+  date: string;
+  templateId: string | null;
+  splitTag: string | null;
+  isRestDay: boolean;
+};
+
 const normalizeKey = (value?: string | null): string =>
   (value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
 
@@ -321,6 +338,65 @@ const fetchOverridesForRange = async (
   return byDay;
 };
 
+const isMissingPlanDaysSchemaError = (error: unknown): boolean => {
+  const code = (error as { code?: string } | null)?.code;
+  return code === '42P01' || code === '42703';
+};
+
+const mapPersistedPlanDayAssignment = (row: PersistedPlanDayRow): PersistedPlanDayAssignment => ({
+  id: row.id,
+  date: row.day_date,
+  templateId: row.template_id ?? null,
+  splitTag: row.split_tag ?? null,
+  isRestDay: typeof row.is_rest_day === 'boolean' ? row.is_rest_day : !row.template_id,
+});
+
+const fetchPersistedPlanDaysForRange = async (
+  userId: string,
+  planId: string,
+  startDate: string,
+  endDate: string
+): Promise<Map<string, PersistedPlanDayAssignment>> => {
+  const primary = await supabase
+    .from('fitarc_plan_days')
+    .select('id, day_date, template_id, split_tag, is_rest_day, source_type')
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .gte('day_date', startDate)
+    .lte('day_date', endDate)
+    .order('day_date', { ascending: true });
+
+  let rows: PersistedPlanDayRow[] = [];
+  if (primary.error) {
+    if (!isMissingPlanDaysSchemaError(primary.error)) {
+      throw primary.error;
+    }
+    const fallback = await supabase
+      .from('fitarc_plan_days')
+      .select('id, day_date, source_type')
+      .eq('user_id', userId)
+      .eq('plan_id', planId)
+      .gte('day_date', startDate)
+      .lte('day_date', endDate)
+      .order('day_date', { ascending: true });
+    if (fallback.error) {
+      if (isMissingPlanDaysSchemaError(fallback.error)) {
+        return new Map();
+      }
+      throw fallback.error;
+    }
+    rows = (fallback.data ?? []) as PersistedPlanDayRow[];
+  } else {
+    rows = (primary.data ?? []) as PersistedPlanDayRow[];
+  }
+
+  const byDate = new Map<string, PersistedPlanDayAssignment>();
+  rows.forEach((row) => {
+    byDate.set(row.day_date, mapPersistedPlanDayAssignment(row));
+  });
+  return byDate;
+};
+
 const chooseTemplatesForTag = (
   tag: string,
   templates: TemplateRow[],
@@ -510,9 +586,10 @@ const resolveTemplateBackedPlanDay = (
   context: PlanContext,
   date: string,
   template: TemplateRow,
-  overrides: OverrideRow[]
+  overrides: OverrideRow[],
+  planDayId?: string
 ): PlanDay => {
-  const dayId = `virtual:${context.planId}:${date}`;
+  const dayId = planDayId ?? `virtual:${context.planId}:${date}`;
   const workoutId = `virtual:${context.planId}:${date}`;
   const baseExercises = buildBaseExercises(template, context.planId, date, workoutId);
   const exercises = applyOverrides(baseExercises, overrides, context.planId, date, workoutId);
@@ -548,14 +625,40 @@ const buildTemplateBaselineForDate = async (
   context: PlanContext,
   date: string
 ): Promise<Map<string, TemplateBaselineExercise>> => {
+  const persistedByDate = await fetchPersistedPlanDaysForRange(userId, context.planId, date, date);
+  const persisted = persistedByDate.get(date);
   const profile = await fetchUserProfile(userId);
+  const templates = await fetchTemplatesForUser(userId);
+  if (!templates.length) {
+    return new Map();
+  }
+  if (persisted) {
+    if (persisted.isRestDay || !persisted.templateId) {
+      return new Map();
+    }
+    const matched = templates.find((template) => template.id === persisted.templateId);
+    if (!matched) {
+      return new Map();
+    }
+    const baseline = new Map<string, TemplateBaselineExercise>();
+    (matched.exercises ?? []).forEach((exercise, index) => {
+      baseline.set(exercise.id, {
+        exerciseId: exercise.exercise_id ?? null,
+        name: exercise.exercise_name,
+        movementPattern: exercise.movement_pattern ?? null,
+        bodyParts: (exercise.body_parts ?? []).map((part) => normalizeKey(part)),
+        sets: exercise.sets ?? null,
+        reps: exercise.reps ?? null,
+        displayOrder: exercise.display_order ?? index + 1,
+        notes: exercise.notes ?? null,
+      });
+    });
+    return baseline;
+  }
+
   const split = profile?.trainingSplit ?? 'full_body';
   const daysPerWeek = resolveDaysPerWeek(profile);
   if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) {
-    return new Map();
-  }
-  const templates = await fetchTemplatesForUser(userId);
-  if (!templates.length) {
     return new Map();
   }
   const storedTemplateMap = await fetchStoredPlanTemplateMap(context.planId);
@@ -646,11 +749,27 @@ export const fetchPlanRange = async (
   if (!templates.length) return [];
   const storedTemplateMap = await fetchStoredPlanTemplateMap(planId);
   const overridesByDay = await fetchOverridesForRange(userId, planId, startDate, endDate);
+  const persistedByDay = await fetchPersistedPlanDaysForRange(userId, planId, startDate, endDate);
   const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
 
   const dates = buildDateRange(startDate, endDate);
   const resolved: PlanDay[] = [];
   dates.forEach((date) => {
+    const persisted = persistedByDay.get(date);
+    if (persisted) {
+      if (persisted.isRestDay || !persisted.templateId) {
+        return;
+      }
+      const persistedTemplate = templates.find((template) => template.id === persisted.templateId);
+      if (persistedTemplate) {
+        const overrides = overridesByDay.get(date) ?? [];
+        resolved.push(
+          resolveTemplateBackedPlanDay(context, date, persistedTemplate, overrides, persisted.id)
+        );
+        return;
+      }
+    }
+
     if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) return;
     const template = resolveTemplateForDate(
       context,
@@ -753,12 +872,32 @@ export const fetchResolvedPlanForDate = async (
   if (!context || context.userId !== userId) return null;
 
   const profile = await fetchUserProfile(userId);
+  const templates = await fetchTemplatesForUser(userId);
+  if (!templates.length) return null;
+  const persistedByDay = await fetchPersistedPlanDaysForRange(userId, planId, date, date);
+  const persisted = persistedByDay.get(date);
+  if (persisted) {
+    if (persisted.isRestDay || !persisted.templateId) {
+      return null;
+    }
+    const persistedTemplate = templates.find((template) => template.id === persisted.templateId);
+    if (!persistedTemplate) {
+      return null;
+    }
+    const overridesByDay = await fetchOverridesForRange(userId, planId, date, date);
+    return resolveTemplateBackedPlanDay(
+      context,
+      date,
+      persistedTemplate,
+      overridesByDay.get(date) ?? [],
+      persisted.id
+    );
+  }
+
   const split = profile?.trainingSplit ?? 'full_body';
   const daysPerWeek = resolveDaysPerWeek(profile);
   if (!shouldTrainOnDate(parseYmd(date), daysPerWeek)) return null;
 
-  const templates = await fetchTemplatesForUser(userId);
-  if (!templates.length) return null;
   const storedTemplateMap = await fetchStoredPlanTemplateMap(planId);
   const equipmentLevel = normalizeEquipmentLevel(profile?.planPreferences?.equipmentLevel);
   const template = resolveTemplateForDate(
