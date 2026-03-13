@@ -164,7 +164,10 @@ export const fetchSwapReasonSignals = async (
   ]);
 
   if (workoutRes.error) throw workoutRes.error;
-  if (mealRes.error) throw mealRes.error;
+  const mealTableMissing =
+    mealRes.error?.code === '42P01' ||
+    mealRes.error?.message?.includes('fitarc_meal_overrides');
+  if (mealRes.error && !mealTableMissing) throw mealRes.error;
 
   const counts = new Map<string, SwapReasonSignal>();
   const consume = (notes: string | null, source: 'workout' | 'meal') => {
@@ -185,7 +188,9 @@ export const fetchSwapReasonSignals = async (
   };
 
   (workoutRes.data ?? []).forEach((row: any) => consume(row.notes ?? null, 'workout'));
-  (mealRes.data ?? []).forEach((row: any) => consume(row.notes ?? null, 'meal'));
+  ((mealTableMissing ? [] : mealRes.data) ?? []).forEach((row: any) =>
+    consume(row.notes ?? null, 'meal')
+  );
 
   return Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 6);
 };

@@ -149,6 +149,109 @@ const buildMuscleTrend = (workoutLogs: WorkoutLog[], muscles: string[]) => {
   return { weeks, series };
 };
 
+const normalizeStartOfDay = (date: Date) => {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+};
+
+const countCompletedSessions = (sessions: WorkoutSessionEntry[]) =>
+  sessions.filter((session) => session.exercises?.length && session.exercises.every((exercise) => exercise.completed === true));
+
+const buildSessionStreak = (sessions: WorkoutSessionEntry[]) => {
+  const completed = countCompletedSessions(sessions)
+    .map((session) => session.date)
+    .sort((a, b) => b.localeCompare(a));
+  const uniqueDates = Array.from(new Set(completed));
+  return uniqueDates.length;
+};
+
+const countSessionsInWindow = (sessions: WorkoutSessionEntry[], windowDays: number) => {
+  const today = normalizeStartOfDay(new Date());
+  const start = new Date(today);
+  start.setDate(today.getDate() - (windowDays - 1));
+  return sessions.filter((session) => {
+    const date = parseYMDToDate(session.date);
+    return date >= start && date <= today;
+  }).length;
+};
+
+const buildAdherenceDays = (sessions: WorkoutSessionEntry[], windowDays = 14) => {
+  const completedDates = new Set(
+    countCompletedSessions(sessions).map((session) => session.date)
+  );
+  const today = normalizeStartOfDay(new Date());
+  return Array.from({ length: windowDays }).map((_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (windowDays - 1 - index));
+    const key = date.toISOString().slice(0, 10);
+    return {
+      key,
+      shortLabel: date.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 1),
+      dayNumber: date.getDate(),
+      completed: completedDates.has(key),
+      isToday: key === today.toISOString().slice(0, 10),
+    };
+  });
+};
+
+const buildKeyLiftCards = (snapshots: StrengthSnapshot[]) => {
+  const grouped = new Map<string, StrengthSnapshot[]>();
+  snapshots.forEach((snapshot) => {
+    const label = (snapshot.exerciseName ?? snapshot.lift ?? '').trim();
+    if (!label || (snapshot.weight ?? 0) <= 0) return;
+    const key = label.toLowerCase();
+    const list = grouped.get(key) ?? [];
+    list.push(snapshot);
+    grouped.set(key, list);
+  });
+
+  return Array.from(grouped.entries())
+    .map(([key, items]) => {
+      const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date));
+      const latest = sorted[sorted.length - 1];
+      const first = sorted[0];
+      const latestValue = Math.round(latest.estimated1RM ?? latest.weight ?? 0);
+      const firstValue = Math.round(first.estimated1RM ?? first.weight ?? 0);
+      return {
+        id: key,
+        name: latest.exerciseName ?? latest.lift ?? key,
+        latestValue,
+        change: latestValue - firstValue,
+        sessions: items.length,
+        lastDate: latest.date,
+      };
+    })
+    .sort((a, b) => b.latestValue - a.latestValue)
+    .slice(0, 4);
+};
+
+const buildMuscleBalanceRows = (workoutLogs: WorkoutLog[]) => {
+  const totals = new Map<string, number>();
+  workoutLogs.forEach((log) => {
+    Object.entries(log.muscleVolume ?? {}).forEach(([muscle, sets]) => {
+      totals.set(muscle, (totals.get(muscle) ?? 0) + Math.round(sets ?? 0));
+    });
+  });
+
+  const target = 10;
+  return Array.from(totals.entries())
+    .map(([muscle, sets]) => {
+      const label = muscle.charAt(0).toUpperCase() + muscle.slice(1);
+      const ratio = Math.min(1, sets / target);
+      const status =
+        sets < 6 ? 'under' : sets > 16 ? 'high' : 'balanced';
+      return {
+        muscle: label,
+        sets,
+        target,
+        ratio,
+        status,
+      };
+    })
+    .sort((a, b) => a.sets - b.sets);
+};
+
 export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   user,
   phase,
@@ -195,6 +298,61 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   }, [phase, workoutSessions]);
 
   const volumeData = useMemo(() => buildVolumeRows(filteredWorkoutLogs), [filteredWorkoutLogs]);
+  const totalSets = volumeData.reduce((sum, item) => sum + item.sets, 0);
+
+  const overviewMetrics = useMemo(() => {
+    const sessionsLast7Days = countSessionsInWindow(filteredSessions, 7);
+    const uniqueMuscles = new Set(
+      filteredWorkoutLogs.flatMap((log) =>
+        Object.keys(log.muscleVolume ?? {}).filter((muscle) => (log.muscleVolume?.[muscle] ?? 0) > 0)
+      )
+    ).size;
+    const topSnapshot = [...filteredStrengthSnapshots]
+      .filter((snapshot) => (snapshot.weight ?? 0) > 0)
+      .sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0))[0];
+
+    return [
+      {
+        label: 'Completed',
+        value: `${planProgress.completedWorkouts}/${planProgress.totalWorkouts || 0}`,
+        tone: COLORS.accent,
+        meta: 'sessions',
+      },
+      {
+        label: 'Last 7 Days',
+        value: `${sessionsLast7Days}`,
+        tone: COLORS.success,
+        meta: 'workouts',
+      },
+      {
+        label: 'Muscles Hit',
+        value: `${uniqueMuscles}`,
+        tone: COLORS.blue,
+        meta: 'this block',
+      },
+      {
+        label: 'Top Lift',
+        value: topSnapshot ? `${Math.round(topSnapshot.weight ?? 0)}` : '—',
+        tone: COLORS.orange,
+        meta: topSnapshot?.exerciseName ?? topSnapshot?.lift ?? 'no logs',
+      },
+    ];
+  }, [filteredSessions, filteredStrengthSnapshots, filteredWorkoutLogs, planProgress.completedWorkouts, planProgress.totalWorkouts]);
+
+  const adherenceDays = useMemo(() => buildAdherenceDays(filteredSessions), [filteredSessions]);
+  const keyLiftCards = useMemo(() => buildKeyLiftCards(filteredStrengthSnapshots), [filteredStrengthSnapshots]);
+  const muscleBalanceRows = useMemo(() => buildMuscleBalanceRows(filteredWorkoutLogs), [filteredWorkoutLogs]);
+
+  const weeklySnapshot = useMemo(() => {
+    const currentWeekSessions = countSessionsInWindow(filteredSessions, 7);
+    const averageSetsPerWorkout =
+      filteredWorkoutLogs.length > 0 ? Math.round(totalSets / filteredWorkoutLogs.length) : 0;
+    return {
+      streak: buildSessionStreak(filteredSessions),
+      currentWeekSessions,
+      averageSetsPerWorkout,
+    };
+  }, [filteredSessions, filteredWorkoutLogs.length, totalSets]);
 
   const [selectedMuscle, setSelectedMuscle] = useState<string | null>(null);
   const exerciseOptions = useMemo(() => {
@@ -282,7 +440,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         };
       });
   }, [activeExercise, filteredSessions]);
-  const totalSets = volumeData.reduce((sum, item) => sum + item.sets, 0);
   const muscleTrend = useMemo(
     () => buildMuscleTrend(filteredWorkoutLogs, volumeData.map((item) => item.muscle)),
     [filteredWorkoutLogs, volumeData]
@@ -332,6 +489,23 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     };
   }, [planProgress.completionRate, swapSignals]);
 
+  const focusSignals = useMemo(() => {
+    const items = [
+      `${planProgress.currentWeek}/${planProgress.totalWeeks} weeks`,
+      `${weeklySnapshot.streak} completed sessions`,
+      `${weeklySnapshot.averageSetsPerWorkout} avg sets`,
+    ];
+    if (user.planPreferences?.daysPerWeek) {
+      items.push(`${user.planPreferences.daysPerWeek}x/week target`);
+    }
+    return items;
+  }, [planProgress.currentWeek, planProgress.totalWeeks, user.planPreferences?.daysPerWeek, weeklySnapshot.averageSetsPerWorkout, weeklySnapshot.streak]);
+
+  const undertrainedMuscles = useMemo(
+    () => muscleBalanceRows.filter((row) => row.status === 'under').slice(0, 3),
+    [muscleBalanceRows]
+  );
+
   useEffect(() => {
     let mounted = true;
     const run = async () => {
@@ -352,14 +526,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   return (
     <LinearGradient colors={['#0A0E27', '#0D1229', '#111633']} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
-        {/* ── Header ── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Text style={styles.headerTitle}>{uiCopy.progress.pageTitle}</Text>
-            <Text style={styles.headerSub}>
-              {uiCopy.progress.weekOf(planProgress.currentWeek, planProgress.totalWeeks)}
-            </Text>
+            <Text style={styles.headerSub}>Your training block at a glance</Text>
           </View>
           <View style={styles.adherencePill}>
             <Text style={styles.adherencePillValue}>{planProgress.completionRate}%</Text>
@@ -367,7 +537,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           </View>
         </View>
 
-        {/* ── Plan card ── */}
         <LinearGradient
           colors={['rgba(108,99,255,0.2)', 'rgba(108,99,255,0.06)', 'transparent']}
           style={styles.planCard}
@@ -388,7 +557,6 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               </View>
             </View>
 
-            {/* Week progress */}
             <View style={styles.weekRow}>
               {Array.from({ length: planProgress.totalWeeks }).map((_, i) => {
                 const isPast = i < planProgress.currentWeek - 1;
@@ -409,40 +577,154 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               <Text style={styles.weekLabelText}>Week 1</Text>
               <Text style={styles.weekLabelText}>Week {planProgress.totalWeeks}</Text>
             </View>
+
+            <View style={styles.focusRail}>
+              {focusSignals.map((item) => (
+                <View key={item} style={styles.focusChip}>
+                  <Text style={styles.focusChipText}>{item}</Text>
+                </View>
+              ))}
+            </View>
           </View>
         </LinearGradient>
 
-        <View style={styles.signalCard}>
-          <View style={styles.signalHeader}>
-            <Text style={styles.signalTitle}>{uiCopy.progress.adaptationSignalsTitle}</Text>
-            <Text style={styles.signalWindow}>{uiCopy.progress.adaptationSignalsWindow}</Text>
+        <View style={styles.overviewGrid}>
+          {overviewMetrics.map((metric) => (
+            <View key={metric.label} style={styles.overviewCard}>
+              <Text style={styles.overviewLabel}>{metric.label}</Text>
+              <Text style={[styles.overviewValue, { color: metric.tone }]} numberOfLines={1}>
+                {metric.value}
+              </Text>
+              <Text style={styles.overviewMeta} numberOfLines={1}>{metric.meta}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.adherenceCard}>
+          <View style={styles.adherenceHeader}>
+            <View>
+              <Text style={styles.signalTitle}>Adherence</Text>
+              <Text style={styles.cardSub}>Last 14 days of completed training</Text>
+            </View>
+            <View style={styles.streakBadge}>
+              <Text style={styles.streakBadgeValue}>{weeklySnapshot.streak}</Text>
+              <Text style={styles.streakBadgeLabel}>done</Text>
+            </View>
           </View>
-          {swapSignals.length ? (
-            <View style={styles.signalList}>
-              {swapSignals.map((signal) => (
-                <View key={`${signal.source}:${signal.key}`} style={styles.signalRow}>
-                  <Text style={styles.signalLabel} numberOfLines={1}>
-                    {signal.source === 'workout'
-                      ? uiCopy.progress.signalSourceWorkout
-                      : uiCopy.progress.signalSourceMeal}
-                    : {signal.label}
+          <View style={styles.adherenceRail}>
+            {adherenceDays.map((day) => (
+              <View key={day.key} style={styles.adherenceDayWrap}>
+                <View
+                  style={[
+                    styles.adherenceDot,
+                    day.completed && styles.adherenceDotDone,
+                    day.isToday && styles.adherenceDotToday,
+                  ]}
+                />
+                <Text style={[styles.adherenceDayLabel, day.isToday && styles.adherenceDayLabelToday]}>
+                  {day.shortLabel}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.insightRow}>
+          <View style={[styles.signalCard, styles.insightColumn]}>
+            <View style={styles.signalHeader}>
+              <Text style={styles.signalTitle}>{uiCopy.progress.adaptationSignalsTitle}</Text>
+              <Text style={styles.signalWindow}>{uiCopy.progress.adaptationSignalsWindow}</Text>
+            </View>
+            {swapSignals.length ? (
+              <View style={styles.signalList}>
+                {swapSignals.slice(0, 3).map((signal) => (
+                  <View key={`${signal.source}:${signal.key}`} style={styles.signalRow}>
+                    <Text style={styles.signalLabel} numberOfLines={1}>
+                      {signal.source === 'workout'
+                        ? uiCopy.progress.signalSourceWorkout
+                        : uiCopy.progress.signalSourceMeal}
+                      : {signal.label}
+                    </Text>
+                    <Text style={styles.signalCount}>{signal.count}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.signalEmpty}>{uiCopy.progress.adaptationSignalsEmpty}</Text>
+            )}
+          </View>
+
+          <View style={[styles.actionCard, styles.insightColumn]}>
+            <Text style={styles.actionLabel}>Coach Note</Text>
+            <Text style={styles.actionTitle}>{weeklyAction.title}</Text>
+            <Text style={styles.actionBody}>{weeklyAction.body}</Text>
+            <View style={styles.coachMetaRow}>
+              <Text style={styles.coachMetaText}>{weeklySnapshot.currentWeekSessions} sessions in the last 7 days</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.cardHead}>
+            <View>
+              <Text style={styles.cardTitle}>Key Lifts</Text>
+              <Text style={styles.cardSub}>Estimated top-end strength for your main movements</Text>
+            </View>
+          </View>
+          {keyLiftCards.length ? (
+            <View style={styles.keyLiftGrid}>
+              {keyLiftCards.map((lift) => (
+                <View key={lift.id} style={styles.keyLiftCard}>
+                  <Text style={styles.keyLiftName} numberOfLines={1}>{lift.name}</Text>
+                  <Text style={styles.keyLiftValue}>{lift.latestValue}</Text>
+                  <Text style={styles.keyLiftMeta}>est. 1RM</Text>
+                  <Text style={[styles.keyLiftChange, lift.change < 0 && styles.keyLiftChangeDown]}>
+                    {lift.change >= 0 ? '+' : ''}{lift.change} vs first log
                   </Text>
-                  <Text style={styles.signalCount}>{signal.count}</Text>
                 </View>
               ))}
             </View>
           ) : (
-            <Text style={styles.signalEmpty}>{uiCopy.progress.adaptationSignalsEmpty}</Text>
+            <Text style={styles.emptyText}>Log weighted sets to unlock key lift trends.</Text>
           )}
         </View>
 
-        <View style={styles.actionCard}>
-          <Text style={styles.actionLabel}>{uiCopy.progress.nextWeekActionLabel}</Text>
-          <Text style={styles.actionTitle}>{weeklyAction.title}</Text>
-          <Text style={styles.actionBody}>{weeklyAction.body}</Text>
+        <View style={styles.card}>
+          <View style={styles.cardHead}>
+            <View>
+              <Text style={styles.cardTitle}>Muscle Balance</Text>
+              <Text style={styles.cardSub}>Weekly set balance against a simple 10-set baseline</Text>
+            </View>
+          </View>
+          {muscleBalanceRows.length ? (
+            <>
+              <View style={styles.balanceList}>
+                {muscleBalanceRows.map((row) => (
+                  <View key={row.muscle} style={styles.balanceRow}>
+                    <View style={styles.balanceRowTop}>
+                      <Text style={styles.balanceMuscle}>{row.muscle}</Text>
+                      <Text style={styles.balanceSets}>{row.sets}/{row.target} sets</Text>
+                    </View>
+                    <View style={styles.balanceTrack}>
+                      <View style={[styles.balanceFill, { width: `${Math.max(8, row.ratio * 100)}%` }]} />
+                    </View>
+                  </View>
+                ))}
+              </View>
+              {undertrainedMuscles.length ? (
+                <View style={styles.balanceCallout}>
+                  <Text style={styles.balanceCalloutTitle}>Undertrained right now</Text>
+                  <Text style={styles.balanceCalloutText}>
+                    {undertrainedMuscles.map((row) => row.muscle).join(', ')}
+                  </Text>
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.emptyText}>Complete more workouts to see muscle balance.</Text>
+          )}
         </View>
 
-        {/* ── Tab row ── */}
         <View style={styles.tabRow}>
           {VIEW_TABS.map((tab) => {
             const isActive = activeView === tab.id;
@@ -458,13 +740,12 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           })}
         </View>
 
-        {/* ── Muscles ── */}
         {activeView === 'muscles' && (
           <View style={styles.card}>
             <View style={styles.cardHead}>
               <View>
-                <Text style={styles.cardTitle}>Muscle Progress</Text>
-                <Text style={styles.cardSub}>Weekly set trends by muscle</Text>
+                <Text style={styles.cardTitle}>Muscle Volume</Text>
+                <Text style={styles.cardSub}>Weekly set trends across your main muscle groups</Text>
               </View>
               <View style={styles.totalSetsPill}>
                 <Text style={styles.totalSetsText}>{totalSets} sets</Text>
@@ -551,11 +832,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
           </View>
         )}
 
-        {/* ── Lifts ── */}
         {activeView === 'exercises' && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Exercise Progression</Text>
-            <Text style={styles.cardSub}>Select an exercise to highlight its trend</Text>
+            <Text style={styles.cardTitle}>Lift Progression</Text>
+            <Text style={styles.cardSub}>Track the strongest trend for your key lifts</Text>
             <View style={styles.chartWrap}>
               <VictoryChart
                 width={SCREEN_WIDTH - 64}
@@ -746,6 +1026,17 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '500',
   },
+  coachMetaRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  coachMetaText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+  },
 
   weekRow: { flexDirection: 'row', gap: 4, marginBottom: 6, alignItems: 'flex-end' },
   weekSlot: { flex: 1, position: 'relative', alignItems: 'center' },
@@ -755,6 +1046,88 @@ const styles = StyleSheet.create({
   weekDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.accent, position: 'absolute', bottom: -1, shadowColor: COLORS.accent, shadowOpacity: 0.8, shadowRadius: 4 },
   weekLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
   weekLabelText: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted },
+  focusRail: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
+  focusChip: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  focusChipText: { fontSize: 11, fontWeight: '700', color: COLORS.textSecondary },
+  overviewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
+  overviewCard: {
+    width: (SCREEN_WIDTH - 50) / 2,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.cardElevated,
+  },
+  overviewLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  overviewValue: { marginTop: 8, fontSize: 24, fontWeight: '900', letterSpacing: -0.6 },
+  overviewMeta: { marginTop: 4, fontSize: 12, color: COLORS.textSecondary, fontWeight: '600' },
+  insightRow: { gap: 12, marginBottom: 16 },
+  insightColumn: { marginBottom: 0 },
+  adherenceCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    marginBottom: 16,
+  },
+  adherenceHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  streakBadge: {
+    minWidth: 64,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,160,0.25)',
+    backgroundColor: COLORS.successSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  streakBadgeValue: { fontSize: 20, fontWeight: '900', color: COLORS.success },
+  streakBadgeLabel: { fontSize: 10, fontWeight: '700', color: COLORS.success },
+  adherenceRail: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  adherenceDayWrap: { alignItems: 'center', flex: 1, gap: 6 },
+  adherenceDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  adherenceDotDone: {
+    backgroundColor: COLORS.success,
+    borderColor: 'rgba(0,245,160,0.3)',
+  },
+  adherenceDotToday: {
+    transform: [{ scale: 1.12 }],
+    shadowColor: COLORS.accent,
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+  },
+  adherenceDayLabel: { fontSize: 10, fontWeight: '700', color: COLORS.textMuted },
+  adherenceDayLabelToday: { color: COLORS.textPrimary },
 
   // Tabs
   tabRow: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 4, gap: 2, marginBottom: 12, borderWidth: 1, borderColor: COLORS.border },
@@ -907,6 +1280,46 @@ const styles = StyleSheet.create({
     color: COLORS.success,
     fontWeight: '700',
   },
+  keyLiftGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  keyLiftCard: {
+    width: (SCREEN_WIDTH - 50) / 2,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    padding: 14,
+  },
+  keyLiftName: { fontSize: 13, fontWeight: '700', color: COLORS.textSecondary },
+  keyLiftValue: { marginTop: 10, fontSize: 28, fontWeight: '900', color: COLORS.textPrimary, letterSpacing: -0.8 },
+  keyLiftMeta: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted },
+  keyLiftChange: { marginTop: 12, fontSize: 12, fontWeight: '700', color: COLORS.success },
+  keyLiftChangeDown: { color: COLORS.pink },
+  balanceList: { gap: 12 },
+  balanceRow: { gap: 6 },
+  balanceRowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  balanceMuscle: { fontSize: 13, fontWeight: '700', color: COLORS.textSecondary },
+  balanceSets: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted },
+  balanceTrack: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    overflow: 'hidden',
+  },
+  balanceFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: COLORS.accent,
+  },
+  balanceCallout: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderAccent,
+    backgroundColor: COLORS.accentSoft,
+    padding: 12,
+  },
+  balanceCalloutTitle: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  balanceCalloutText: { marginTop: 6, fontSize: 13, fontWeight: '700', color: COLORS.textPrimary },
   workoutHistoryList: { gap: 8 },
   workoutHistoryRow: {
     flexDirection: 'row',
