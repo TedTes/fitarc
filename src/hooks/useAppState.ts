@@ -63,6 +63,32 @@ export const useAppState = () => {
   const nextWorkoutVersion = (base?: AppState | null) =>
     (base?.workoutDataVersion ?? 0) + 1;
 
+  const sanitizeTemplateExercises = useCallback(
+    (exercises: WorkoutSessionExercise[]): WorkoutSessionExercise[] => {
+      const seen = new Set<string>();
+      const next: WorkoutSessionExercise[] = [];
+
+      exercises.forEach((exercise) => {
+        if (!exercise.exerciseId) {
+          console.warn('Skipping template exercise without exerciseId:', exercise.name);
+          return;
+        }
+        const key = exercise.exerciseId;
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        next.push({
+          ...exercise,
+          displayOrder: exercise.displayOrder ?? next.length + 1,
+        });
+      });
+
+      return next;
+    },
+    []
+  );
+
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
@@ -232,32 +258,33 @@ export const useAppState = () => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
 
+      const buildSourceExercises = (): WorkoutSessionExercise[] => {
+        const planned = current.plannedWorkouts.find(
+          (day) => day.planId === current.currentPhase!.id && day.date === date
+        );
+        const plannedExercises = planned?.workout?.exercises ?? [];
+        return currentExercises?.length
+          ? currentExercises
+          : plannedExercises.map((exercise) => ({
+              id: undefined,
+              exerciseId: exercise.exerciseId,
+              name: exercise.name,
+              bodyParts: exercise.bodyParts,
+              movementPattern: exercise.movementPattern,
+              sets: exercise.sets ?? 4,
+              reps: exercise.reps ?? '8-12',
+              completed: false,
+              displayOrder: exercise.displayOrder,
+              notes: exercise.notes,
+            }));
+      };
+
       let session = current.workoutSessions.find(
         (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
       );
 
       if (!session) {
-        // Build exercises for session creation: prefer currentExercises (live UI state),
-        // fall back to plannedWorkouts from state
-        const planned = current.plannedWorkouts.find(
-          (day) => day.planId === current.currentPhase!.id && day.date === date
-        );
-        const plannedExercises = planned?.workout?.exercises ?? [];
-        const sourceExercises: WorkoutSessionExercise[] =
-          currentExercises?.length
-            ? currentExercises
-            : plannedExercises.map((exercise) => ({
-                id: undefined,
-                exerciseId: exercise.exerciseId,
-                name: exercise.name,
-                bodyParts: exercise.bodyParts,
-                movementPattern: exercise.movementPattern,
-                sets: exercise.sets ?? 4,
-                reps: exercise.reps ?? '8-12',
-                completed: false,
-                displayOrder: exercise.displayOrder,
-                notes: exercise.notes,
-              }));
+        const sourceExercises = buildSourceExercises();
 
         if (!sourceExercises.length) {
           console.error('No exercises available to create session for date:', date);
@@ -271,6 +298,28 @@ export const useAppState = () => {
           exercises: sourceExercises,
         });
 
+        const refreshed = await refreshWorkoutSessions(
+          current.user.id,
+          current.currentPhase.id
+        );
+        session = refreshed.find(
+          (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+        );
+      }
+      if (!session) return;
+
+      if (session.exercises.length === 0) {
+        const sourceExercises = buildSourceExercises();
+        if (!sourceExercises.length) {
+          console.error('Session exists with no exercises and no source exercises for date:', date);
+          return;
+        }
+        await createSessionFromPlanWorkout({
+          userId: current.user.id,
+          planId: current.currentPhase.id,
+          date,
+          exercises: sourceExercises,
+        });
         const refreshed = await refreshWorkoutSessions(
           current.user.id,
           current.currentPhase.id
@@ -614,6 +663,10 @@ export const useAppState = () => {
     ): Promise<{ hasProgress: boolean }> => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return { hasProgress: false };
+      const sanitizedExercises = sanitizeTemplateExercises(exercises);
+      if (!sanitizedExercises.length) {
+        throw new Error('no_valid_template_exercises');
+      }
 
       const existingSession = current.workoutSessions.find(
         (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
@@ -631,7 +684,7 @@ export const useAppState = () => {
         date,
       });
 
-      const normalizedExercises = exercises.map((ex, idx) => ({
+      const normalizedExercises = sanitizedExercises.map((ex, idx) => ({
         exerciseId: ex.exerciseId!,
         name: ex.name,
         bodyParts: ex.bodyParts ?? [],
@@ -656,7 +709,7 @@ export const useAppState = () => {
         userId: current.user.id,
         planId: current.currentPhase.id,
         date,
-        exercises: exercises.map((ex, idx) => ({
+        exercises: sanitizedExercises.map((ex, idx) => ({
           id: undefined,
           exerciseId: ex.exerciseId,
           name: ex.name,
@@ -682,7 +735,7 @@ export const useAppState = () => {
 
       return { hasProgress: false };
     },
-    [loadPlannedWorkoutsFromSupabase, refreshWorkoutSessions, updateState]
+    [loadPlannedWorkoutsFromSupabase, refreshWorkoutSessions, sanitizeTemplateExercises, updateState]
   );
 
   /**
@@ -692,8 +745,22 @@ export const useAppState = () => {
     async (date: string, exercises: WorkoutSessionExercise[]): Promise<void> => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
+      const sanitizedIncoming = sanitizeTemplateExercises(exercises);
+      if (!sanitizedIncoming.length) {
+        throw new Error('no_valid_template_exercises');
+      }
+      const existingPlanDay = current.plannedWorkouts.find(
+        (day) => day.planId === current.currentPhase!.id && day.date === date
+      );
+      const existingIds = new Set(
+        (existingPlanDay?.workout?.exercises ?? []).map((exercise) => exercise.exerciseId).filter(Boolean)
+      );
+      const uniqueExercises = sanitizedIncoming.filter((exercise) => !existingIds.has(exercise.exerciseId ?? ''));
+      if (!uniqueExercises.length) {
+        return;
+      }
 
-      const planExerciseInputs = exercises.map((ex, idx) => ({
+      const planExerciseInputs = uniqueExercises.map((ex, idx) => ({
         exerciseId: ex.exerciseId!,
         name: ex.name,
         bodyParts: ex.bodyParts ?? [],
@@ -718,8 +785,8 @@ export const useAppState = () => {
       );
       if (existingSession?.id) {
         const currentCount = existingSession.exercises.length;
-        for (let i = 0; i < exercises.length; i++) {
-          const ex = exercises[i];
+        for (let i = 0; i < uniqueExercises.length; i++) {
+          const ex = uniqueExercises[i];
           try {
             await addExerciseToSession({
               sessionId: existingSession.id,
@@ -743,7 +810,7 @@ export const useAppState = () => {
         workoutDataVersion: nextWorkoutVersion(prev),
       }));
     },
-    [loadPlannedWorkoutsFromSupabase, refreshWorkoutSessions, updateState]
+    [loadPlannedWorkoutsFromSupabase, refreshWorkoutSessions, sanitizeTemplateExercises, updateState]
   );
 
   const clearAllData = useCallback(async () => {
