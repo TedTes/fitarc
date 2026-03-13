@@ -609,6 +609,41 @@ const resolveTemplateBackedPlanDay = (
   };
 };
 
+const resolveOverrideOnlyPlanDay = (
+  context: PlanContext,
+  date: string,
+  overrides: OverrideRow[],
+  planDayId?: string
+): PlanDay | null => {
+  const activeOverrides = overrides.filter(
+    (override) =>
+      override.is_active !== false &&
+      override.action_type !== 'remove' &&
+      (!!override.exercise_id || !!override.exercise_name)
+  );
+  if (!activeOverrides.length) return null;
+
+  const dayId = planDayId ?? `virtual:${context.planId}:${date}`;
+  const workoutId = `virtual:${context.planId}:${date}`;
+  const exercises = applyOverrides([], activeOverrides, context.planId, date, workoutId);
+  if (!exercises.length) return null;
+
+  return {
+    id: dayId,
+    planId: context.planId,
+    userId: context.userId,
+    date,
+    workout: {
+      id: workoutId,
+      planDayId: dayId,
+      title: 'Custom Workout',
+      sourceTemplateId: null,
+      sourceType: 'override',
+      exercises,
+    },
+  };
+};
+
 type TemplateBaselineExercise = {
   exerciseId: string | null;
   name: string;
@@ -756,13 +791,17 @@ export const fetchPlanRange = async (
   const resolved: PlanDay[] = [];
   dates.forEach((date) => {
     const persisted = persistedByDay.get(date);
+    const overrides = overridesByDay.get(date) ?? [];
     if (persisted) {
       if (persisted.isRestDay || !persisted.templateId) {
+        const overrideOnly = resolveOverrideOnlyPlanDay(context, date, overrides, persisted.id);
+        if (overrideOnly) {
+          resolved.push(overrideOnly);
+        }
         return;
       }
       const persistedTemplate = templates.find((template) => template.id === persisted.templateId);
       if (persistedTemplate) {
-        const overrides = overridesByDay.get(date) ?? [];
         resolved.push(
           resolveTemplateBackedPlanDay(context, date, persistedTemplate, overrides, persisted.id)
         );
@@ -782,7 +821,6 @@ export const fetchPlanRange = async (
       profile?.experienceLevel
     );
     if (!template) return;
-    const overrides = overridesByDay.get(date) ?? [];
     resolved.push(resolveTemplateBackedPlanDay(context, date, template, overrides));
   });
   return resolved;
@@ -874,22 +912,23 @@ export const fetchResolvedPlanForDate = async (
   const profile = await fetchUserProfile(userId);
   const templates = await fetchTemplatesForUser(userId);
   if (!templates.length) return null;
+  const overridesByDay = await fetchOverridesForRange(userId, planId, date, date);
+  const overrides = overridesByDay.get(date) ?? [];
   const persistedByDay = await fetchPersistedPlanDaysForRange(userId, planId, date, date);
   const persisted = persistedByDay.get(date);
   if (persisted) {
     if (persisted.isRestDay || !persisted.templateId) {
-      return null;
+      return resolveOverrideOnlyPlanDay(context, date, overrides, persisted.id);
     }
     const persistedTemplate = templates.find((template) => template.id === persisted.templateId);
     if (!persistedTemplate) {
       return null;
     }
-    const overridesByDay = await fetchOverridesForRange(userId, planId, date, date);
     return resolveTemplateBackedPlanDay(
       context,
       date,
       persistedTemplate,
-      overridesByDay.get(date) ?? [],
+      overrides,
       persisted.id
     );
   }
@@ -911,8 +950,7 @@ export const fetchResolvedPlanForDate = async (
     profile?.experienceLevel
   );
   if (!template) return null;
-  const overridesByDay = await fetchOverridesForRange(userId, planId, date, date);
-  return resolveTemplateBackedPlanDay(context, date, template, overridesByDay.get(date) ?? []);
+  return resolveTemplateBackedPlanDay(context, date, template, overrides);
 };
 
 export const ensurePlanWorkoutForDate = async (
@@ -1224,4 +1262,56 @@ export const linkPlanToMatchedTemplates = async (
   if (error) throw error;
 
   return templateMap;
+};
+
+export type GeneratePlanDaysInput = {
+  planId: string;
+  userId: string;
+  startDate: string;
+  endDate: string;
+  goalTag: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  equipmentLevel: 'bodyweight' | 'dumbbells' | 'full_gym';
+  splitPattern: string[];
+  daysPerWeek: 3 | 4 | 5 | 6;
+};
+
+export const generatePlanDaysForPlan = async (
+  input: GeneratePlanDaysInput
+): Promise<number | null> => {
+  const {
+    planId,
+    userId,
+    startDate,
+    endDate,
+    goalTag,
+    difficulty,
+    equipmentLevel,
+    splitPattern,
+    daysPerWeek,
+  } = input;
+
+  const { data, error } = await supabase.rpc('fitarc_generate_plan_days', {
+    p_plan_id: planId,
+    p_user_id: userId,
+    p_start_date: startDate,
+    p_end_date: endDate,
+    p_goal_tag: goalTag,
+    p_difficulty: difficulty,
+    p_equipment_level: equipmentLevel,
+    p_split_pattern: splitPattern,
+    p_train_days_per_week: daysPerWeek,
+  });
+
+  if (error) {
+    // Fail open for environments where the SQL function is not created yet.
+    const code = (error as { code?: string } | null)?.code;
+    if (code === 'PGRST202' || code === '42883') {
+      return null;
+    }
+    throw error;
+  }
+
+  const numeric = Number(data ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
 };
