@@ -10,6 +10,7 @@ export { PlansScreen } from './PlansScreen';
 export { ProgressScreen } from './ProgressScreen';
 export { PhaseCompleteScreen } from './PhaseCompleteScreen';
 export { ProfileScreen } from './ProfileScreen';
+export { SettingsScreen } from './SettingsScreen';
 export { MenuScreen } from './MenuScreen';
 export { LibraryScreen } from './LibraryScreen';
 export { LoginScreen } from './LoginScreen';
