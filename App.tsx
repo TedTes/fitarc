@@ -28,7 +28,7 @@ import {
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
   ProgressScreen,
-  MenuScreen,
+  SettingsScreen,
   PhotoCaptureScreen,
   ProfileScreen,
   ProfileSetupScreen,
@@ -50,13 +50,14 @@ import {
   createPhase,
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
-import { linkPlanToMatchedTemplates } from './src/services/planRuntimeService';
+import { generatePlanDaysForPlan, linkPlanToMatchedTemplates } from './src/services/planRuntimeService';
 import { supabase } from './src/lib/supabaseClient';
 import { deleteAccount as deleteAccountService } from './src/services/accountService';
 
 type RootTabParamList = {
   Today:    undefined;
   Progress: undefined;
+  Settings: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
@@ -70,8 +71,9 @@ type TabConfig = {
 };
 
 const TAB_CONFIG: Record<keyof RootTabParamList, TabConfig> = {
-  Today:    { icon: 'barbell-outline',        activeIcon: 'barbell',          label: 'Today'    },
+  Today:    { icon: 'barbell-outline',        activeIcon: 'barbell',          label: 'Workouts' },
   Progress: { icon: 'bar-chart-outline',      activeIcon: 'bar-chart',        label: 'Stats'    },
+  Settings: { icon: 'settings-outline',       activeIcon: 'settings',         label: 'Settings' },
 };
 
 const linking = {
@@ -80,6 +82,7 @@ const linking = {
     screens: {
       Today:    'today',
       Progress: 'progress',
+      Settings: 'settings',
     },
   },
 };
@@ -97,6 +100,37 @@ const mapDaysPerWeekToSplit = (daysPerWeek: number): User['trainingSplit'] => {
   if (daysPerWeek >= 5) return 'push_pull_legs';
   if (daysPerWeek >= 4) return 'upper_lower';
   return 'full_body';
+};
+
+const mapSplitToPattern = (split: User['trainingSplit']): string[] => {
+  switch (split) {
+    case 'push_pull_legs':
+      return ['push', 'pull', 'legs'];
+    case 'upper_lower':
+      return ['upper', 'lower'];
+    case 'bro_split':
+      return ['chest', 'back', 'shoulders', 'arms', 'legs'];
+    case 'full_body':
+    case 'custom':
+    default:
+      return ['full_body'];
+  }
+};
+
+const mapPrimaryGoalToTemplateTag = (goal?: PrimaryGoal): string => {
+  switch (goal) {
+    case 'build_muscle':
+      return 'hypertrophy';
+    case 'get_stronger':
+      return 'strength';
+    case 'lose_fat':
+      return 'fat_loss';
+    case 'endurance':
+      return 'endurance';
+    case 'general_fitness':
+    default:
+      return 'general';
+  }
 };
 
 const DEFAULT_DAYS_PER_WEEK: 3 | 4 | 5 | 6 = 6;
@@ -188,10 +222,11 @@ const AnimatedTabButton: React.FC<{
             <Ionicons
               name={focused ? activeIcon : icon}
               size={28}
-              color={focused ? '#6C63FF' : 'rgba(255,255,255,0.45)'}
+              color={focused ? '#6C63FF' : 'rgba(255,255,255,0.62)'}
             />
           </View>
           <Text style={[styles.tabLabel, focused && styles.tabLabelActive]} numberOfLines={1}>{label}</Text>
+          <Animated.View style={[styles.tabActiveDot, { opacity: pillAnim, transform: [{ scaleX: pillAnim }] }]} />
         </Animated.View>
       </Animated.View>
     </TouchableOpacity>
@@ -333,7 +368,7 @@ function AppContent() {
   const [isCreatingPlan, setIsCreatingPlan] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
   const [showWelcome, setShowWelcome] = useState(true);
-  const { getFabAction, setFabAction } = useFabAction();
+  const { getFabAction } = useFabAction();
   const tabFabPop = useRef(new Animated.Value(0)).current;
   const showPlanTabs = Boolean(state?.user);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
@@ -366,7 +401,6 @@ function AppContent() {
   const [tempPlanPreferences, setTempPlanPreferences] = useState<PlanPreferences | null>(null);
   const [tempPrimaryGoal, setTempPrimaryGoal] = useState<PrimaryGoal>('general_fitness');
   const [startPlanConfirmVisible, setStartPlanConfirmVisible] = useState(false);
-  const previousPhaseIdRef = useRef<string | null>(null);
 
   const closeProfileSheet = () => {
     setProfileVisible(false);
@@ -481,7 +515,7 @@ function AppContent() {
       injuries: string[];
     }) => {
       if (!state?.user) return;
-      const targetDaysPerWeek = DEFAULT_DAYS_PER_WEEK;
+      const targetDaysPerWeek = input.daysPerWeek;
       const inferredSplit = mapDaysPerWeekToSplit(targetDaysPerWeek);
       const nextPreferences: PlanPreferences = {
         primaryGoal: tempPrimaryGoal,
@@ -563,11 +597,13 @@ function AppContent() {
       const selectedGoal =
         goalType ??
         mapGoalToPhaseGoalType(tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal);
+      const startDate = formatLocalDateYMD(new Date());
+      const endDate = formatLocalDateYMD(addDays(new Date(), DEFAULT_PLAN_WEEKS * 7 - 1));
       const remotePhase = await createPhase(authUser.id, {
         name: `Arc ${new Date().getFullYear()}`,
         goalType: selectedGoal,
-        startDate: formatLocalDateYMD(new Date()),
-        endDate: formatLocalDateYMD(addDays(new Date(), DEFAULT_PLAN_WEEKS * 7 - 1)),
+        startDate,
+        endDate,
         currentLevelId: currentLevel,
         targetLevelId,
       });
@@ -575,6 +611,30 @@ function AppContent() {
         await linkPlanToMatchedTemplates(authUser.id, remotePhase.id);
       } catch (linkError) {
         console.warn('Unable to persist plan template map (fallback matching will be used):', linkError);
+      }
+      try {
+        const daysPerWeek =
+          state.user.planPreferences?.daysPerWeek ??
+          tempPlanPreferences?.daysPerWeek ??
+          DEFAULT_DAYS_PER_WEEK;
+        await generatePlanDaysForPlan({
+          planId: remotePhase.id,
+          userId: authUser.id,
+          startDate,
+          endDate,
+          goalTag: mapPrimaryGoalToTemplateTag(
+            tempPlanPreferences?.primaryGoal ?? state.user.planPreferences?.primaryGoal
+          ),
+          difficulty: state.user.experienceLevel,
+          equipmentLevel:
+            state.user.planPreferences?.equipmentLevel ??
+            tempPlanPreferences?.equipmentLevel ??
+            'full_gym',
+          splitPattern: mapSplitToPattern(state.user.trainingSplit),
+          daysPerWeek,
+        });
+      } catch (planDaysError) {
+        console.warn('Unable to generate persisted plan days (runtime fallback will be used):', planDaysError);
       }
 
       console.log('✅ Plan created:', remotePhase.id);
@@ -786,29 +846,6 @@ function AppContent() {
     console.log('✅ Onboarding step set to: main_focus');
   }, [state?.user]);
 
-  useEffect(() => {
-    if (!state?.user) return;
-    const phaseId = state.currentPhase?.id ?? null;
-    const hadPhase = previousPhaseIdRef.current;
-
-    if (phaseId) {
-      if (!hadPhase) {
-        setFabAction('Today', null);
-      }
-    } else {
-      const createPlanAction = {
-        label: 'Create Plan',
-        icon: '+',
-        colors: ['#6C63FF', '#4C3BFF'] as const,
-        iconColor: '#0A0E27',
-        labelColor: '#6C63FF',
-        onPress: handleStartPhaseFromDashboard,
-      };
-      setFabAction('Today', createPlanAction);
-    }
-
-    previousPhaseIdRef.current = phaseId;
-  }, [handleStartPhaseFromDashboard, setFabAction, state?.currentPhase?.id, state?.user]);
 
   const handleLogout = async () => {
     try {
@@ -1033,7 +1070,33 @@ function AppContent() {
             }
           </Tab.Screen>
           <Tab.Screen name="Progress">
-            {() => <View style={styles.container} />}
+            {() =>
+              state?.user && state.currentPhase ? (
+                <ProgressScreen
+                  user={state.user}
+                  phase={state.currentPhase}
+                  workoutDataVersion={state.workoutDataVersion}
+                  workoutSessions={state.workoutSessions}
+                  workoutLogs={state.workoutLogs}
+                  strengthSnapshots={state.strengthSnapshots}
+                />
+              ) : (
+                <View style={styles.container} />
+              )
+            }
+          </Tab.Screen>
+          <Tab.Screen name="Settings">
+            {() =>
+              state?.user ? (
+                <SettingsScreen
+                  user={state.user}
+                  onSave={handleProfileSave}
+                  onStartNewPlan={openStartPlanConfirm}
+                />
+              ) : (
+                <View style={styles.container} />
+              )
+            }
           </Tab.Screen>
         </Tab.Navigator>
 
@@ -1048,8 +1111,8 @@ function AppContent() {
           </View>
 
           <View style={styles.tabBarContent} pointerEvents="box-none">
-            {/* Left half: Today */}
-            <View style={styles.tabHalf}>
+            {/* Left half: Workouts + Stats */}
+            <View style={[styles.tabHalf, styles.tabHalfLeft]}>
               <AnimatedTabButton
                 focused={currentRouteName === 'Today'}
                 icon={TAB_CONFIG.Today.icon}
@@ -1057,13 +1120,6 @@ function AppContent() {
                 label={TAB_CONFIG.Today.label}
                 onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Today'); }}
               />
-            </View>
-
-            {/* FAB spacer — keeps true center */}
-            <View style={styles.fabSpacer} />
-
-            {/* Right half: Progress + Avatar */}
-            <View style={styles.tabHalf}>
               {showPlanTabs && (
                 <AnimatedTabButton
                   focused={currentRouteName === 'Progress'}
@@ -1072,6 +1128,24 @@ function AppContent() {
                   label={TAB_CONFIG.Progress.label}
                   onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Progress'); }}
                 />
+              )}
+            </View>
+
+            {/* FAB spacer — keeps true center */}
+            <View style={styles.fabSpacer} />
+
+            {/* Right half: Settings + Avatar */}
+            <View style={[styles.tabHalf, styles.tabHalfRight]}>
+              {showPlanTabs && (
+                <View style={styles.rightTabButtonWrap}>
+                  <AnimatedTabButton
+                    focused={currentRouteName === 'Settings'}
+                    icon={TAB_CONFIG.Settings.icon}
+                    activeIcon={TAB_CONFIG.Settings.activeIcon}
+                    label={TAB_CONFIG.Settings.label}
+                    onPress={() => { setProfileVisible(false); triggerTabFabPop(); navigationRef.navigate('Settings'); }}
+                  />
+                </View>
               )}
               {state?.user && (
                 <TouchableOpacity
@@ -1104,21 +1178,6 @@ function AppContent() {
               onClose={closeProfileSheet}
               onLogout={handleLogout}
               onDeleteAccount={handleDeleteAccount}
-              onChangeCurrentLevel={() => {
-                closeProfileSheet();
-                setTempProfileData({
-                  sex: state.user!.sex,
-                  age: state.user!.age,
-                  heightCm: state.user!.heightCm,
-                  experienceLevel: state.user!.experienceLevel,
-                  trainingSplit: state.user!.trainingSplit,
-                  eatingMode: state.user!.eatingMode,
-                });
-                setOnboardingStep('current_physique');
-              }}
-              onChangeTargetLevel={() => {
-                openStartPlanConfirm();
-              }}
             />
           </View>
         </View>
@@ -1257,18 +1316,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingBottom: 26,
     paddingTop: 12,
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
   },
   tabHalf: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  tabHalfLeft: {
     justifyContent: 'space-evenly',
+  },
+  tabHalfRight: {
+    justifyContent: 'flex-end',
+    paddingLeft: 14,
+    paddingRight: 6,
+  },
+  rightTabButtonWrap: {
+    marginRight: 14,
   },
   tabButton: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
+    minWidth: 70,
   },
   tabButtonInner: {
     width: '100%',
@@ -1284,8 +1354,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 6,
-    paddingHorizontal: 12,
-    width: 64,
+    paddingHorizontal: 10,
+    minWidth: 70,
     borderRadius: 16,
     gap: 3,
   },
@@ -1296,17 +1366,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   tabLabel: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.4)',
+    color: 'rgba(255,255,255,0.62)',
     letterSpacing: 0.1,
   },
   tabLabelActive: {
     color: '#6C63FF',
     fontWeight: '700',
   },
+  tabActiveDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#6C63FF',
+    marginTop: 3,
+  },
   fabSpacer: {
-    width: 92,
+    width: 86,
   },
   fabContainer: {
     position: 'absolute',
@@ -1315,6 +1392,7 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
     gap: 6,
+    transform: [{ translateX: -13 }],
   },
   tabProfileBtn: {
     width: 40, height: 40, borderRadius: 20,
@@ -1322,7 +1400,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: 'rgba(108,99,255,0.3)',
     alignItems: 'center', justifyContent: 'center',
     overflow: 'hidden',
-    marginRight: 4,
+    marginRight: 2,
   },
   tabProfileBtnActive: {
     borderColor: '#6C63FF',
@@ -1342,7 +1420,7 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#00F5A0',
+    shadowColor: '#6C63FF',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.45,
     shadowRadius: 16,
@@ -1354,7 +1432,7 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: 36,
     borderWidth: 2,
-    borderColor: 'rgba(0, 245, 160, 0.2)',
+    borderColor: 'rgba(108,99,255,0.25)',
     top: -4,
     left: -4,
   },
