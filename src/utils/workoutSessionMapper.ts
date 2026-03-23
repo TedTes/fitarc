@@ -1,7 +1,7 @@
 import { formatDateInTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
 import { mapMuscleNameToGroup } from '../utils/workoutAnalytics';
-import { MuscleGroup, WorkoutSessionEntry } from '../types/domain';
+import { MuscleGroup, WorkoutSessionEntry, WorkoutSessionExercise } from '../types/domain';
 
 const extractBodyParts = (exerciseRow: any): MuscleGroup[] => {
   if (Array.isArray(exerciseRow?.body_parts)) {
@@ -55,44 +55,50 @@ export const mapSessionRow = (
       sessionDate = formatDateInTimeZone(new Date(performedAtRaw), timeZone);
     }
   }
+
+  const mappedExercises: WorkoutSessionExercise[] = sessionExercises.map((se: any) => {
+    const setDetails: Array<{
+      setNumber: number | null;
+      reps: number | null;
+      weight: number | null;
+      rpe: number | null;
+      restSeconds: number | null;
+    }> = (se.sets || []).map((s: any) => ({
+      setNumber: s.set_number,
+      reps: s.reps,
+      weight: s.weight,
+      rpe: s.rpe,
+      restSeconds: s.rest_seconds,
+    }));
+    const repsFromSets = setDetails.find((s) => s.reps != null)?.reps;
+    const repsNote =
+      typeof se.notes === 'string' && se.notes.trim().length > 0 ? se.notes : null;
+    const derivedSets = setDetails.length > 0 ? setDetails.length : 4;
+    const derivedReps = repsNote ?? (repsFromSets != null ? String(repsFromSets) : '8-12');
+    return {
+      id: se.id,
+      exerciseId: se.exercise_id ?? se.exercise?.id,
+      name: se.exercise_name || se.exercise?.name || se.exercise_id || 'Unknown',
+      bodyParts: extractBodyParts(se),
+      movementPattern: se.movement_pattern ?? se.exercise?.movement_pattern ?? undefined,
+      sets: derivedSets,
+      reps: derivedReps,
+      completed: se.complete === true,
+      displayOrder: se.display_order,
+      notes: se.notes,
+      setDetails,
+    };
+  });
+
+  const allExercisesComplete =
+    mappedExercises.length > 0 && mappedExercises.every((ex) => ex.completed === true);
+
   return {
     id: session.id,
     phasePlanId: phasePlanId ?? session.plan_id,
     date: sessionDate,
-    exercises: sessionExercises.map((se: any) => {
-      const setDetails: Array<{
-        setNumber: number | null;
-        reps: number | null;
-        weight: number | null;
-        rpe: number | null;
-        restSeconds: number | null;
-      }> = (se.sets || []).map((s: any) => ({
-        setNumber: s.set_number,
-        reps: s.reps,
-        weight: s.weight,
-        rpe: s.rpe,
-        restSeconds: s.rest_seconds,
-      }));
-      const repsFromSets = setDetails.find((s) => s.reps != null)?.reps;
-      const repsNote =
-        typeof se.notes === 'string' && se.notes.trim().length > 0 ? se.notes : null;
-      const derivedSets = setDetails.length > 0 ? setDetails.length : 4;
-      const derivedReps = repsNote ?? (repsFromSets != null ? String(repsFromSets) : '8-12');
-      return {
-        id: se.id,
-        exerciseId: se.exercise_id ?? se.exercise?.id,
-        name: se.exercise_name || se.exercise?.name || se.exercise_id || 'Unknown',
-        bodyParts: extractBodyParts(se),
-        movementPattern: se.movement_pattern ?? se.exercise?.movement_pattern ?? undefined,
-        sets: derivedSets,
-        reps: derivedReps,
-        completed: se.complete || false,
-        displayOrder: se.display_order,
-        notes: se.notes,
-        setDetails,
-      };
-    }),
+    exercises: mappedExercises,
     notes: session.notes,
-    completed: session.complete || false,
+    completed: session.complete === true || allExercisesComplete,
   };
 };
