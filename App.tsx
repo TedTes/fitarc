@@ -347,6 +347,7 @@ function AppContent() {
     addPhotoCheckin,
     startPhase,
     toggleWorkoutExercise,
+    markAllWorkoutsComplete,
     clearAllData,
     resetWorkoutData,
     loadWorkoutSessionsFromSupabase,
@@ -739,7 +740,6 @@ function AppContent() {
             phase: homeData.phase ?? null,
             workoutSessions: homeData.recentSessions,
           });
-          resetWorkoutData();
 
           if (homeData.phase?.id) {
             await loadWorkoutSessionsFromSupabase(authUser.id, homeData.phase.id);
@@ -1056,6 +1056,7 @@ function AppContent() {
                   plannedWorkouts={state.plannedWorkouts}
                   onStartPhase={handleStartPhaseFromDashboard}
                   onToggleWorkoutExercise={toggleWorkoutExercise}
+                  onMarkAllWorkoutsComplete={markAllWorkoutsComplete}
                   onSaveCustomSession={saveCustomWorkoutSession}
                   onAddExercise={addWorkoutExercise}
                   onDeleteExercise={deleteWorkoutExercise}

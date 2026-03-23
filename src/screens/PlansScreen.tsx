@@ -254,12 +254,14 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   const [editingExercises, setEditingExercises] = useState<WorkoutSessionExercise[]>([]);
   const [isDirty, setIsDirty] = useState(false);
+  const [futureCompletionToast, setFutureCompletionToast] = useState(false);
   const editingExercisesRef = useRef<WorkoutSessionExercise[]>([]);
   const lastExerciseCountRef = useRef(0);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastSyncedKeyRef = useRef<string | null>(null);
   const localEditsDateRef = useRef<string | null>(null);
   const isDeletingRef = useRef(false);
+  const futureCompletionToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const planFingerprint =
     selectedPlan?.planDay?.workout?.exercises
       ?.map(
@@ -290,6 +292,23 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     },
     [onSaveCustomSession]
   );
+
+  const showFutureCompletionToast = useCallback(() => {
+    setFutureCompletionToast(true);
+    if (futureCompletionToastTimer.current) clearTimeout(futureCompletionToastTimer.current);
+    futureCompletionToastTimer.current = setTimeout(() => {
+      setFutureCompletionToast(false);
+      futureCompletionToastTimer.current = null;
+    }, 2200);
+  }, []);
+
+  const hideFutureCompletionToast = useCallback(() => {
+    setFutureCompletionToast(false);
+    if (futureCompletionToastTimer.current) {
+      clearTimeout(futureCompletionToastTimer.current);
+      futureCompletionToastTimer.current = null;
+    }
+  }, []);
 
  // Sync editing exercises when selected plan changes or plan snapshots update
   useEffect(() => {
@@ -700,6 +719,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   };
 
   const handleToggleExerciseCompleted = (index: number) => {
+    if (selectedPlan && selectedPlan.dateStr > todayKey) {
+      showFutureCompletionToast();
+      return;
+    }
     const exerciseName = editingExercisesRef.current[index]?.name;
     const exerciseId = editingExercisesRef.current[index]?.exerciseId;
     setEditingExercises((prev) => {
@@ -826,6 +849,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   useEffect(() => {
     return () => {
       void flushAutosave();
+      if (futureCompletionToastTimer.current) {
+        clearTimeout(futureCompletionToastTimer.current);
+        futureCompletionToastTimer.current = null;
+      }
     };
   }, [flushAutosave]);
 
@@ -867,6 +894,10 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     const progress = totalCount > 0 ? completedCount / totalCount : 0;
 
     const handleMarkAllComplete = () => {
+      if (selectedPlan && selectedPlan.dateStr > todayKey) {
+        showFutureCompletionToast();
+        return;
+      }
       if (isBulkCompleting) return;
       const current = editingExercisesRef.current;
       if (!current.length) return;
@@ -1419,6 +1450,26 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
           </View>
         </View>
       </Modal>
+
+      {futureCompletionToast && (
+        <View pointerEvents="none" style={styles.toastWrap}>
+          <View pointerEvents="auto" style={styles.toast}>
+            <View style={styles.toastHeader}>
+              <TouchableOpacity
+                onPress={hideFutureCompletionToast}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={styles.toastCloseBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.toastCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.toastBody}>
+              <Text style={styles.toastText}>You can only complete workouts for today or past days.</Text>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -1443,6 +1494,59 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
+  },
+  toastWrap: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 116,
+    alignItems: 'center',
+  },
+  toast: {
+    width: 276,
+    minHeight: 116,
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderRadius: 16,
+    backgroundColor: 'rgba(18, 23, 53, 0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(108,99,255,0.28)',
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  toastHeader: {
+    alignItems: 'flex-end',
+  },
+  toastBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  toastText: {
+    color: COLORS.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 21,
+  },
+  toastCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  toastCloseText: {
+    color: COLORS.textSecondary,
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   scrollContent: {
     paddingBottom: 80,
