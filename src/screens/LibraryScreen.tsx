@@ -404,14 +404,16 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     if (replaceAll) {
       if (!onReplaceSessionWithTemplate) return;
       // force=true: user already confirmed via the "Replace?" alert, skip hasProgress check
-      void onReplaceSessionWithTemplate(activeDate, sessionExercises, true).catch(() =>
-        Alert.alert('Error', 'Could not apply template. Please try again.')
-      );
+      void onReplaceSessionWithTemplate(activeDate, sessionExercises, true).catch((error) => {
+        console.error('Failed applying workout template:', error);
+        Alert.alert('Error', 'Could not apply template. Please try again.');
+      });
     } else {
       if (!onAppendExercisesToSession) return;
-      void onAppendExercisesToSession(activeDate, sessionExercises).catch(() =>
-        Alert.alert('Error', 'Could not add exercises. Please try again.')
-      );
+      void onAppendExercisesToSession(activeDate, sessionExercises).catch((error) => {
+        console.error('Failed appending workout template exercises:', error);
+        Alert.alert('Error', 'Could not add exercises. Please try again.');
+      });
     }
   }, [activeDate, buildSessionExercises, onReplaceSessionWithTemplate, onAppendExercisesToSession, onNavigateToToday]);
 
