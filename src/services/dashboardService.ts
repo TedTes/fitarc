@@ -1,7 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { PhotoCheckin, PhasePlan, WorkoutSessionEntry } from '../types/domain';
 import { mapPhaseRow } from './phaseService';
-import { mapSessionRow } from '../utils/workoutSessionMapper';
 import {
   formatDateInTimeZone,
   getAppTimeZone,
@@ -9,6 +8,7 @@ import {
   startOfNextDayISO,
 } from '../utils/time';
 import { buildConsistencySummary } from '../utils/homeDataUtils';
+import { fetchWorkoutSessionEntries } from './workoutService';
 
 const WORKOUT_LOOKBACK_DAYS = 14;
 
@@ -48,47 +48,9 @@ export const fetchHomeData = async (
   const phase = phaseRes.data ? mapPhaseRow(phaseRes.data) : null;
   const planId = phase?.id;
 
-  const sessionsQuery = supabase
-    .from('fitarc_workout_sessions')
-    .select(
-      `
-      id,
-      user_id,
-      plan_id,
-      performed_at,
-      notes,
-      complete,
-      session_exercises:fitarc_workout_session_exercises (
-        id,
-        exercise_id,
-        display_order,
-        notes,
-        complete,
-        sets:fitarc_workout_sets (
-          set_number,
-          reps,
-          weight,
-          rpe,
-          rest_seconds
-        )
-      )
-    `
-    )
-    .eq('user_id', userId)
-    .gte('performed_at', fromStartIso)
-    .lt('performed_at', tomorrowStartIso);
-
-  if (planId) {
-    sessionsQuery.eq('plan_id', planId);
-  }
-
-  const [sessionsRes] = await Promise.all([
-    sessionsQuery.order('performed_at', { ascending: false }),
-  ]);
-  if (sessionsRes.error) throw sessionsRes.error;
-
-  const recentSessions = (sessionsRes.data || []).map((row: any) =>
-    mapSessionRow(row, phase?.id, timeZone)
+  const allSessions = await fetchWorkoutSessionEntries(userId, planId, timeZone);
+  const recentSessions = allSessions.filter(
+    (session) => session.date >= fromStartIso.slice(0, 10) && session.date < tomorrowStartIso.slice(0, 10)
   );
 
   const todaySession = recentSessions.find((session) => session.date === todayKey) || null;

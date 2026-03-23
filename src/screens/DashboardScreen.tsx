@@ -104,9 +104,36 @@ const mondayOf = (d: Date) => {
 };
 
 const isSessionDone = (s: WorkoutSessionEntry) =>
-  s.completed !== undefined
-    ? s.completed
-    : s.exercises.length > 0 && s.exercises.every((e) => e.completed);
+  s.completed === true ||
+  (s.exercises.length > 0 && s.exercises.every((e) => e.completed === true));
+
+const getCompletedExerciseCount = (session: WorkoutSessionEntry) =>
+  session.exercises.filter((exercise) => exercise.completed === true).length;
+
+const pickPreferredSession = (
+  current: WorkoutSessionEntry | undefined,
+  candidate: WorkoutSessionEntry
+): WorkoutSessionEntry => {
+  if (!current) return candidate;
+
+  const currentDone = isSessionDone(current);
+  const candidateDone = isSessionDone(candidate);
+  if (currentDone !== candidateDone) {
+    return candidateDone ? candidate : current;
+  }
+
+  const currentCompletedExercises = getCompletedExerciseCount(current);
+  const candidateCompletedExercises = getCompletedExerciseCount(candidate);
+  if (currentCompletedExercises !== candidateCompletedExercises) {
+    return candidateCompletedExercises > currentCompletedExercises ? candidate : current;
+  }
+
+  if (candidate.exercises.length !== current.exercises.length) {
+    return candidate.exercises.length > current.exercises.length ? candidate : current;
+  }
+
+  return current;
+};
 
 const goalLabel = (raw?: string | null) => {
   const g = (raw ?? '').toLowerCase();
@@ -128,8 +155,12 @@ const buildTimeline = (
   const end       = parseYMD(phase.expectedEndDate);
   const totalDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
 
-  const planByDate    = new Map(planDays.map((d) => [d.date, d]));
-  const sessionByDate = new Map(sessions.map((s) => [s.date, s]));
+  const planByDate = new Map(planDays.map((d) => [d.date, d]));
+  const sessionByDate = new Map<string, WorkoutSessionEntry>();
+  sessions.forEach((session) => {
+    const existing = sessionByDate.get(session.date);
+    sessionByDate.set(session.date, pickPreferredSession(existing, session));
+  });
 
   // Build flat day list
   const allDays: TDay[] = [];
@@ -261,6 +292,7 @@ type DashboardScreenProps = {
   onToggleWorkoutExercise?: (
     date: string, exerciseName: string, exerciseId?: string, currentExercises?: WorkoutSessionExercise[]
   ) => void;
+  onMarkAllWorkoutsComplete?: (date: string) => void | Promise<void>;
   onSaveCustomSession?:       (date: string, exercises: WorkoutSessionExercise[]) => void;
   onAddExercise?:             (planWorkoutId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
   onDeleteExercise?:          (planWorkoutId: string, planExerciseId: string) => Promise<void>;
@@ -282,6 +314,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onProfilePress,
   onStartPhase,
   onToggleWorkoutExercise,
+  onMarkAllWorkoutsComplete,
   onSaveCustomSession,
   onDeleteExercise,
   onReplaceSessionWithTemplate,
@@ -326,6 +359,34 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [localDone,    setLocalDone]    = useState<Record<string, boolean>>({});
   const [templateWeek, setTemplateWeek] = useState<TWeek | null>(null);
   const [templateDay,  setTemplateDay]  = useState<TDay | null>(null);
+  const [futureCompletionToast, setFutureCompletionToast] = useState(false);
+  const futureCompletionToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showFutureCompletionToast = useCallback(() => {
+    setFutureCompletionToast(true);
+    if (futureCompletionToastTimer.current) clearTimeout(futureCompletionToastTimer.current);
+    futureCompletionToastTimer.current = setTimeout(() => {
+      setFutureCompletionToast(false);
+      futureCompletionToastTimer.current = null;
+    }, 2200);
+  }, []);
+
+  const hideFutureCompletionToast = useCallback(() => {
+    setFutureCompletionToast(false);
+    if (futureCompletionToastTimer.current) {
+      clearTimeout(futureCompletionToastTimer.current);
+      futureCompletionToastTimer.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (futureCompletionToastTimer.current) {
+        clearTimeout(futureCompletionToastTimer.current);
+        futureCompletionToastTimer.current = null;
+      }
+    };
+  }, []);
 
   // ── Timeline ────────────────────────────────────────────────────────────────
   const weeks = useMemo<TWeek[]>(() => {
@@ -431,6 +492,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     null;
 
   const toggleExercise = (day: TDay, ex: PlanWorkoutExercise | WorkoutSessionExercise) => {
+    if (day.date > todayStr) {
+      showFutureCompletionToast();
+      return;
+    }
     const key = `${day.date}::${ex.name}`;
     setLocalDone((prev) => ({ ...prev, [key]: !prev[key] }));
     const exId = 'exerciseId' in ex ? ex.exerciseId : undefined;
@@ -438,6 +503,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   };
 
   const toggleAllExercises = (day: TDay) => {
+    if (day.date > todayStr) {
+      showFutureCompletionToast();
+      return;
+    }
     const exercises = getDayExercises(day);
     if (!exercises.length) return;
     const allCurrentlyDone = exercises.every((ex) =>
@@ -446,6 +515,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     const updates: Record<string, boolean> = {};
     exercises.forEach((ex) => { updates[`${day.date}::${ex.name}`] = !allCurrentlyDone; });
     setLocalDone((prev) => ({ ...prev, ...updates }));
+
+    if (!allCurrentlyDone && onMarkAllWorkoutsComplete) {
+      void onMarkAllWorkoutsComplete(day.date);
+      return;
+    }
+
     exercises.forEach((ex) => {
       const currentDone = isExDone(day, ex.name, 'completed' in ex ? ex.completed : undefined);
       if (currentDone !== !allCurrentlyDone) {
@@ -581,7 +656,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   <SwipeableExRow
                     ex={ex}
                     done={done}
-                    onToggle={() => toggleExercise(day, ex)}
+                    onToggle={() => {
+                      if (day.date > todayStr) {
+                        showFutureCompletionToast();
+                        return;
+                      }
+                      toggleExercise(day, ex);
+                    }}
                     onRemove={() => {
                       if ('planWorkoutId' in ex && ex.id) {
                         const wid = day.planDay?.workout?.id;
@@ -677,7 +758,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               {/* Day checkbox */}
               {!rest && (
                 <TouchableOpacity
-                  onPress={() => toggleAllExercises(day)}
+                  onPress={() => {
+                    if (day.date > todayStr) {
+                      showFutureCompletionToast();
+                      return;
+                    }
+                    toggleAllExercises(day);
+                  }}
                   style={[s.dayCheckbox, allExDone && s.dayCheckboxDone]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   activeOpacity={0.7}
@@ -785,91 +872,87 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         <View style={s.modalSheet}>
           <View style={s.sheetHandle} />
 
-          {/* Header */}
+          {/* Header — title row + inline week selector */}
           <View style={s.sheetHeader}>
-            <View>
-              <Text style={s.sheetTitle}>
-                {templateWeek ? templateWeek.label : 'Apply Template'}
-              </Text>
+            <View style={s.sheetHeaderRow}>
+              <Text style={s.sheetTitle}>Apply Template</Text>
+              <TouchableOpacity style={s.sheetCloseBtn} onPress={closeTemplateModal}>
+                <Text style={s.sheetCloseTxt}>✕</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity style={s.sheetCloseBtn} onPress={closeTemplateModal}>
-              <Text style={s.sheetCloseTxt}>✕</Text>
-            </TouchableOpacity>
+            {templateWeek && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.weekPickerRow}
+                style={s.weekPickerInHeader}
+              >
+                {weeks.map((w) => {
+                  const selectedWeek = w.weekIdx === templateWeek.weekIdx;
+                  return (
+                    <TouchableOpacity
+                      key={w.weekIdx}
+                      style={[s.weekChip, selectedWeek && s.weekChipSelected]}
+                      onPress={() => {
+                        setTemplateWeek(w);
+                        setTemplateDay(pickDefaultDayForWeek(w));
+                      }}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        allowFontScaling={false}
+                        style={[s.weekChipText, selectedWeek && s.weekChipTextSelected]}
+                      >
+                        {w.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
           </View>
 
           {templateWeek && (
             <>
-              <View style={s.pickerSection}>
-                <Text style={s.pickerLabel}>Week</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={s.weekPickerRow}
-                >
-                  {weeks.map((w) => {
-                    const selectedWeek = w.weekIdx === templateWeek.weekIdx;
-                    return (
-                      <TouchableOpacity
-                        key={w.weekIdx}
-                        style={[s.weekChip, selectedWeek && s.weekChipSelected]}
-                        onPress={() => {
-                          setTemplateWeek(w);
-                          setTemplateDay(pickDefaultDayForWeek(w));
-                        }}
+              {/* Day strip — compact, no label */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.dayPickerRow}
+                style={s.dayStripScroll}
+              >
+                {templateWeek.days.map((d) => {
+                  const selected = d.date === templateDay?.date;
+                  const rest = d.planIsRest;
+                  const dayNumber = parseYMD(d.date).getDate();
+                  return (
+                    <TouchableOpacity
+                      key={d.date}
+                      style={[s.dayChip, selected && s.dayChipSelected, rest && s.dayChipRest]}
+                      onPress={() => setTemplateDay(d)}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        allowFontScaling={false}
+                        style={[
+                          s.dayChipDay,
+                          selected && s.dayChipDaySelected,
+                          rest && s.dayChipDayRest,
+                        ]}
                       >
-                        <Text
-                          numberOfLines={1}
-                          allowFontScaling={false}
-                          style={[s.weekChipText, selectedWeek && s.weekChipTextSelected]}
-                        >
-                          {w.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-
-              <View style={s.pickerSection}>
-                <Text style={s.pickerLabel}>Day</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={s.dayPickerRow}
-                >
-                  {templateWeek.days.map((d) => {
-                    const selected = d.date === templateDay?.date;
-                    const rest = d.planIsRest;
-                    const dayNumber = parseYMD(d.date).getDate();
-                    return (
-                      <TouchableOpacity
-                        key={d.date}
-                        style={[s.dayChip, selected && s.dayChipSelected, rest && s.dayChipRest]}
-                        onPress={() => setTemplateDay(d)}
+                        {d.dayName}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        allowFontScaling={false}
+                        style={[s.dayChipDate, selected && s.dayChipDateSelected]}
                       >
-                        <Text
-                          numberOfLines={1}
-                          allowFontScaling={false}
-                          style={[
-                            s.dayChipDay,
-                            selected && s.dayChipDaySelected,
-                            rest && s.dayChipDayRest,
-                          ]}
-                        >
-                          {d.dayName}
-                        </Text>
-                        <Text
-                          numberOfLines={1}
-                          allowFontScaling={false}
-                          style={[s.dayChipDate, selected && s.dayChipDateSelected]}
-                        >
-                          {dayNumber}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
+                        {dayNumber}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
 
               {/* Template list — scrollable */}
               {templateDay && (
@@ -992,6 +1075,26 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         </ScrollView>
       </LinearGradient>
 
+      {futureCompletionToast && (
+        <View pointerEvents="none" style={s.toastWrap}>
+          <View pointerEvents="auto" style={s.toast}>
+            <View style={s.toastHeader}>
+              <TouchableOpacity
+                onPress={hideFutureCompletionToast}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={s.toastCloseBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={s.toastCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={s.toastBody}>
+              <Text style={s.toastText}>You can only complete workouts for today or past days.</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
       {renderTemplateModal()}
     </View>
   );
@@ -1007,6 +1110,59 @@ const RAIL_X = 9; // horizontal centre of rail column
 const s = StyleSheet.create({
   root:     { flex: 1, backgroundColor: C.bg },
   gradient: { flex: 1 },
+  toastWrap: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 116,
+    alignItems: 'center',
+  },
+  toast: {
+    width: 276,
+    minHeight: 116,
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderRadius: 16,
+    backgroundColor: 'rgba(18, 23, 53, 0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(108,99,255,0.28)',
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  toastHeader: {
+    alignItems: 'flex-end',
+  },
+  toastBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  toastText: {
+    color: C.text,
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 21,
+  },
+  toastCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  toastCloseText: {
+    color: C.textMuted,
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
 
   // ── Header ──────────────────────────────────────────────────────────────
   header: {
@@ -1304,47 +1460,52 @@ const s = StyleSheet.create({
   weekPickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 2,
-    paddingBottom: 2,
+    paddingBottom: 4,
+    paddingRight: 20,
   },
   weekChip: {
-    paddingHorizontal: 14,
-    height: 34,
-    paddingVertical: 7,
-    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 28,
+    borderRadius: 8,
     borderWidth: 1,
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderColor: 'rgba(255,255,255,0.12)',
     justifyContent: 'center',
     alignItems: 'center',
     flexShrink: 0,
-    marginRight: 8,
+    marginRight: 6,
   },
   weekChipSelected: { backgroundColor: C.accentDim, borderColor: C.accentBorder },
-  weekChipText: { fontSize: 12, lineHeight: 15, fontWeight: '700', color: C.textMuted },
+  weekChipText: { fontSize: 11, lineHeight: 14, fontWeight: '700', color: C.textMuted },
   weekChipTextSelected: { color: C.accent },
+  dayStripScroll: {
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
   dayPickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 2,
+    paddingLeft: 16,
+    paddingRight: 16,
+    paddingTop: 10,
     paddingBottom: 10,
   },
   dayChip: {
     alignItems: 'center',
     justifyContent: 'center',
-    height: 54,
-    width: 64,
+    height: 46,
+    width: 52,
     borderRadius: 10, borderWidth: 1,
     backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.12)',
     flexShrink: 0,
-    marginRight: 8,
+    marginRight: 7,
   },
   dayChipSelected:  { backgroundColor: C.accentDim, borderColor: C.accentBorder },
   dayChipRest:      { borderColor: 'rgba(58,63,92,0.8)', backgroundColor: 'rgba(58,63,92,0.22)' },
-  dayChipDay:       { fontSize: 11, lineHeight: 14, fontWeight: '700', color: C.textMuted, marginBottom: 2 },
+  dayChipDay:       { fontSize: 10, lineHeight: 13, fontWeight: '700', color: C.textMuted, marginBottom: 2 },
   dayChipDaySelected: { color: C.accent },
   dayChipDayRest:   { color: C.textMuted },
-  dayChipDate:      { fontSize: 15, lineHeight: 18, fontWeight: '800', color: C.textSub },
+  dayChipDate:      { fontSize: 14, lineHeight: 17, fontWeight: '800', color: C.textSub },
   dayChipDateSelected: { color: C.text },
 
   // ── Template modal ─────────────────────────────────────────────────────────
@@ -1419,9 +1580,20 @@ const s = StyleSheet.create({
     marginTop: 10, marginBottom: 14,
   },
   sheetHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
-    paddingHorizontal: 20, paddingBottom: 14,
-    borderBottomWidth: 1, borderBottomColor: C.border, marginBottom: 2,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  sheetHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  weekPickerInHeader: {
+    marginHorizontal: -20,
+    paddingLeft: 20,
   },
   sheetTitle:    { fontSize: 17, fontWeight: '800', color: C.text, letterSpacing: -0.3 },
   sheetSub:      { fontSize: 12, color: C.textMuted, marginTop: 3 },

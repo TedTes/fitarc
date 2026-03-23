@@ -20,6 +20,7 @@ import {
   ensureSetsForExercises,
   sessionHasLoggedProgress,
   addExerciseToSession,
+  upsertWorkoutSessionWithExercises,
 } from '../services/workoutService';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
@@ -105,6 +106,23 @@ export const useAppState = () => {
       return updater(base);
     });
   }, []);
+
+  const applyOptimisticWorkoutSessions = useCallback(
+    (updater: (sessions: WorkoutSessionEntry[]) => WorkoutSessionEntry[]) => {
+      updateState((prev) => {
+        const nextSessions = updater(prev.workoutSessions);
+        const analytics = buildWorkoutAnalytics(nextSessions);
+        return {
+          ...prev,
+          workoutSessions: nextSessions,
+          workoutLogs: analytics.workoutLogs,
+          strengthSnapshots: analytics.strengthSnapshots,
+          workoutDataVersion: nextWorkoutVersion(prev),
+        };
+      });
+    },
+    [updateState]
+  );
 
   const hydrateFromRemote = useCallback(
     (payload: {
@@ -257,10 +275,16 @@ export const useAppState = () => {
     ) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
+      const todayKey = formatLocalDateYMD(new Date());
+      if (date > todayKey) {
+        console.warn('Blocked completion for future workout date:', date);
+        return;
+      }
+      const phaseId = current.currentPhase.id;
 
       const buildSourceExercises = (): WorkoutSessionExercise[] => {
         const planned = current.plannedWorkouts.find(
-          (day) => day.planId === current.currentPhase!.id && day.date === date
+          (day) => day.planId === phaseId && day.date === date
         );
         const plannedExercises = planned?.workout?.exercises ?? [];
         return currentExercises?.length
@@ -280,8 +304,46 @@ export const useAppState = () => {
       };
 
       let session = current.workoutSessions.find(
-        (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+        (s) => s.phasePlanId === phaseId && s.date === date
       );
+
+      if (!session) {
+        const sourceExercises = buildSourceExercises();
+
+        if (sourceExercises.length) {
+          const optimisticSessionId = `local:${phaseId}:${date}`;
+          const optimisticExercises = sourceExercises.map((exercise, index) => ({
+            ...exercise,
+            id:
+              exercise.id ??
+              `local:${phaseId}:${date}:${exercise.exerciseId ?? exercise.name}:${index}`,
+            completed: exercise.completed ?? false,
+          }));
+
+          applyOptimisticWorkoutSessions((sessions) => [
+            ...sessions.filter(
+              (entry) => !(entry.phasePlanId === phaseId && entry.date === date)
+            ),
+            {
+              id: optimisticSessionId,
+              phasePlanId: phaseId,
+              date,
+              exercises: optimisticExercises,
+              notes: undefined,
+              completed: false,
+            },
+          ]);
+
+          session = {
+            id: optimisticSessionId,
+            phasePlanId: phaseId,
+            date,
+            exercises: optimisticExercises,
+            notes: undefined,
+            completed: false,
+          };
+        }
+      }
 
       if (!session) {
         const sourceExercises = buildSourceExercises();
@@ -293,17 +355,17 @@ export const useAppState = () => {
 
         await createSessionFromPlanWorkout({
           userId: current.user.id,
-          planId: current.currentPhase.id,
+          planId: phaseId,
           date,
           exercises: sourceExercises,
         });
 
         const refreshed = await refreshWorkoutSessions(
           current.user.id,
-          current.currentPhase.id
+          phaseId
         );
         session = refreshed.find(
-          (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+          (s) => s.phasePlanId === phaseId && s.date === date
         );
       }
       if (!session) return;
@@ -316,34 +378,101 @@ export const useAppState = () => {
         }
         await createSessionFromPlanWorkout({
           userId: current.user.id,
-          planId: current.currentPhase.id,
+          planId: phaseId,
           date,
           exercises: sourceExercises,
         });
         const refreshed = await refreshWorkoutSessions(
           current.user.id,
-          current.currentPhase.id
+          phaseId
         );
         session = refreshed.find(
-          (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
+          (s) => s.phasePlanId === phaseId && s.date === date
+        );
+      }
+      if (!session) return;
+
+      if (session.id.startsWith('local:')) {
+        const sourceExercises = buildSourceExercises();
+        if (!sourceExercises.length) {
+          console.error('Optimistic session has no source exercises for date:', date);
+          return;
+        }
+
+        await createSessionFromPlanWorkout({
+          userId: current.user.id,
+          planId: phaseId,
+          date,
+          exercises: sourceExercises,
+        });
+
+        const refreshed = await refreshWorkoutSessions(
+          current.user.id,
+          phaseId
+        );
+        session = refreshed.find(
+          (s) => s.phasePlanId === phaseId && s.date === date
         );
       }
       if (!session) return;
 
       // Find by exerciseId first (reliable), fall back to name match
-      const exercise =
+      let exercise =
         (exerciseId ? session.exercises.find((ex) => ex.exerciseId === exerciseId) : undefined) ??
         session.exercises.find(
           (ex) => ex.name.toLowerCase().trim() === exerciseName.toLowerCase().trim()
         );
 
+      if ((!exercise || !exercise.id) && session.exercises.length === 0) {
+        const sourceExercises = buildSourceExercises();
+        if (sourceExercises.length > 0) {
+          await upsertWorkoutSessionWithExercises({
+            userId: current.user.id,
+            planId: phaseId,
+            date,
+            exercises: sourceExercises,
+          });
+          const refreshed = await refreshWorkoutSessions(current.user.id, phaseId);
+          session = refreshed.find((s) => s.phasePlanId === phaseId && s.date === date);
+          exercise =
+            (exerciseId ? session?.exercises.find((ex) => ex.exerciseId === exerciseId) : undefined) ??
+            session?.exercises.find(
+              (ex) => ex.name.toLowerCase().trim() === exerciseName.toLowerCase().trim()
+            );
+        }
+      }
+
       if (!exercise || !exercise.id) {
-        console.error('Exercise not found in session:', exerciseName, exerciseId, session.exercises.map(e => e.name));
+        console.error(
+          'Exercise not found in session:',
+          exerciseName,
+          exerciseId,
+          session?.exercises.map((e) => e.name) ?? []
+        );
         return;
       }
+      if (!session) return;
 
       try {
         const willComplete = !(exercise.completed ?? false);
+        applyOptimisticWorkoutSessions((sessions) =>
+          sessions.map((entry) =>
+            entry.id !== session.id
+              ? entry
+              : {
+                  ...entry,
+                  exercises: entry.exercises.map((entryExercise) =>
+                    entryExercise.id !== exercise.id
+                      ? entryExercise
+                      : {
+                          ...entryExercise,
+                          completed: willComplete,
+                        }
+                  ),
+                }
+          )
+        );
+
         if (willComplete) {
           await ensureSetsForExercises([exercise]);
         }
@@ -356,14 +485,20 @@ export const useAppState = () => {
         await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
       } catch (error) {
         console.error('Failed to toggle exercise:', error);
+        await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
         throw error;
       }
-    },[refreshWorkoutSessions]);
+    },[applyOptimisticWorkoutSessions, refreshWorkoutSessions]);
 
   const markAllWorkoutsComplete = useCallback(
     async (date: string) => {
       const current = stateRef.current;
       if (!current || !current.currentPhase || !current.user) return;
+      const todayKey = formatLocalDateYMD(new Date());
+      if (date > todayKey) {
+        console.warn('Blocked mark-all-complete for future workout date:', date);
+        return;
+      }
       
       const session = current.workoutSessions.find(
         (s) => s.phasePlanId === current.currentPhase!.id && s.date === date
@@ -375,15 +510,30 @@ export const useAppState = () => {
       }
       
       try {
+        applyOptimisticWorkoutSessions((sessions) =>
+          sessions.map((entry) =>
+            entry.id !== session.id
+              ? entry
+              : {
+                  ...entry,
+                  completed: true,
+                  exercises: entry.exercises.map((exercise) => ({
+                    ...exercise,
+                    completed: true,
+                  })),
+                }
+          )
+        );
         await ensureSetsForExercises(session.exercises);
         await markAllExercisesComplete(session.id);
         await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
       } catch (error) {
         console.error('Failed to mark all complete:', error);
+        await refreshWorkoutSessions(current.user.id, current.currentPhase.id);
         throw error;
       }
     },
-    [refreshWorkoutSessions]);
+    [applyOptimisticWorkoutSessions, refreshWorkoutSessions]);
 
   const schedulePhotoReminder = useCallback(
     async (date: string) => {
