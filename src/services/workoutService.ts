@@ -109,6 +109,12 @@ const mapExerciseDefaultRecord = (record: ExerciseDefaultRecord): ExerciseDefaul
   updatedAt: record.updated_at,
 });
 
+const isMissingExerciseDefaultsTableError = (error: unknown): boolean => {
+  const code = (error as { code?: string } | null)?.code;
+  const message = (error as { message?: string } | null)?.message ?? '';
+  return code === '42P01' || (typeof message === 'string' && message.includes('fitarc_user_exercise_defaults'));
+};
+
 export const fetchExerciseDefaults = async (userId: string): Promise<ExerciseDefault[]> => {
   const { data, error } = await supabase
     .from('fitarc_user_exercise_defaults')
@@ -117,6 +123,9 @@ export const fetchExerciseDefaults = async (userId: string): Promise<ExerciseDef
     .order('updated_at', { ascending: false });
 
   if (error) {
+    if (isMissingExerciseDefaultsTableError(error)) {
+      return [];
+    }
     throw error;
   }
 
@@ -174,6 +183,9 @@ export const upsertExerciseDefault = async (
         .single();
 
   if (error) {
+    if (isMissingExerciseDefaultsTableError(error)) {
+      throw new Error('Exercise defaults table is not available in this environment.');
+    }
     throw error;
   }
 
@@ -183,6 +195,9 @@ export const upsertExerciseDefault = async (
 export const deleteExerciseDefault = async (id: string) => {
   const { error } = await supabase.from('fitarc_user_exercise_defaults').delete().eq('id', id);
   if (error) {
+    if (isMissingExerciseDefaultsTableError(error)) {
+      return;
+    }
     throw error;
   }
 };
@@ -240,12 +255,14 @@ export const createSessionFromPlanWorkout = async ({
   exercises,
   splitDayId = null,
 }: CreateSessionFromPlanInput): Promise<string> => {
-  const existingRes = await supabase
-    .from('fitarc_workout_sessions')
-    .select('id, session_exercises:fitarc_workout_session_exercises(id)')
-    .eq('plan_id', planId)
-    .eq('planned_date', normalizeDate(date))
-    .maybeSingle();
+  const existingSession = await findExistingSessionForDate(userId, planId, date);
+  const existingRes = existingSession?.id
+    ? await supabase
+        .from('fitarc_workout_sessions')
+        .select('id, session_exercises:fitarc_workout_session_exercises(id)')
+        .eq('id', existingSession.id)
+        .maybeSingle()
+    : { data: null, error: null };
   if (existingRes.error) throw existingRes.error;
   if (existingRes.data?.id) {
     const sessionId = existingRes.data.id;
@@ -282,11 +299,18 @@ export const createSessionFromPlanWorkout = async ({
 
   for (let index = 0; index < exercises.length; index += 1) {
     const exercise = exercises[index];
-    await addExerciseToSession({
-      sessionId: data.id,
-      exercise,
-      displayOrder: exercise.displayOrder ?? index + 1,
-    });
+    try {
+      await addExerciseToSession({
+        sessionId: data.id,
+        exercise,
+        displayOrder: exercise.displayOrder ?? index + 1,
+      });
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'duplicate_exercise') {
+        continue;
+      }
+      throw err;
+    }
   }
 
   return data.id;
@@ -325,10 +349,162 @@ const normalizeDate = (date: string) => {
   return date;
 };
 
+const findExistingSessionForDate = async (
+  userId: string,
+  planId: string,
+  date: string
+): Promise<{ id: string } | null> => {
+  const normalizedDate = normalizeDate(date);
+
+  const plannedDateRes = await supabase
+    .from('fitarc_workout_sessions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .eq('planned_date', normalizedDate)
+    .maybeSingle();
+
+  if (plannedDateRes.error && !isMissingColumnError(plannedDateRes.error)) {
+    throw plannedDateRes.error;
+  }
+
+  if (plannedDateRes.data?.id) {
+    return { id: plannedDateRes.data.id };
+  }
+
+  const performedAtRes = await supabase
+    .from('fitarc_workout_sessions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .eq('performed_at', normalizedDate)
+    .maybeSingle();
+
+  if (performedAtRes.error) {
+    throw performedAtRes.error;
+  }
+
+  return performedAtRes.data?.id ? { id: performedAtRes.data.id } : null;
+};
+
+const hydrateSessionsWithExercises = async (
+  sessionRows: any[],
+  phasePlanId: string | undefined,
+  timeZone: string
+): Promise<WorkoutSessionEntry[]> => {
+  if (!sessionRows.length) {
+    return [];
+  }
+
+  const sessionIds = sessionRows.map((row) => row.id).filter(Boolean);
+  let exerciseRes: { data: any[] | null; error: any } = await supabase
+    .from('fitarc_workout_session_exercises')
+    .select(
+      'id, session_id, exercise_id, exercise_name, movement_pattern, body_parts, display_order, notes, complete'
+    )
+    .in('session_id', sessionIds)
+    .order('display_order', { ascending: true });
+
+  if (exerciseRes.error && isMissingColumnError(exerciseRes.error)) {
+    exerciseRes = await supabase
+      .from('fitarc_workout_session_exercises')
+      .select('id, session_id, exercise_id, display_order, notes, complete')
+      .in('session_id', sessionIds)
+      .order('display_order', { ascending: true });
+  }
+
+  const { data: exerciseRows, error: exerciseError } = exerciseRes;
+
+  if (exerciseError) throw exerciseError;
+
+  const sessionExerciseIds = ((exerciseRows as any[]) || []).map((row) => row.id).filter(Boolean);
+  const setsByExerciseId = new Map<string, any[]>();
+
+  if (sessionExerciseIds.length) {
+    const { data: setRows, error: setError } = await supabase
+      .from('fitarc_workout_sets')
+      .select('session_exercise_id, set_number, reps, weight, rpe, rest_seconds')
+      .in('session_exercise_id', sessionExerciseIds)
+      .order('set_number', { ascending: true });
+
+    if (setError) throw setError;
+
+    ((setRows as any[]) || []).forEach((setRow) => {
+      const current = setsByExerciseId.get(setRow.session_exercise_id) ?? [];
+      current.push(setRow);
+      setsByExerciseId.set(setRow.session_exercise_id, current);
+    });
+  }
+
+  const exercisesBySessionId = new Map<string, any[]>();
+  ((exerciseRows as any[]) || []).forEach((exerciseRow) => {
+    const current = exercisesBySessionId.get(exerciseRow.session_id) ?? [];
+    current.push({
+      ...exerciseRow,
+      sets: setsByExerciseId.get(exerciseRow.id) ?? [],
+    });
+    exercisesBySessionId.set(exerciseRow.session_id, current);
+  });
+
+  return sessionRows.map((sessionRow) =>
+    mapSessionRow(
+      {
+        ...sessionRow,
+        session_exercises: exercisesBySessionId.get(sessionRow.id) ?? [],
+      },
+      phasePlanId,
+      timeZone
+    )
+  );
+};
+
 const parseRepsValue = (value: string): number | null => {
   if (!value) return null;
   const match = value.match(/\d+/);
   return match ? parseInt(match[0], 10) : null;
+};
+
+const isMissingColumnError = (error: unknown): boolean =>
+  (error as { code?: string } | null)?.code === '42703';
+
+const insertSessionExerciseRow = async (
+  sessionId: string,
+  exercise: WorkoutSessionExercise,
+  displayOrder: number
+): Promise<string> => {
+  const richPayload = {
+    session_id: sessionId,
+    exercise_id: exercise.exerciseId ?? null,
+    exercise_name: exercise.name ?? null,
+    movement_pattern: exercise.movementPattern ?? null,
+    body_parts: exercise.bodyParts?.length ? exercise.bodyParts : null,
+    user_exercise_id: null,
+    display_order: displayOrder,
+    notes: exercise.reps ?? null,
+  };
+
+  let insertRes = await supabase
+    .from('fitarc_workout_session_exercises')
+    .insert(richPayload)
+    .select('id')
+    .single();
+
+  if (insertRes.error && isMissingColumnError(insertRes.error)) {
+    insertRes = await supabase
+      .from('fitarc_workout_session_exercises')
+      .insert({
+        session_id: sessionId,
+        exercise_id: exercise.exerciseId ?? null,
+        user_exercise_id: null,
+        display_order: displayOrder,
+        notes: exercise.reps ?? null,
+      })
+      .select('id')
+      .single();
+  }
+
+  if (insertRes.error) throw insertRes.error;
+  return insertRes.data.id;
 };
 
 const parseYMDToDate = (value: string): Date => {
@@ -450,30 +626,7 @@ export const fetchWorkoutSessionEntries = async (
 ): Promise<WorkoutSessionEntry[]> => {
   const query = supabase
     .from('fitarc_workout_sessions')
-    .select(`
-      id,
-      user_id,
-      plan_id,
-      performed_at,
-      notes,
-      mood,
-      perceived_exertion,
-      complete,
-      session_exercises:fitarc_workout_session_exercises (
-        id,
-        exercise_id,
-        display_order,
-        notes,
-        complete,
-        sets:fitarc_workout_sets (
-          set_number,
-          reps,
-          weight,
-          rpe,
-          rest_seconds
-        )
-      )
-    `)
+    .select('id, user_id, plan_id, performed_at, notes, mood, perceived_exertion, complete')
     .eq('user_id', userId);
 
   if (phasePlanId) {
@@ -486,9 +639,8 @@ export const fetchWorkoutSessionEntries = async (
     throw error;
   }
 
-  const rows = (data as any[]) || [];
-  const res =  rows.map((session) => mapSessionRow(session, phasePlanId, timeZone));
-  return res;
+  const sessionRows = (data as any[]) || [];
+  return hydrateSessionsWithExercises(sessionRows, phasePlanId, timeZone);
 };
 
 type UpsertWorkoutSessionInput = {
@@ -527,20 +679,20 @@ export const upsertWorkoutSessionWithExercises = async ({
 }: UpsertWorkoutSessionInput): Promise<WorkoutSessionEntry> => {
   const performedAt = normalizeDate(date);
 
-  const existingSessionRes = await supabase
-    .from('fitarc_workout_sessions')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('plan_id', planId)
-    .eq('performed_at', performedAt)
-    .maybeSingle();
-
   let sessionId: string;
-  if (existingSessionRes.error) throw existingSessionRes.error;
+  const existingSession = await findExistingSessionForDate(userId, planId, performedAt);
 
-  if (existingSessionRes.data?.id) {
-    sessionId = existingSessionRes.data.id;
+  if (existingSession?.id) {
+    sessionId = existingSession.id;
     await deleteExercisesForSession(sessionId);
+    const updateRes = await supabase
+      .from('fitarc_workout_sessions')
+      .update({
+        performed_at: performedAt,
+        planned_date: performedAt,
+      })
+      .eq('id', sessionId);
+    if (updateRes.error && !isMissingColumnError(updateRes.error)) throw updateRes.error;
   } else {
     const createRes = await supabase
       .from('fitarc_workout_sessions')
@@ -548,6 +700,7 @@ export const upsertWorkoutSessionWithExercises = async ({
         user_id: userId,
         plan_id: planId,
         performed_at: performedAt,
+        planned_date: performedAt,
       })
       .select('id')
       .single();
@@ -557,19 +710,7 @@ export const upsertWorkoutSessionWithExercises = async ({
 
   for (let index = 0; index < exercises.length; index += 1) {
     const exercise = exercises[index];
-    const insertExerciseRes = await supabase
-      .from('fitarc_workout_session_exercises')
-      .insert({
-        session_id: sessionId,
-        exercise_id: exercise.exerciseId ?? null,
-        user_exercise_id: null,
-        display_order: index + 1,
-        notes: exercise.reps,
-      })
-      .select('id')
-      .single();
-    if (insertExerciseRes.error) throw insertExerciseRes.error;
-    const sessionExerciseId = insertExerciseRes.data.id;
+    const sessionExerciseId = await insertSessionExerciseRow(sessionId, exercise, index + 1);
     const setRows = buildSetPayloads(exercise);
     if (setRows.length) {
       const payload = setRows.map((set, setIdx) => ({
@@ -642,20 +783,7 @@ export const addExerciseToSession = async ({
     }
   }
 
-  const insertExerciseRes = await supabase
-    .from('fitarc_workout_session_exercises')
-    .insert({
-      session_id: sessionId,
-      exercise_id: exercise.exerciseId ?? null,
-      user_exercise_id: null,
-      display_order: displayOrder,
-      notes: exercise.reps ?? null,
-    })
-    .select('id')
-    .single();
-  if (insertExerciseRes.error) throw insertExerciseRes.error;
-
-  const sessionExerciseId = insertExerciseRes.data.id;
+  const sessionExerciseId = await insertSessionExerciseRow(sessionId, exercise, displayOrder);
   const repsValue = parseRepsValue(exercise.reps ?? '');
   const setCount = Math.max(0, exercise.sets ?? 0);
   if (setCount > 0) {
@@ -802,20 +930,13 @@ export const deleteWorkoutSessionRemote = async ({
   date,
 }: DeleteWorkoutSessionInput) => {
   const performedAt = normalizeDate(date);
-  const existingRes = await supabase
-    .from('fitarc_workout_sessions')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('plan_id', planId)
-    .eq('performed_at', performedAt)
-    .maybeSingle();
-  if (existingRes.error) throw existingRes.error;
-  if (!existingRes.data?.id) return;
-  await deleteExercisesForSession(existingRes.data.id);
+  const existingSession = await findExistingSessionForDate(userId, planId, performedAt);
+  if (!existingSession?.id) return;
+  await deleteExercisesForSession(existingSession.id);
   const deleteSessionRes = await supabase
     .from('fitarc_workout_sessions')
     .delete()
-    .eq('id', existingRes.data.id);
+    .eq('id', existingSession.id);
   if (deleteSessionRes.error) throw deleteSessionRes.error;
 };
 
@@ -835,7 +956,17 @@ export const fetchWorkoutCompletionMap = async (
 
   const { data: sessionRows, error: sessionError } = await supabase
     .from('fitarc_workout_sessions')
-    .select('id, performed_at, complete')
+    .select(
+      `
+      id,
+      performed_at,
+      complete,
+      session_exercises:fitarc_workout_session_exercises (
+        id,
+        complete
+      )
+    `
+    )
     .eq('user_id', userId)
     .gte('performed_at', startDate)
     .lte('performed_at', endDate);
@@ -855,7 +986,10 @@ export const fetchWorkoutCompletionMap = async (
     if (!sessionDate) return;
     if (!(sessionDate in dayMap)) return;
     if (sessionDate > todayKey) return;
-    if (session.complete === true) {
+    const exercises = (session.session_exercises ?? []) as Array<{ complete?: boolean }>;
+    const allExercisesComplete =
+      exercises.length > 0 && exercises.every((exercise) => exercise.complete === true);
+    if (session.complete === true || allExercisesComplete) {
       dayMap[sessionDate] = true;
     }
   });
@@ -924,15 +1058,8 @@ export const toggleExerciseAndCheckSession = async (
   const newCompleted = !currentlyCompleted;
 
   await toggleExerciseCompletion(sessionExerciseId, newCompleted);
-
-  if (newCompleted) {
-    const allComplete = await checkAllExercisesComplete(sessionId);
-    if (allComplete) {
-      await updateSessionCompletion(sessionId, true);
-    }
-  } else {
-    await updateSessionCompletion(sessionId, false);
-  }
+  const allComplete = await checkAllExercisesComplete(sessionId);
+  await updateSessionCompletion(sessionId, allComplete);
 };
 
 export const fetchPhaseWorkoutSessions = async (
@@ -945,37 +1072,14 @@ export const fetchPhaseWorkoutSessions = async (
   fromDate.setDate(fromDate.getDate() - lookbackDays);
   const { data, error } = await supabase
     .from('fitarc_workout_sessions')
-    .select(
-      `
-      id,
-      user_id,
-      plan_id,
-      performed_at,
-      notes,
-      complete,
-      session_exercises:fitarc_workout_session_exercises (
-        id,
-        exercise_id,
-        display_order,
-        notes,
-        complete,
-        sets:fitarc_workout_sets (
-          set_number,
-          reps,
-          weight,
-          rpe,
-          rest_seconds
-        )
-      )
-    `
-    )
+    .select('id, user_id, plan_id, performed_at, notes, complete')
     .eq('user_id', userId)
     .eq('plan_id', planId)
     .gte('performed_at', fromDate.toISOString().split('T')[0])
     .order('performed_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []).map((row: any) => mapSessionRow(row, planId, timeZone));
+  return hydrateSessionsWithExercises((data as any[]) || [], planId, timeZone);
 };
 
 type GenerationPreferences = {

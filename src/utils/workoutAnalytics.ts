@@ -110,6 +110,23 @@ type WorkoutAnalyticsResult = {
   strengthSnapshots: StrengthSnapshot[];
 };
 
+// Infer muscle groups from exercise name when bodyParts is unavailable from DB
+const inferMusclesFromName = (name: string): MuscleGroup[] => {
+  const result = new Set<MuscleGroup>();
+  const n = name.toLowerCase();
+  if (/bench|chest|fly|pec|push.?up|dip/.test(n))                              result.add('chest');
+  if (/row|pulldown|pull.?up|lat|pull\s|seated pull|back/.test(n))             result.add('back');
+  if (/squat|lunge|leg press|quad|hamstring|glute|hip thrust|calf|calves|step.?up|leg curl|leg extension/.test(n)) result.add('legs');
+  if (/shoulder|delt|overhead|military|lateral raise|front raise|upright/.test(n)) result.add('shoulders');
+  if (/curl|tricep|bicep|extension|pushdown|skull|close.?grip/.test(n))        result.add('arms');
+  if (/\babs?\b|crunch|plank|oblique|core|sit.?up|russian twist/.test(n))      result.add('core');
+  // Compound overrides
+  if (/deadlift|rdl/.test(n))  { result.add('back'); result.add('legs'); }
+  if (/push.?up|dip/.test(n))  { result.add('chest'); result.add('arms'); }
+  if (/row|pull.?up|pulldown/.test(n)) { result.add('back'); result.add('arms'); }
+  return Array.from(result);
+};
+
 export const buildWorkoutAnalytics = (
   sessions: WorkoutSessionEntry[],
   defaultWeights?: Record<string, number>
@@ -118,7 +135,7 @@ export const buildWorkoutAnalytics = (
   const strengthSnapshots: StrengthSnapshot[] = [];
 
   sessions.forEach((session) => {
-    const muscleVolume = createEmptyMuscleVolume();
+    const muscleVolume: Record<MuscleGroup, number> = {};
     const movementVolume = createEmptyMovementVolume();
     const musclesHit = new Set<MuscleGroup>();
     const movementHit = new Set<MovementPattern>();
@@ -139,9 +156,15 @@ export const buildWorkoutAnalytics = (
       totalSets += setCount;
 
       if (setCount > 0) {
-        exercise.bodyParts.forEach((part) => {
-          musclesHit.add(part);
-          muscleVolume[part] += setCount;
+        // Use bodyParts from DB if available, otherwise infer from exercise name
+        const parts =
+          exercise.bodyParts.length > 0
+            ? exercise.bodyParts
+            : inferMusclesFromName(exercise.name);
+        parts.forEach((part) => {
+          const mapped = mapMuscleNameToGroup(part) ?? part;
+          musclesHit.add(mapped);
+          muscleVolume[mapped] = (muscleVolume[mapped] ?? 0) + setCount;
         });
       }
 
