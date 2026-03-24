@@ -3,6 +3,7 @@ import { WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry } from '..
 import { mapSessionRow } from '../utils/workoutSessionMapper';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
+import { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
 export { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
 
 const SESSION_BASE_SELECT =
@@ -428,7 +429,36 @@ const hydrateSessionsWithExercises = async (
 
   if (exerciseError) throw exerciseError;
 
-  const sessionExerciseIds = ((exerciseRows as any[]) || []).map((row) => row.id).filter(Boolean);
+  const rawExerciseRows = (exerciseRows as any[]) || [];
+  const missingCatalogFields = rawExerciseRows.some(
+    (row) => row.exercise_id && (!row.exercise_name || !row.body_parts || !row.movement_pattern)
+  );
+  let catalogById = new Map<string, ExerciseCatalogEntry>();
+
+  if (missingCatalogFields) {
+    try {
+      const catalog = await fetchExerciseCatalog();
+      catalogById = new Map(catalog.map((exercise) => [exercise.id, exercise]));
+    } catch (catalogError) {
+      console.warn('Failed to enrich session exercises from catalog:', catalogError);
+    }
+  }
+
+  const enrichedExerciseRows = rawExerciseRows.map((row) => {
+    const catalogEntry = row.exercise_id ? catalogById.get(row.exercise_id) : undefined;
+    return {
+      ...row,
+      exercise_name: row.exercise_name ?? catalogEntry?.name ?? null,
+      movement_pattern: row.movement_pattern ?? catalogEntry?.movementPattern ?? null,
+      body_parts:
+        row.body_parts ??
+        (catalogEntry
+          ? [...catalogEntry.primaryMuscles, ...catalogEntry.secondaryMuscles].filter(Boolean)
+          : null),
+    };
+  });
+
+  const sessionExerciseIds = enrichedExerciseRows.map((row) => row.id).filter(Boolean);
   const setsByExerciseId = new Map<string, any[]>();
 
   if (sessionExerciseIds.length) {
@@ -448,7 +478,7 @@ const hydrateSessionsWithExercises = async (
   }
 
   const exercisesBySessionId = new Map<string, any[]>();
-  ((exerciseRows as any[]) || []).forEach((exerciseRow) => {
+  enrichedExerciseRows.forEach((exerciseRow) => {
     const current = exercisesBySessionId.get(exerciseRow.session_id) ?? [];
     current.push({
       ...exerciseRow,
