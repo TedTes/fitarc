@@ -34,7 +34,6 @@ import { getBodyPartLabel } from '../utils';
 import { formatLocalDateYMD } from '../utils/date';
 import { fetchWorkoutCompletionMap } from '../services/workoutService';
 import { runLayoutAnimation } from '../utils/layoutAnimation';
-import { uiCopy } from '../content/uiCopy';
 
 
 type PlansScreenProps = {
@@ -46,6 +45,7 @@ type PlansScreenProps = {
   onAddExercise?: (planWorkoutId: string, exercise: WorkoutSessionExercise) => Promise<string | void>;
   onDeleteExercise?: (planWorkoutId: string, planExerciseId: string) => Promise<void>;
   onToggleComplete?: (date: string, exerciseName: string, exerciseId?: string, currentExercises?: WorkoutSessionExercise[]) => void | Promise<void>;
+  onMarkAllComplete?: (date: string) => void | Promise<void>;
   canUndoWorkoutSwap?: (date: string) => boolean;
   onUndoLastWorkoutSwap?: (date: string) => Promise<boolean>;
   embedded?: boolean;
@@ -127,6 +127,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
   onAddExercise,
   onDeleteExercise,
   onToggleComplete,
+  onMarkAllComplete,
   canUndoWorkoutSwap,
   onUndoLastWorkoutSwap,
   embedded = false,
@@ -388,7 +389,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
 
   useEffect(() => {
     return refreshCompletionMap();
-  }, [refreshCompletionMap]);
+  }, [refreshCompletionMap, workoutSessions]);
 
   // Animate week strip entrance
   useEffect(() => {
@@ -479,11 +480,11 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     try {
       const didUndo = await onUndoLastWorkoutSwap(selectedPlan.dateStr);
       if (!didUndo) {
-        Alert.alert(uiCopy.plans.undoUnavailableTitle, uiCopy.plans.undoUnavailableMessage);
+        Alert.alert('Undo unavailable', 'No previous workout swap found for this day.');
       }
     } catch (err) {
       console.error('Failed to undo workout swap:', err);
-      Alert.alert(uiCopy.plans.undoFailedTitle, uiCopy.plans.undoFailedMessage);
+      Alert.alert('Undo failed', 'Could not restore the previous workout. Please try again.');
     } finally {
       setIsUndoingSwap(false);
     }
@@ -743,18 +744,8 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
     if (selectedPlan) {
       localEditsDateRef.current = selectedPlan.dateStr;
     }
-    setIsDirty(true);
-    if (autosaveTimeoutRef.current) {
-      clearTimeout(autosaveTimeoutRef.current);
-    }
-    autosaveTimeoutRef.current = setTimeout(() => {
-      if (selectedPlan) {
-        void enqueueSave(selectedPlan, editingExercisesRef.current);
-        setIsDirty(false);
-        refreshCompletionMap();
-      }
-    }, 200);
-    // Persist completion to session layer
+
+    // Completion is logged session state, not a plan edit.
     if (exerciseName && onToggleComplete) {
       void onToggleComplete(selectedDate, exerciseName, exerciseId, editingExercisesRef.current);
     }
@@ -914,24 +905,20 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
         localEditsDateRef.current = selectedPlan.dateStr;
         setCompletionMap((prevMap) => ({ ...prevMap, [selectedPlan.dateStr]: targetCompleted }));
       }
-      setIsDirty(true);
       if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
       autosaveTimeoutRef.current = null;
 
-      // Persist only the exercises whose completion actually changed.
+      // Completion sync should not rewrite the planned workout definition.
       void (async () => {
         setIsBulkCompleting(true);
         try {
-          if (onToggleComplete) {
+          if (targetCompleted && onMarkAllComplete) {
+            await onMarkAllComplete(selectedDate);
+          } else if (onToggleComplete) {
             for (const ex of changedExercises) {
               await onToggleComplete(selectedDate, ex.name, ex.exerciseId, next);
             }
           }
-          if (selectedPlan) {
-            await enqueueSave(selectedPlan, next);
-            refreshCompletionMap();
-          }
-          setIsDirty(false);
         } catch (err) {
           console.error('Failed to sync finish-all completion state:', err);
         } finally {
@@ -1284,7 +1271,7 @@ export const PlansScreen: React.FC<PlansScreenProps> = ({
                     activeOpacity={0.75}
                   >
                     <Text style={styles.undoSwapButtonText}>
-                      {isUndoingSwap ? uiCopy.plans.undoingLabel : uiCopy.plans.undoSwapLabel}
+                      {isUndoingSwap ? 'Undoing...' : 'Undo swap'}
                     </Text>
                   </TouchableOpacity>
                 )}
