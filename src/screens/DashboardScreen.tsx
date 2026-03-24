@@ -388,6 +388,43 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     };
   }, []);
 
+  useEffect(() => {
+    setLocalDone((prev) => {
+      if (!Object.keys(prev).length) return prev;
+
+      const next: Record<string, boolean> = {};
+      let changed = false;
+
+      Object.entries(prev).forEach(([key, value]) => {
+        const separatorIndex = key.indexOf('::');
+        if (separatorIndex === -1) {
+          changed = true;
+          return;
+        }
+
+        const date = key.slice(0, separatorIndex);
+        const exerciseName = key.slice(separatorIndex + 2);
+        const session = resolvedSessions.find((entry) => entry.date === date);
+        const serverExercise = session?.exercises.find((exercise) => exercise.name === exerciseName);
+        const serverDone = serverExercise?.completed;
+
+        if (serverDone === undefined) {
+          next[key] = value;
+          return;
+        }
+
+        if (serverDone !== value) {
+          next[key] = value;
+          return;
+        }
+
+        changed = true;
+      });
+
+      return changed ? next : prev;
+    });
+  }, [resolvedSessions]);
+
   // ── Timeline ────────────────────────────────────────────────────────────────
   const weeks = useMemo<TWeek[]>(() => {
     if (!resolvedPhase || !hasActivePlan) return [];
@@ -497,7 +534,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       return;
     }
     const key = `${day.date}::${ex.name}`;
-    setLocalDone((prev) => ({ ...prev, [key]: !prev[key] }));
+    const currentDone = isExDone(day, ex.name, 'completed' in ex ? ex.completed : undefined);
+    setLocalDone((prev) => ({ ...prev, [key]: !currentDone }));
     const exId = 'exerciseId' in ex ? ex.exerciseId : undefined;
     onToggleWorkoutExercise?.(day.date, ex.name, exId);
   };
