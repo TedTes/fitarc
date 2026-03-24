@@ -1,11 +1,42 @@
 import { supabase } from '../lib/supabaseClient';
-import { User, WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry, MuscleGroup } from '../types/domain';
+import { WorkoutSessionEntry, WorkoutSessionExercise, WorkoutSetEntry } from '../types/domain';
 import { mapSessionRow } from '../utils/workoutSessionMapper';
 import { getAppTimeZone } from '../utils/time';
 import { formatLocalDateYMD } from '../utils/date';
-import type { AdaptationMode } from './planningRules';
 export { fetchExerciseCatalog, type ExerciseCatalogEntry } from './exerciseProvider';
-import { replacePlanExercisesForDate } from './planRuntimeService';
+
+const SESSION_BASE_SELECT =
+  'id, user_id, plan_id, performed_at, notes, mood, perceived_exertion, complete';
+const SESSION_CREATE_SELECT = 'id, user_id, plan_id, performed_at, notes, complete';
+const SESSION_EXERCISE_RICH_SELECT =
+  'id, session_id, exercise_id, exercise_name, movement_pattern, body_parts, display_order, notes, complete';
+const SESSION_EXERCISE_LEAN_SELECT =
+  'id, session_id, exercise_id, display_order, notes, complete';
+const WORKOUT_SET_SELECT =
+  'session_exercise_id, set_number, reps, weight, rpe, rest_seconds';
+const SESSION_WITH_EXERCISES_SELECT = `
+      id,
+      user_id,
+      plan_id,
+      performed_at,
+      notes,
+      complete,
+      session_exercises:fitarc_workout_session_exercises (
+        id,
+        exercise_id,
+        display_order,
+        complete,
+        sets:fitarc_workout_sets (
+          set_number,
+          reps,
+          weight,
+          rpe,
+          rest_seconds
+        )
+      )
+    `;
+
+// ── Templates ────────────────────────────────────────────────────────────────
 
 type WorkoutTemplateExerciseRow = {
   id: string;
@@ -70,7 +101,7 @@ export const fetchWorkoutTemplates = async (
   return (data ?? []) as WorkoutTemplateRow[];
 };
 
-export type ExerciseDefaultRecord = {
+type ExerciseDefaultRecord = {
   id: string;
   user_id: string;
   exercise_id: string | null;
@@ -84,6 +115,8 @@ export type ExerciseDefaultRecord = {
   created_at: string;
   updated_at: string;
 };
+
+// ── Defaults ─────────────────────────────────────────────────────────────────
 
 export type ExerciseDefault = {
   id: string;
@@ -202,6 +235,8 @@ export const deleteExerciseDefault = async (id: string) => {
   }
 };
 
+// ── Sessions ─────────────────────────────────────────────────────────────────
+
 type CreateWorkoutSessionInput = {
   userId: string;
   planId: string;
@@ -215,20 +250,9 @@ export const createWorkoutSession = async ({
   date,
   splitDayId = null,
 }: CreateWorkoutSessionInput): Promise<WorkoutSessionEntry> => {
-  const performedAt = normalizeDate(date);
-  const { data, error } = await supabase
-    .from('fitarc_workout_sessions')
-    .insert({
-      user_id: userId,
-      plan_id: planId,
-      performed_at: performedAt,
-      split_day_id: splitDayId,
-      planned_date: normalizeDate(date),
-    })
-    .select('id, user_id, plan_id, performed_at, notes, complete')
-    .single();
-
-  if (error) throw error;
+  const data = await createSessionRow(
+    buildSessionMutationPayload(userId, planId, date, splitDayId)
+  );
 
   return mapSessionRow(
     {
@@ -246,6 +270,14 @@ type CreateSessionFromPlanInput = {
   date: string;
   exercises: WorkoutSessionExercise[];
   splitDayId?: string | null;
+};
+
+type SessionMutationPayload = {
+  user_id: string;
+  plan_id: string;
+  performed_at: string;
+  planned_date: string;
+  split_day_id?: string | null;
 };
 
 export const createSessionFromPlanWorkout = async ({
@@ -269,84 +301,65 @@ export const createSessionFromPlanWorkout = async ({
     const existingExercises = (existingRes.data as any).session_exercises ?? [];
     // Session exists but has no exercises — populate them now
     if (existingExercises.length === 0 && exercises.length > 0) {
-      for (let index = 0; index < exercises.length; index += 1) {
-        try {
-          await addExerciseToSession({
-            sessionId,
-            exercise: exercises[index],
-            displayOrder: exercises[index].displayOrder ?? index + 1,
-          });
-        } catch {
-          // ignore duplicate_exercise errors (exercise already added concurrently)
-        }
-      }
+      await addExercisesToSession(sessionId, exercises);
     }
     return sessionId;
   }
 
-  const { data, error } = await supabase
-    .from('fitarc_workout_sessions')
-    .insert({
-      user_id: userId,
-      plan_id: planId,
-      performed_at: normalizeDate(date),
-      planned_date: normalizeDate(date),
-      split_day_id: splitDayId,
-    })
-    .select('id')
-    .single();
-  if (error) throw error;
+  const data = await createSessionRow(
+    buildSessionMutationPayload(userId, planId, date, splitDayId)
+  );
 
-  for (let index = 0; index < exercises.length; index += 1) {
-    const exercise = exercises[index];
-    try {
-      await addExerciseToSession({
-        sessionId: data.id,
-        exercise,
-        displayOrder: exercise.displayOrder ?? index + 1,
-      });
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message === 'duplicate_exercise') {
-        continue;
-      }
-      throw err;
-    }
-  }
+  await addExercisesToSession(data.id, exercises);
 
   return data.id;
-};
-
-export type WorkoutSessionRow = {
-  id: string;
-  user_id: string;
-  performed_at: string;
-  mood: string | null;
-  perceived_exertion: number | null;
-  notes: string | null;
-};
-
-export type WorkoutSessionExerciseRow = {
-  id: string;
-  session_id: string;
-  exercise_id: string | null;
-  user_exercise_id: string | null;
-  display_order: number;
-  notes: string | null;
-};
-
-export type WorkoutSetRow = {
-  id: string;
-  session_exercise_id: string;
-  set_number: number;
-  weight: number | null;
-  reps: number | null;
-  rpe: number | null;
-  rest_seconds: number | null;
 };
 
 const normalizeDate = (date: string) => {
   if (date.includes('T')) return date.split('T')[0];
   return date;
+};
+
+const buildSessionMutationPayload = (
+  userId: string,
+  planId: string,
+  date: string,
+  splitDayId?: string | null
+): SessionMutationPayload => {
+  const normalizedDate = normalizeDate(date);
+  return {
+    user_id: userId,
+    plan_id: planId,
+    performed_at: normalizedDate,
+    planned_date: normalizedDate,
+    split_day_id: splitDayId ?? null,
+  };
+};
+
+const createSessionRow = async (
+  payload: SessionMutationPayload
+) => {
+  const { data, error } = await supabase
+    .from('fitarc_workout_sessions')
+    .insert(payload)
+    .select(SESSION_CREATE_SELECT)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+const updateSessionRowDates = async (sessionId: string, date: string) => {
+  const normalizedDate = normalizeDate(date);
+  const { error } = await supabase
+    .from('fitarc_workout_sessions')
+    .update({
+      performed_at: normalizedDate,
+      planned_date: normalizedDate,
+    })
+    .eq('id', sessionId);
+
+  if (error && !isMissingColumnError(error)) throw error;
 };
 
 const findExistingSessionForDate = async (
@@ -399,16 +412,14 @@ const hydrateSessionsWithExercises = async (
   const sessionIds = sessionRows.map((row) => row.id).filter(Boolean);
   let exerciseRes: { data: any[] | null; error: any } = await supabase
     .from('fitarc_workout_session_exercises')
-    .select(
-      'id, session_id, exercise_id, exercise_name, movement_pattern, body_parts, display_order, notes, complete'
-    )
+    .select(SESSION_EXERCISE_RICH_SELECT)
     .in('session_id', sessionIds)
     .order('display_order', { ascending: true });
 
   if (exerciseRes.error && isMissingColumnError(exerciseRes.error)) {
     exerciseRes = await supabase
       .from('fitarc_workout_session_exercises')
-      .select('id, session_id, exercise_id, display_order, notes, complete')
+      .select(SESSION_EXERCISE_LEAN_SELECT)
       .in('session_id', sessionIds)
       .order('display_order', { ascending: true });
   }
@@ -423,7 +434,7 @@ const hydrateSessionsWithExercises = async (
   if (sessionExerciseIds.length) {
     const { data: setRows, error: setError } = await supabase
       .from('fitarc_workout_sets')
-      .select('session_exercise_id, set_number, reps, weight, rpe, rest_seconds')
+      .select(WORKOUT_SET_SELECT)
       .in('session_exercise_id', sessionExerciseIds)
       .order('set_number', { ascending: true });
 
@@ -464,43 +475,68 @@ const parseRepsValue = (value: string): number | null => {
   return match ? parseInt(match[0], 10) : null;
 };
 
-const isMissingColumnError = (error: unknown): boolean =>
-  (error as { code?: string } | null)?.code === '42703';
+const isMissingColumnError = (error: unknown): boolean => {
+  const code = (error as { code?: string } | null)?.code;
+  const message = (error as { message?: string } | null)?.message ?? '';
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    message.includes('Could not find') ||
+    message.includes('does not exist')
+  );
+};
+
+const insertSessionExerciseRich = async (
+  sessionId: string,
+  exercise: WorkoutSessionExercise,
+  displayOrder: number
+) =>
+  supabase
+    .from('fitarc_workout_session_exercises')
+    .insert({
+      session_id: sessionId,
+      exercise_id: exercise.exerciseId ?? null,
+      exercise_name: exercise.name ?? null,
+      movement_pattern: exercise.movementPattern ?? null,
+      body_parts: exercise.bodyParts?.length ? exercise.bodyParts : null,
+      user_exercise_id: null,
+      display_order: displayOrder,
+      notes: exercise.reps ?? null,
+    })
+    .select('id')
+    .single();
+
+const insertSessionExerciseLean = async (
+  sessionId: string,
+  exercise: WorkoutSessionExercise,
+  displayOrder: number,
+  withUserExerciseId: boolean
+) =>
+  supabase
+    .from('fitarc_workout_session_exercises')
+    .insert({
+      session_id: sessionId,
+      exercise_id: exercise.exerciseId ?? null,
+      ...(withUserExerciseId ? { user_exercise_id: null } : {}),
+      display_order: displayOrder,
+      notes: exercise.reps ?? null,
+    })
+    .select('id')
+    .single();
 
 const insertSessionExerciseRow = async (
   sessionId: string,
   exercise: WorkoutSessionExercise,
   displayOrder: number
 ): Promise<string> => {
-  const richPayload = {
-    session_id: sessionId,
-    exercise_id: exercise.exerciseId ?? null,
-    exercise_name: exercise.name ?? null,
-    movement_pattern: exercise.movementPattern ?? null,
-    body_parts: exercise.bodyParts?.length ? exercise.bodyParts : null,
-    user_exercise_id: null,
-    display_order: displayOrder,
-    notes: exercise.reps ?? null,
-  };
-
-  let insertRes = await supabase
-    .from('fitarc_workout_session_exercises')
-    .insert(richPayload)
-    .select('id')
-    .single();
+  let insertRes = await insertSessionExerciseRich(sessionId, exercise, displayOrder);
 
   if (insertRes.error && isMissingColumnError(insertRes.error)) {
-    insertRes = await supabase
-      .from('fitarc_workout_session_exercises')
-      .insert({
-        session_id: sessionId,
-        exercise_id: exercise.exerciseId ?? null,
-        user_exercise_id: null,
-        display_order: displayOrder,
-        notes: exercise.reps ?? null,
-      })
-      .select('id')
-      .single();
+    insertRes = await insertSessionExerciseLean(sessionId, exercise, displayOrder, true);
+  }
+
+  if (insertRes.error && isMissingColumnError(insertRes.error)) {
+    insertRes = await insertSessionExerciseLean(sessionId, exercise, displayOrder, false);
   }
 
   if (insertRes.error) throw insertRes.error;
@@ -562,41 +598,52 @@ const buildDateRange = (start: string, end: string): string[] => {
   return results;
 };
 
-type LogWorkoutSetInput = {
-  sessionExerciseId: string;
-  setNumber: number;
-  weight?: number;
-  reps?: number;
-  rpe?: number;
-  restSeconds?: number;
+const addExercisesToSession = async (
+  sessionId: string,
+  exercises: WorkoutSessionExercise[]
+): Promise<void> => {
+  for (let index = 0; index < exercises.length; index += 1) {
+    const exercise = exercises[index];
+    try {
+      await addExerciseToSession({
+        sessionId,
+        exercise,
+        displayOrder: exercise.displayOrder ?? index + 1,
+      });
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'duplicate_exercise') {
+        continue;
+      }
+      console.error('Failed to add exercise to session', {
+        sessionId,
+        exerciseId: exercise.exerciseId,
+        exerciseName: exercise.name,
+        displayOrder: exercise.displayOrder ?? index + 1,
+        error: err,
+      });
+      throw err;
+    }
+  }
 };
 
-export const logWorkoutSet = async ({
-  sessionExerciseId,
-  setNumber,
-  weight,
-  reps,
-  rpe,
-  restSeconds,
-}: LogWorkoutSetInput): Promise<WorkoutSetRow> => {
+const insertWorkoutSets = async (payload: WorkoutSetInsert[]): Promise<void> => {
+  if (!payload.length) return;
+  const { error } = await supabase.from('fitarc_workout_sets').insert(payload);
+  if (error) throw error;
+};
+
+const fetchSessionById = async (
+  sessionId: string,
+  planId: string
+): Promise<WorkoutSessionEntry> => {
   const { data, error } = await supabase
-    .from('fitarc_workout_sets')
-    .insert({
-      session_exercise_id: sessionExerciseId,
-      set_number: setNumber,
-      weight: weight ?? null,
-      reps: reps ?? null,
-      rpe: rpe ?? null,
-      rest_seconds: restSeconds ?? null,
-    })
-    .select()
+    .from('fitarc_workout_sessions')
+    .select(SESSION_WITH_EXERCISES_SELECT)
+    .eq('id', sessionId)
     .single();
 
-  if (error) {
-    throw error;
-  }
-
-  return data as WorkoutSetRow;
+  if (error) throw error;
+  return mapSessionRow(data, planId, getAppTimeZone());
 };
 
 export const ensureSetsForExercises = async (
@@ -615,8 +662,7 @@ export const ensureSetsForExercises = async (
 
   if (!payload.length) return;
 
-  const { error } = await supabase.from('fitarc_workout_sets').insert(payload);
-  if (error) throw error;
+  await insertWorkoutSets(payload);
 };
 
 export const fetchWorkoutSessionEntries = async (
@@ -624,13 +670,13 @@ export const fetchWorkoutSessionEntries = async (
   phasePlanId?: string,
   timeZone: string = getAppTimeZone()
 ): Promise<WorkoutSessionEntry[]> => {
-  const query = supabase
+  let query = supabase
     .from('fitarc_workout_sessions')
-    .select('id, user_id, plan_id, performed_at, notes, mood, perceived_exertion, complete')
+    .select(SESSION_BASE_SELECT)
     .eq('user_id', userId);
 
   if (phasePlanId) {
-    query.eq('plan_id', phasePlanId);
+    query = query.eq('plan_id', phasePlanId);
   }
 
   const { data, error } = await query.order('performed_at', { ascending: false });
@@ -685,27 +731,12 @@ export const upsertWorkoutSessionWithExercises = async ({
   if (existingSession?.id) {
     sessionId = existingSession.id;
     await deleteExercisesForSession(sessionId);
-    const updateRes = await supabase
-      .from('fitarc_workout_sessions')
-      .update({
-        performed_at: performedAt,
-        planned_date: performedAt,
-      })
-      .eq('id', sessionId);
-    if (updateRes.error && !isMissingColumnError(updateRes.error)) throw updateRes.error;
+    await updateSessionRowDates(sessionId, performedAt);
   } else {
-    const createRes = await supabase
-      .from('fitarc_workout_sessions')
-      .insert({
-        user_id: userId,
-        plan_id: planId,
-        performed_at: performedAt,
-        planned_date: performedAt,
-      })
-      .select('id')
-      .single();
-    if (createRes.error) throw createRes.error;
-    sessionId = createRes.data.id;
+    const createRes = await createSessionRow(
+      buildSessionMutationPayload(userId, planId, performedAt)
+    );
+    sessionId = createRes.id;
   }
 
   for (let index = 0; index < exercises.length; index += 1) {
@@ -721,42 +752,11 @@ export const upsertWorkoutSessionWithExercises = async ({
         rpe: set.rpe ?? null,
         rest_seconds: set.restSeconds ?? null,
       }));
-      const insertSetsRes = await supabase.from('fitarc_workout_sets').insert(payload);
-      if (insertSetsRes.error) throw insertSetsRes.error;
+      await insertWorkoutSets(payload);
     }
   }
 
-  const sessionRes = await supabase
-    .from('fitarc_workout_sessions')
-    .select(
-      `
-      id,
-      user_id,
-      plan_id,
-      performed_at,
-      notes,
-      complete,
-      session_exercises:fitarc_workout_session_exercises (
-        id,
-        exercise_id,
-        display_order,
-        complete,
-        sets:fitarc_workout_sets (
-          set_number,
-          reps,
-          weight,
-          rpe,
-          rest_seconds
-        )
-      )
-    `
-    )
-    .eq('id', sessionId)
-    .single();
-
-  if (sessionRes.error) throw sessionRes.error;
-
-  return mapSessionRow(sessionRes.data, planId, getAppTimeZone());
+  return fetchSessionById(sessionId, planId);
 };
 
 type AddExerciseToSessionInput = {
@@ -795,98 +795,10 @@ export const addExerciseToSession = async ({
       rpe: null,
       rest_seconds: null,
     }));
-    const insertSetsRes = await supabase.from('fitarc_workout_sets').insert(payload);
-    if (insertSetsRes.error) throw insertSetsRes.error;
+    await insertWorkoutSets(payload);
   }
 
   return sessionExerciseId;
-};
-
-type UpdateSessionExercisesInput = {
-  sessionId: string;
-  exercises: WorkoutSessionExercise[];
-};
-
-export const updateSessionExercises = async ({
-  sessionId: _sessionId,
-  exercises,
-}: UpdateSessionExercisesInput): Promise<void> => {
-  const sessionId = _sessionId;
-  for (let index = 0; index < exercises.length; index += 1) {
-    const exercise = exercises[index];
-    if (!exercise.id) continue;
-    const displayOrder = exercise.displayOrder ?? index + 1;
-    const { error: updateError } = await supabase
-      .from('fitarc_workout_session_exercises')
-      .update({
-        display_order: displayOrder,
-        notes: exercise.reps ?? null,
-        complete: exercise.completed ?? false,
-      })
-      .eq('id', exercise.id);
-    if (updateError) throw updateError;
-
-    const { error: deleteSetsError } = await supabase
-      .from('fitarc_workout_sets')
-      .delete()
-      .eq('session_exercise_id', exercise.id);
-    if (deleteSetsError) throw deleteSetsError;
-
-    const setRows = buildSetPayloads(exercise);
-    let payload: WorkoutSetInsert[] = [];
-    if (setRows.length) {
-      payload = setRows.map((set, setIdx) => ({
-        session_exercise_id: exercise.id as string,
-        set_number: set.setNumber ?? setIdx + 1,
-        weight: set.weight ?? null,
-        reps: set.reps ?? null,
-        rpe: set.rpe ?? null,
-        rest_seconds: set.restSeconds ?? null,
-      }));
-    } else {
-      const repsValue = parseRepsValue(exercise.reps ?? '');
-      const setCount = Math.max(0, exercise.sets ?? 0);
-      payload = Array.from({ length: setCount }).map((_, setIdx) => ({
-        session_exercise_id: exercise.id as string,
-        set_number: setIdx + 1,
-        weight: null,
-        reps: repsValue,
-        rpe: null,
-        rest_seconds: null,
-      }));
-    }
-
-    if (payload.length) {
-      const { error: insertSetsError } = await supabase
-        .from('fitarc_workout_sets')
-        .insert(payload);
-      if (insertSetsError) throw insertSetsError;
-    }
-  }
-
-  const isComplete =
-    exercises.length > 0 && exercises.every((exercise) => exercise.completed === true);
-  const { error: sessionCompleteError } = await supabase
-    .from('fitarc_workout_sessions')
-    .update({ complete: isComplete })
-    .eq('id', sessionId);
-  if (sessionCompleteError) throw sessionCompleteError;
-};
-
-export const deleteWorkoutSessionExercise = async (
-  sessionExerciseId: string
-): Promise<void> => {
-  const { error: deleteSetsError } = await supabase
-    .from('fitarc_workout_sets')
-    .delete()
-    .eq('session_exercise_id', sessionExerciseId);
-  if (deleteSetsError) throw deleteSetsError;
-
-  const { error: deleteExerciseError } = await supabase
-    .from('fitarc_workout_session_exercises')
-    .delete()
-    .eq('id', sessionExerciseId);
-  if (deleteExerciseError) throw deleteExerciseError;
 };
 
 /**
@@ -1072,7 +984,7 @@ export const fetchPhaseWorkoutSessions = async (
   fromDate.setDate(fromDate.getDate() - lookbackDays);
   const { data, error } = await supabase
     .from('fitarc_workout_sessions')
-    .select('id, user_id, plan_id, performed_at, notes, complete')
+    .select(SESSION_CREATE_SELECT)
     .eq('user_id', userId)
     .eq('plan_id', planId)
     .gte('performed_at', fromDate.toISOString().split('T')[0])
@@ -1080,276 +992,4 @@ export const fetchPhaseWorkoutSessions = async (
 
   if (error) throw error;
   return hydrateSessionsWithExercises((data as any[]) || [], planId, timeZone);
-};
-
-type GenerationPreferences = {
-  daysPerWeek?: 3 | 4 | 5 | 6;
-  equipmentLevel?: 'bodyweight' | 'dumbbells' | 'full_gym';
-  primaryGoal?: 'build_muscle' | 'get_stronger' | 'lose_fat' | 'endurance' | 'general_fitness';
-};
-
-type GenerationAdaptation = {
-  targetExerciseOffset: number;
-  scoringMode: AdaptationMode;
-  reasons: string[];
-};
-
-type NormalizedWorkoutTemplate = Omit<WorkoutTemplateRow, 'goal_tags' | 'exercises'> & {
-  goal_tags: string[];
-  exercises: Array<WorkoutTemplateExerciseRow & { exercise_id: string }>;
-};
-
-const normalizeKey = (value?: string | null): string =>
-  (value ?? '').trim().toLowerCase().replace(/\s+/g, '_');
-
-const normalizeEquipmentLevel = (value?: string | null): GenerationPreferences['equipmentLevel'] | null => {
-  const key = normalizeKey(value);
-  if (!key) return null;
-  if (key === 'full_gym' || key === 'gym') return 'full_gym';
-  if (key === 'dumbbells' || key === 'dumbbell') return 'dumbbells';
-  if (key === 'bodyweight' || key === 'body_weight') return 'bodyweight';
-  return null;
-};
-
-const EQUIPMENT_RANK: Record<NonNullable<GenerationPreferences['equipmentLevel']>, number> = {
-  bodyweight: 0,
-  dumbbells: 1,
-  full_gym: 2,
-};
-
-const DIFFICULTY_RANK: Record<User['experienceLevel'], number> = {
-  beginner: 0,
-  intermediate: 1,
-  advanced: 2,
-};
-
-const GOAL_TAG_ALIASES: Record<NonNullable<GenerationPreferences['primaryGoal']>, string[]> = {
-  build_muscle: ['hypertrophy', 'build_muscle', 'muscle', 'general'],
-  get_stronger: ['strength', 'get_stronger', 'power', 'general'],
-  lose_fat: ['fat_loss', 'lose_fat', 'conditioning', 'general_fitness', 'general'],
-  endurance: ['endurance', 'conditioning', 'general_fitness'],
-  general_fitness: ['general', 'general_fitness', 'conditioning', 'full_body'],
-};
-
-const resolveGoalAliases = (goal?: GenerationPreferences['primaryGoal']): string[] =>
-  goal ? GOAL_TAG_ALIASES[goal] ?? [goal] : [];
-
-const resolveRotationTags = (split: User['trainingSplit']): string[] => {
-  switch (split) {
-    case 'push_pull_legs':
-      return ['push', 'pull', 'legs'];
-    case 'upper_lower':
-      return ['upper', 'lower'];
-    case 'bro_split':
-      return ['chest', 'back', 'shoulders', 'arms', 'legs'];
-    case 'full_body':
-    default:
-      return ['full_body'];
-  }
-};
-
-const shouldScheduleOnDate = (
-  date: Date,
-  daysPerWeek?: GenerationPreferences['daysPerWeek']
-): boolean => {
-  if (!daysPerWeek || daysPerWeek >= 7) return true;
-  const day = date.getDay();
-  if (daysPerWeek === 6) return day !== 0;
-  if (daysPerWeek === 5) return day >= 1 && day <= 5;
-  if (daysPerWeek === 4) return day === 1 || day === 2 || day === 4 || day === 6;
-  return day === 1 || day === 3 || day === 5;
-};
-
-const buildScheduleDates = (
-  startDate: Date,
-  totalDays: number,
-  preferences?: GenerationPreferences
-): string[] => {
-  const dates: string[] = [];
-  for (let dayOffset = 0; dayOffset < totalDays; dayOffset += 1) {
-    const workoutDate = new Date(startDate);
-    workoutDate.setDate(startDate.getDate() + dayOffset);
-    if (!shouldScheduleOnDate(workoutDate, preferences?.daysPerWeek)) continue;
-    dates.push(formatLocalDateYMD(workoutDate));
-  }
-  return dates;
-};
-
-const normalizeTemplatesForGeneration = (
-  templates: WorkoutTemplateRow[]
-): NormalizedWorkoutTemplate[] =>
-  templates.map((template) => {
-    const orderedExercises = [...(template.exercises ?? [])].sort(
-      (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
-    );
-    const validExercises = orderedExercises.filter((exercise): exercise is WorkoutTemplateExerciseRow & { exercise_id: string } => {
-      if (exercise.exercise_id) return true;
-      console.warn(
-        `⚠️ Template "${template.title}" has exercise without exercise_id: ${exercise.exercise_name}`
-      );
-      return false;
-    });
-
-    return {
-      ...template,
-      goal_tags: (template.goal_tags ?? []).map((tag) => normalizeKey(tag)),
-      exercises: validExercises,
-    };
-  });
-
-const buildTemplatesByTag = (
-  templates: NormalizedWorkoutTemplate[],
-  rotationTags: string[]
-): Map<string, NormalizedWorkoutTemplate[]> => {
-  const byTag = new Map<string, NormalizedWorkoutTemplate[]>();
-  rotationTags.forEach((tag) => {
-    byTag.set(
-      tag,
-      templates.filter((template) => template.goal_tags.includes(tag))
-    );
-  });
-  return byTag;
-};
-
-const matchesGoal = (template: NormalizedWorkoutTemplate, goalAliases: string[]): boolean => {
-  if (!goalAliases.length) return true;
-  return template.goal_tags.some((tag) => goalAliases.includes(tag));
-};
-
-const matchesEquipment = (
-  template: NormalizedWorkoutTemplate,
-  equipmentLevel?: GenerationPreferences['equipmentLevel']
-): boolean => {
-  if (!equipmentLevel) return true;
-  const templateLevel = normalizeEquipmentLevel(template.equipment_level);
-  if (!templateLevel) return true;
-  return EQUIPMENT_RANK[templateLevel] <= EQUIPMENT_RANK[equipmentLevel];
-};
-
-const matchesDifficulty = (
-  template: NormalizedWorkoutTemplate,
-  experienceLevel?: User['experienceLevel']
-): boolean => {
-  if (!experienceLevel) return true;
-  const templateDifficulty = normalizeKey(template.difficulty) as User['experienceLevel'];
-  if (!(templateDifficulty in DIFFICULTY_RANK)) return true;
-  return Math.abs(DIFFICULTY_RANK[templateDifficulty] - DIFFICULTY_RANK[experienceLevel]) <= 1;
-};
-
-const selectTemplateCandidatesForTag = (
-  tag: string,
-  byTag: Map<string, NormalizedWorkoutTemplate[]>,
-  allTemplates: NormalizedWorkoutTemplate[],
-  profile?: { experienceLevel?: User['experienceLevel'] },
-  preferences?: GenerationPreferences
-): NormalizedWorkoutTemplate[] => {
-  const tagPool = byTag.get(tag) ?? [];
-  const basePool = tagPool.length ? tagPool : allTemplates;
-  const goalAliases = resolveGoalAliases(preferences?.primaryGoal);
-
-  const tiers: Array<(template: NormalizedWorkoutTemplate) => boolean> = [
-    (template) =>
-      matchesGoal(template, goalAliases) &&
-      matchesEquipment(template, preferences?.equipmentLevel) &&
-      matchesDifficulty(template, profile?.experienceLevel),
-    (template) =>
-      matchesGoal(template, goalAliases) &&
-      matchesEquipment(template, preferences?.equipmentLevel),
-    (template) => matchesGoal(template, goalAliases),
-    (template) =>
-      matchesEquipment(template, preferences?.equipmentLevel) &&
-      matchesDifficulty(template, profile?.experienceLevel),
-    (template) => matchesEquipment(template, preferences?.equipmentLevel),
-    (template) => matchesDifficulty(template, profile?.experienceLevel),
-  ];
-
-  for (const tier of tiers) {
-    const matched = basePool.filter(tier);
-    if (matched.length) return matched;
-  }
-
-  if (goalAliases.length) {
-    const anyGoal = allTemplates.filter((template) => matchesGoal(template, goalAliases));
-    if (anyGoal.length) return anyGoal;
-  }
-
-  return basePool.length ? basePool : allTemplates;
-};
-
-export const generateWeekWorkouts = async (
-  userId: string,
-  phaseId: string,
-  trainingSplit: User['trainingSplit'],
-  startDate: Date = new Date(),
-  totalDays = 7,
-  profile?: {
-    eatingMode?: User['eatingMode'];
-    experienceLevel?: User['experienceLevel'];
-  },
-  _adaptation?: GenerationAdaptation,
-  preferences?: GenerationPreferences
-): Promise<void> => {
-  try {
-    console.log(`🏋️ Generating workouts from templates for phase ${phaseId}, split: ${trainingSplit}`);
-
-    const templates = await fetchWorkoutTemplates(userId);
-    if (!templates.length) {
-      console.warn('⚠️ No workout templates available - cannot generate workouts');
-      return;
-    }
-
-    const scheduleDates = buildScheduleDates(startDate, totalDays, preferences);
-    const rotationTags = resolveRotationTags(trainingSplit);
-    const normalizedTemplates = normalizeTemplatesForGeneration(templates);
-    const byTag = buildTemplatesByTag(normalizedTemplates, rotationTags);
-
-    let successCount = 0;
-    for (let index = 0; index < scheduleDates.length; index += 1) {
-      const date = scheduleDates[index];
-      const tag = rotationTags[index % rotationTags.length];
-      const candidates = selectTemplateCandidatesForTag(
-        tag,
-        byTag,
-        normalizedTemplates,
-        profile,
-        preferences
-      );
-      const template = candidates.length
-        ? candidates[index % candidates.length]
-        : null;
-
-      if (!template || !template.exercises.length) continue;
-
-      const planExercises = template.exercises.map((exercise, idx) => ({
-        exerciseId: exercise.exercise_id!,
-        name: exercise.exercise_name,
-        bodyParts: (exercise.body_parts ?? []) as MuscleGroup[],
-        movementPattern: exercise.movement_pattern ?? null,
-        sets: exercise.sets ?? 4,
-        reps: exercise.reps ?? '8-12',
-        displayOrder: exercise.display_order ?? idx + 1,
-        notes: exercise.notes ?? null,
-      }));
-
-      try {
-        await replacePlanExercisesForDate(
-          userId,
-          phaseId,
-          date,
-          planExercises,
-          template.id,
-          template.title
-        );
-        successCount++;
-        console.log(`✅ Created ${template.title} for ${date}`);
-      } catch (err) {
-        console.error(`❌ Failed to create planned workout for ${date}:`, err);
-      }
-    }
-
-    console.log(`🎉 Successfully generated ${successCount}/${scheduleDates.length} planned workouts`);
-  } catch (error) {
-    console.error('❌ Failed to generate week workouts:', error);
-    throw error;
-  }
 };
