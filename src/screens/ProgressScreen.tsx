@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -41,13 +41,12 @@ const C = {
   card:      '#0E1225',
   surface:   '#131728',
   accent:    '#6C63FF',
-  success:   '#00F5A0',
   text:      '#FFFFFF',
   textSub:   '#B8BEDC',
   textMuted: '#6B7194',
   textFaint: '#2A2F4A',
   border:    'rgba(255,255,255,0.06)',
-  borderMid: 'rgba(255,255,255,0.09)',
+  grid:      'rgba(255,255,255,0.05)',
 } as const;
 
 // ─── Muscle colours ───────────────────────────────────────────────────────────
@@ -64,6 +63,7 @@ const MUSCLE_COLORS: Record<string, string> = {
   hamstrings: '#E07A35', glutes: '#D46A30',
   calves: '#C05A20', legs: '#FF8C42',
   core: '#42C5F5', abs: '#42C5F5', obliques: '#35A8D8',
+  arms: '#FF6B6B',
 };
 
 function muscleColor(key: string): string {
@@ -83,21 +83,27 @@ type MuscleEntry = {
   name: string;
   color: string;
   totalSets: number;
+  totalReps: number;
   sessionCount: number;
+  lastDate: string; // YYYY-MM-DD
 };
 
+// bar height = sets, annotation = total reps
 type SetsPoint = {
   label: string;
   sets: number;
   reps: number;
 };
 
+// bar height = top weight (or e1rm if no weight), annotation = sets×reps
 type StrengthPoint = {
   label: string;
-  e1rm: number;
-  weight: number;
+  weight: number;   // actual logged weight (may be 0)
+  e1rm: number;     // estimated 1RM (may be 0)
   reps: number;
+  totalSets: number;
 };
+
 // ─── Data helpers ─────────────────────────────────────────────────────────────
 
 function countCompletedSetDetails(setDetails?: WorkoutSetEntry[]): WorkoutSetEntry[] {
@@ -110,8 +116,8 @@ function countCompletedSetDetails(setDetails?: WorkoutSetEntry[]): WorkoutSetEnt
 }
 
 function countSets(ex: WorkoutSessionExercise): number {
-  const completedSetDetails = countCompletedSetDetails(ex.setDetails);
-  if (completedSetDetails.length > 0) return completedSetDetails.length;
+  const completed = countCompletedSetDetails(ex.setDetails);
+  if (completed.length > 0) return completed.length;
   return ex.completed ? ex.sets ?? 0 : 0;
 }
 
@@ -131,33 +137,53 @@ function inferMusclesFromName(name: string): string[] {
 }
 
 function getExerciseMuscles(ex: WorkoutSessionExercise): string[] {
-  if (ex.bodyParts && ex.bodyParts.length > 0) {
-    return ex.bodyParts;
-  }
-  return inferMusclesFromName(ex.name);
+  return (ex.bodyParts && ex.bodyParts.length > 0) ? ex.bodyParts : inferMusclesFromName(ex.name);
 }
 
 function shortDate(dateStr: string): string {
   return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
+    month: 'short', day: 'numeric',
   });
 }
 
-// All muscles ranked by total volume — only muscles that have actual sets
+function lastTrainedLabel(dateStr: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T12:00:00');
+  const today = new Date();
+  const diff = Math.round((today.getTime() - d.getTime()) / 86400000);
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'yesterday';
+  if (diff <= 6) return `${diff}d ago`;
+  return shortDate(dateStr);
+}
+
+// ─── Compute data ─────────────────────────────────────────────────────────────
+
 function computeAllMuscles(sessions: WorkoutSessionEntry[]): MuscleEntry[] {
   const totals: Record<string, number> = {};
-  const logIds: Record<string, Set<string>> = {};
+  const repsTotals: Record<string, number> = {};
+  const sessIds: Record<string, Set<string>> = {};
+  const lastDates: Record<string, string> = {};
 
   for (const session of sessions) {
     for (const exercise of session.exercises) {
       const setCount = countSets(exercise);
       if (setCount <= 0) continue;
+      const completedSets = countCompletedSetDetails(exercise.setDetails);
+      const reps = completedSets.length > 0
+        ? completedSets.reduce((s, set) => s + Number(set.reps ?? 0), 0)
+        : exercise.completed
+          ? (exercise.sets ?? 0) * Number(String(exercise.reps ?? '0').match(/\d+/)?.[0] ?? 0)
+          : 0;
       for (const muscle of getExerciseMuscles(exercise)) {
         const key = muscle.toLowerCase().trim();
         totals[key] = (totals[key] ?? 0) + setCount;
-        if (!logIds[key]) logIds[key] = new Set();
-        logIds[key].add(session.id);
+        repsTotals[key] = (repsTotals[key] ?? 0) + reps;
+        if (!sessIds[key]) sessIds[key] = new Set();
+        sessIds[key].add(session.id);
+        if (!lastDates[key] || session.date > lastDates[key]) {
+          lastDates[key] = session.date;
+        }
       }
     }
   }
@@ -168,62 +194,60 @@ function computeAllMuscles(sessions: WorkoutSessionEntry[]): MuscleEntry[] {
       name: capitalizeMuscle(key),
       color: muscleColor(key),
       totalSets,
-      sessionCount: logIds[key]?.size ?? 0,
+      totalReps: repsTotals[key] ?? 0,
+      sessionCount: sessIds[key]?.size ?? 0,
+      lastDate: lastDates[key] ?? '',
     }))
     .sort((a, b) => b.totalSets - a.totalSets);
 }
 
-// Per-date volume history for a muscle — grouped by date to avoid duplicate bars
+// bar height = sets, annotation = reps — grouped by date
 function computeSetsHistory(sessions: WorkoutSessionEntry[], muscleKey: string): SetsPoint[] {
-  const byDate: Record<string, number> = {};
+  const setsByDate: Record<string, number> = {};
   const repsByDate: Record<string, number> = {};
 
   for (const session of sessions) {
     for (const exercise of session.exercises) {
-      const muscles = getExerciseMuscles(exercise).map((m) => m.toLowerCase().trim());
+      const muscles = getExerciseMuscles(exercise).map(m => m.toLowerCase().trim());
       if (!muscles.includes(muscleKey)) continue;
-
       const setCount = countSets(exercise);
       if (setCount <= 0) continue;
-      const completedSetDetails = countCompletedSetDetails(exercise.setDetails);
-      const reps =
-        completedSetDetails.length > 0
-          ? completedSetDetails.reduce((sum, set) => sum + Number(set.reps ?? 0), 0)
-          : exercise.completed
-            ? (exercise.sets ?? 0) * Number(String(exercise.reps ?? '0').match(/\d+/)?.[0] ?? 0)
-            : 0;
-
-      byDate[session.date] = (byDate[session.date] ?? 0) + setCount;
+      const completedSets = countCompletedSetDetails(exercise.setDetails);
+      const reps = completedSets.length > 0
+        ? completedSets.reduce((s, set) => s + Number(set.reps ?? 0), 0)
+        : exercise.completed
+          ? (exercise.sets ?? 0) * Number(String(exercise.reps ?? '0').match(/\d+/)?.[0] ?? 0)
+          : 0;
+      setsByDate[session.date] = (setsByDate[session.date] ?? 0) + setCount;
       repsByDate[session.date] = (repsByDate[session.date] ?? 0) + reps;
     }
   }
 
-  return Object.entries(byDate)
+  return Object.entries(setsByDate)
     .sort(([a], [b]) => a.localeCompare(b))
     .slice(-14)
     .map(([date, sets]) => ({ label: shortDate(date), sets, reps: repsByDate[date] ?? 0 }));
 }
 
-// Strength progression — find exercises from sessions matching logs for this muscle
+// bar height = weight (if available) or e1rm, annotation = totalSets×reps
 function computeStrengthHistory(
   sessions: WorkoutSessionEntry[],
   snapshots: StrengthSnapshot[],
   muscleKey: string,
-): { points: StrengthPoint[]; exerciseName: string } {
-  // Find the most-used exercise in those sessions
+): { points: StrengthPoint[]; exerciseName: string; hasWeightData: boolean } {
   const counts: Record<string, number> = {};
   for (const s of sessions) {
     for (const ex of s.exercises) {
-      const muscles = getExerciseMuscles(ex).map((m) => m.toLowerCase().trim());
+      const muscles = getExerciseMuscles(ex).map(m => m.toLowerCase().trim());
       if (!muscles.includes(muscleKey)) continue;
       const setCount = countSets(ex);
       if (setCount <= 0) continue;
-      counts[ex.name] = (counts[ex.name] ?? 0) + countSets(ex);
+      counts[ex.name] = (counts[ex.name] ?? 0) + setCount;
     }
   }
 
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  if (entries.length === 0) return { points: [], exerciseName: '' };
+  if (entries.length === 0) return { points: [], exerciseName: '', hasWeightData: false };
 
   const topExercise = entries[0][0];
   const points = snapshots
@@ -232,28 +256,40 @@ function computeStrengthHistory(
     .slice(-14)
     .map(s => ({
       label: shortDate(s.date),
-      e1rm: s.estimated1RM ?? s.weight,
-      weight: s.weight,
-      reps: s.reps,
+      weight: s.weight ?? 0,
+      e1rm: s.estimated1RM ?? 0,
+      reps: s.reps ?? 0,
+      totalSets: s.totalSets ?? 0,
     }));
 
-  return { points, exerciseName: topExercise };
+  const hasWeightData = points.some(p => p.weight > 0);
+  return { points, exerciseName: topExercise, hasWeightData };
 }
 
-// ─── Bar chart (horizontal scroll) ───────────────────────────────────────────
+// ─── Bar chart ────────────────────────────────────────────────────────────────
 
-const BAR_W = 38;
-const CHART_H = 100;
+const BAR_W = 44;
+const BAR_GAP = 8;
+const CHART_H = 120;
+const Y_AXIS_W = 30;
+
+type BarPoint = {
+  label: string;      // X-axis date
+  value: number;      // bar height
+  annotation?: string; // sublabel below date
+};
 
 function BarChart({
   data,
   color,
-  valueLabel,
+  formatY,
+  yUnit,
   emptyText,
 }: {
-  data: Array<{ label: string; value: number; subLabel?: string }>;
+  data: BarPoint[];
   color: string;
-  valueLabel: (v: number) => string;
+  formatY: (v: number) => string;
+  yUnit: string;
   emptyText: string;
 }) {
   if (data.length === 0) {
@@ -265,32 +301,60 @@ function BarChart({
   }
 
   const max = Math.max(...data.map(d => d.value), 1);
+  const yMid = max / 2;
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.chartScroll}
-    >
-      {data.map((point, i) => {
-        const barH = Math.max(5, (point.value / max) * CHART_H);
-        return (
-          <View key={i} style={styles.barCol}>
-            <Text style={styles.barValue}>{valueLabel(point.value)}</Text>
-            <View style={styles.barTrack}>
-              <LinearGradient
-                colors={[color + 'CC', color + '55']}
-                style={[styles.bar, { height: barH }]}
-              />
-            </View>
-            <Text style={styles.barLabel}>{point.label}</Text>
-            {point.subLabel ? (
-              <Text style={styles.barSubLabel}>{point.subLabel}</Text>
-            ) : null}
+    <View style={styles.chartOuter}>
+      {/* Y-axis + grid + bars */}
+      <View style={styles.chartInner}>
+        {/* Y-axis labels */}
+        <View style={styles.yAxis}>
+          <Text style={styles.yLabel}>{formatY(max)}</Text>
+          <Text style={styles.yLabel}>{formatY(yMid)}</Text>
+          <Text style={[styles.yLabel, { color: C.textFaint }]}>0</Text>
+          <Text style={styles.yUnit}>{yUnit}</Text>
+        </View>
+
+        {/* Bars + grid */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.barsScroll}
+        >
+          <View style={styles.barsArea}>
+            {/* Grid lines */}
+            <View style={[styles.gridLine, { top: 0 }]} />
+            <View style={[styles.gridLine, { top: CHART_H / 2 }]} />
+            <View style={[styles.gridLine, { top: CHART_H }]} />
+
+            {/* Bar columns */}
+            {data.map((point, i) => {
+              const barH = Math.max(5, (point.value / max) * CHART_H);
+              return (
+                <View key={i} style={styles.barColInner}>
+                  <LinearGradient
+                    colors={[color + 'EE', color + '44']}
+                    style={[styles.bar, { height: barH }]}
+                  />
+                </View>
+              );
+            })}
           </View>
-        );
-      })}
-    </ScrollView>
+
+          {/* X-axis labels */}
+          <View style={styles.xAxis}>
+            {data.map((point, i) => (
+              <View key={i} style={styles.xLabel}>
+                <Text style={styles.xDate}>{point.label}</Text>
+                {point.annotation ? (
+                  <Text style={styles.xAnnotation}>{point.annotation}</Text>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      </View>
+    </View>
   );
 }
 
@@ -301,6 +365,7 @@ function ChartCard({
   setsHistory,
   strengthHistory,
   strengthExercise,
+  hasWeightData,
   tab,
   onTabChange,
 }: {
@@ -308,42 +373,66 @@ function ChartCard({
   setsHistory: SetsPoint[];
   strengthHistory: StrengthPoint[];
   strengthExercise: string;
+  hasWeightData: boolean;
   tab: ChartTab;
   onTabChange: (t: ChartTab) => void;
 }) {
-  const setsData = setsHistory.map(p => ({
-    label: p.label,
-    value: p.sets,
-    subLabel: p.reps > 0 ? `${p.reps} reps` : undefined,
-  }));
-
-  const strengthData = strengthHistory.map(p => ({
-    label: p.label,
-    value: p.e1rm,
-    subLabel: p.weight > 0 ? `${p.weight} kg × ${p.reps}` : undefined,
-  }));
-
   const totalSets = setsHistory.reduce((s, p) => s + p.sets, 0);
   const totalReps = setsHistory.reduce((s, p) => s + p.reps, 0);
+  const maxWeight = Math.max(...strengthHistory.map(p => p.weight), 0);
+
+  // Sets tab: bar = sets, annotation = total reps for day
+  const setsData: BarPoint[] = setsHistory.map(p => ({
+    label: p.label,
+    value: p.sets,
+    annotation: p.reps > 0 ? `${p.reps} reps` : undefined,
+  }));
+
+  // Strength tab: bar = top weight (or e1rm), annotation = setsxreps
+  const strengthData: BarPoint[] = strengthHistory.map(p => {
+    const barValue = hasWeightData ? p.weight : p.e1rm;
+    let annotation: string | undefined;
+    if (p.totalSets > 0 && p.reps > 0) {
+      annotation = `${p.totalSets}×${p.reps}`;
+    } else if (p.reps > 0) {
+      annotation = `${p.reps} reps`;
+    }
+    return { label: p.label, value: barValue, annotation };
+  });
+
+  // Summary line changes per tab
+  const summaryLeft = tab === 'sets'
+    ? `${totalSets} sets total`
+    : maxWeight > 0
+      ? `${maxWeight} kg top`
+      : strengthHistory.length > 0 ? 'No weight logged' : '—';
+
+  const summaryRight = tab === 'sets'
+    ? totalReps > 0 ? `${totalReps} reps` : null
+    : strengthExercise || null;
 
   return (
     <View style={[styles.chartCard, { borderLeftColor: muscle.color }]}>
-      {/* Muscle header */}
+      {/* Header */}
       <View style={styles.chartHeader}>
         <View style={styles.chartHeaderLeft}>
           <View style={[styles.chartDot, { backgroundColor: muscle.color }]} />
-          <Text style={styles.chartMuscleName}>{muscle.name}</Text>
+          <View>
+            <Text style={styles.chartMuscleName}>{muscle.name}</Text>
+            {muscle.lastDate ? (
+              <Text style={styles.chartLastTrained}>
+                Last trained {lastTrainedLabel(muscle.lastDate)}
+              </Text>
+            ) : null}
+          </View>
         </View>
-        <View style={styles.chartStats}>
-          <Text style={[styles.chartStatValue, { color: muscle.color }]}>{totalSets}</Text>
-          <Text style={styles.chartStatLabel}> sets</Text>
-          {totalReps > 0 && (
-            <>
-              <Text style={styles.chartStatSep}>·</Text>
-              <Text style={styles.chartStatValue}>{totalReps}</Text>
-              <Text style={styles.chartStatLabel}> reps</Text>
-            </>
-          )}
+        <View style={styles.chartSummary}>
+          <Text style={[styles.chartSummaryMain, { color: muscle.color }]}>
+            {summaryLeft}
+          </Text>
+          {summaryRight ? (
+            <Text style={styles.chartSummarySecondary}>{summaryRight}</Text>
+          ) : null}
         </View>
       </View>
 
@@ -354,7 +443,7 @@ function ChartCard({
           onPress={() => onTabChange('sets')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.chartTabText, tab === 'sets' && { color: C.text }]}>
+          <Text style={[styles.chartTabText, tab === 'sets' && styles.chartTabTextActive]}>
             Reps & Sets
           </Text>
         </TouchableOpacity>
@@ -363,7 +452,7 @@ function ChartCard({
           onPress={() => onTabChange('strength')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.chartTabText, tab === 'strength' && { color: C.text }]}>
+          <Text style={[styles.chartTabText, tab === 'strength' && styles.chartTabTextActive]}>
             Strength
           </Text>
         </TouchableOpacity>
@@ -375,21 +464,31 @@ function ChartCard({
           <BarChart
             data={setsData}
             color={muscle.color}
-            valueLabel={v => String(v)}
+            formatY={v => String(Math.round(v))}
+            yUnit="sets"
             emptyText="No sessions logged for this muscle yet."
           />
+        ) : !hasWeightData && strengthData.length === 0 ? (
+          <View style={styles.chartEmpty}>
+            <Text style={styles.chartEmptyText}>
+              No strength data yet.{'\n'}Log weights during your workouts to track progression.
+            </Text>
+          </View>
+        ) : !hasWeightData && strengthData.length > 0 ? (
+          <View style={styles.chartEmpty}>
+            <Text style={styles.chartEmptyText}>
+              Weight not logged for {strengthExercise || 'this exercise'}.{'\n'}
+              Log weights to track strength progression.
+            </Text>
+          </View>
         ) : (
-          <>
-            {strengthExercise ? (
-              <Text style={styles.chartExerciseLabel}>{strengthExercise}</Text>
-            ) : null}
-            <BarChart
-              data={strengthData}
-              color={muscle.color}
-              valueLabel={v => `${Math.round(v)}`}
-              emptyText="No strength data logged for this muscle yet."
-            />
-          </>
+          <BarChart
+            data={strengthData}
+            color={muscle.color}
+            formatY={v => `${Math.round(v)}`}
+            yUnit="kg"
+            emptyText="No strength data logged for this muscle yet."
+          />
         )}
       </View>
     </View>
@@ -411,18 +510,18 @@ function MuscleListItem({
     <TouchableOpacity
       style={[
         styles.muscleItem,
-        isSelected && { backgroundColor: C.surface, borderColor: entry.color + '50' },
+        isSelected && { backgroundColor: entry.color + '12', borderColor: entry.color + '40' },
       ]}
       onPress={onPress}
       activeOpacity={0.6}
     >
-      <View style={[styles.muscleItemBar, { backgroundColor: entry.color }]} />
+      <View style={[styles.muscleItemBar, { backgroundColor: isSelected ? entry.color : entry.color + '60' }]} />
       <View style={styles.muscleItemBody}>
         <Text style={[styles.muscleItemName, isSelected && { color: C.text }]}>
           {entry.name}
         </Text>
         <Text style={styles.muscleItemMeta}>
-          {entry.sessionCount} session{entry.sessionCount !== 1 ? 's' : ''}
+          {entry.lastDate ? `${lastTrainedLabel(entry.lastDate)} · ${entry.totalReps} reps` : `${entry.sessionCount} sessions`}
         </Text>
       </View>
       <Text style={[styles.muscleItemSets, isSelected && { color: entry.color }]}>
@@ -433,29 +532,25 @@ function MuscleListItem({
   );
 }
 
-// ─── Empty state ─────────────────────────────────────────────────────────────
+// ─── Empty scaffold ───────────────────────────────────────────────────────────
 
 const PHANTOM_MUSCLES = [
-  { name: 'Chest',     color: '#6C63FF' },
-  { name: 'Back',      color: '#00F5A0' },
-  { name: 'Legs',      color: '#FF8C42' },
+  { name: 'Chest', color: '#6C63FF' },
+  { name: 'Back', color: '#00F5A0' },
+  { name: 'Legs', color: '#FF8C42' },
   { name: 'Shoulders', color: '#FFC442' },
 ] as const;
 
 function EmptyStatsScaffold() {
   return (
     <>
-      {/* Mirrors ChartCard layout with zero state */}
       <View style={[styles.chartCard, { borderLeftColor: C.textFaint }]}>
         <View style={styles.chartHeader}>
           <View style={styles.chartHeaderLeft}>
             <View style={[styles.chartDot, { backgroundColor: C.textFaint }]} />
             <Text style={[styles.chartMuscleName, { color: C.textMuted }]}>—</Text>
           </View>
-          <View style={styles.chartStats}>
-            <Text style={[styles.chartStatValue, { color: C.textFaint }]}>0</Text>
-            <Text style={styles.chartStatLabel}> sets</Text>
-          </View>
+          <Text style={[styles.chartSummaryMain, { color: C.textFaint }]}>0 sets total</Text>
         </View>
         <View style={styles.chartTabRow}>
           <View style={[styles.chartTab, styles.chartTabActive]}>
@@ -466,13 +561,9 @@ function EmptyStatsScaffold() {
           </View>
         </View>
         <View style={[styles.chartBody, styles.chartEmpty]}>
-          <Text style={styles.chartEmptyText}>
-            Complete a workout to see your progress charts.
-          </Text>
+          <Text style={styles.chartEmptyText}>Complete a workout to see your progress charts.</Text>
         </View>
       </View>
-
-      {/* Mirrors muscle list with phantom rows */}
       <Text style={styles.sectionLabel}>MUSCLES</Text>
       <View style={styles.muscleList}>
         {PHANTOM_MUSCLES.map((m, i) => (
@@ -481,7 +572,7 @@ function EmptyStatsScaffold() {
               <View style={[styles.muscleItemBar, { backgroundColor: m.color + '28' }]} />
               <View style={styles.muscleItemBody}>
                 <Text style={[styles.muscleItemName, { color: C.textFaint }]}>{m.name}</Text>
-                <Text style={styles.muscleItemMeta}>0 sessions</Text>
+                <Text style={styles.muscleItemMeta}>—</Text>
               </View>
               <Text style={[styles.muscleItemSets, { color: C.textFaint }]}>
                 0<Text style={styles.muscleItemSetsSuffix}> sets</Text>
@@ -507,21 +598,11 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   const [chartTab, setChartTab] = useState<ChartTab>('sets');
 
   const phaseSessions = useMemo(
-    () => workoutSessions.filter((session) => session.phasePlanId === phase.id),
+    () => workoutSessions.filter(s => s.phasePlanId === phase.id),
     [phase.id, workoutSessions],
   );
 
-  const muscles = useMemo(
-    () => computeAllMuscles(phaseSessions),
-    [phaseSessions],
-  );
-
-  // Auto-select the most-trained muscle on first load
-  useEffect(() => {
-    if (muscles.length > 0 && !selectedKey) {
-      setSelectedKey(muscles[0].key);
-    }
-  }, [muscles, selectedKey]);
+  const muscles = useMemo(() => computeAllMuscles(phaseSessions), [phaseSessions]);
 
   const selectedMuscle = muscles.find(m => m.key === selectedKey) ?? muscles[0] ?? null;
 
@@ -530,11 +611,10 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
     [phaseSessions, selectedMuscle],
   );
 
-  const { points: strengthHistory, exerciseName: strengthExercise } = useMemo(
-    () =>
-      selectedMuscle
-        ? computeStrengthHistory(phaseSessions, strengthSnapshots, selectedMuscle.key)
-        : { points: [], exerciseName: '' },
+  const { points: strengthHistory, exerciseName: strengthExercise, hasWeightData } = useMemo(
+    () => selectedMuscle
+      ? computeStrengthHistory(phaseSessions, strengthSnapshots, selectedMuscle.key)
+      : { points: [], exerciseName: '', hasWeightData: false },
     [phaseSessions, strengthSnapshots, selectedMuscle],
   );
 
@@ -544,7 +624,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
         <Text style={styles.screenTitle}>Progress</Text>
         <Text style={styles.screenSub}>
           {muscles.length > 0
-            ? `${muscles.length} muscles tracked · ${phaseSessions.length} sessions`
+            ? `${muscles.length} muscles · ${phaseSessions.length} sessions`
             : 'Log workouts to start tracking'}
         </Text>
       </View>
@@ -561,6 +641,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
               setsHistory={setsHistory}
               strengthHistory={strengthHistory}
               strengthExercise={strengthExercise}
+              hasWeightData={hasWeightData}
               tab={chartTab}
               onTabChange={setChartTab}
             />
@@ -571,10 +652,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
                   <MuscleListItem
                     entry={m}
                     isSelected={m.key === selectedKey}
-                    onPress={() => {
-                      setSelectedKey(m.key);
-                      setChartTab('sets');
-                    }}
+                    onPress={() => { setSelectedKey(m.key); setChartTab('sets'); }}
                   />
                   {i < muscles.length - 1 && <View style={styles.listDivider} />}
                 </React.Fragment>
@@ -611,11 +689,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: C.textMuted,
   },
-
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingTop: 20 },
 
-  // ── Chart card ─────────────────────────────────────────────────────────────
+  // ── Chart card ──────────────────────────────────────────────────────────────
 
   chartCard: {
     backgroundColor: C.card,
@@ -628,54 +705,60 @@ const styles = StyleSheet.create({
   },
   chartHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 14,
+    gap: 12,
   },
   chartHeaderLeft: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    alignItems: 'flex-start',
+    gap: 10,
+    flex: 1,
   },
   chartDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
+    marginTop: 4,
   },
   chartMuscleName: {
     fontSize: 17,
     fontWeight: '700',
     color: C.text,
+    lineHeight: 22,
   },
-  chartStats: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
+  chartLastTrained: {
+    fontSize: 11,
+    color: C.textMuted,
+    marginTop: 1,
   },
-  chartStatValue: {
-    fontSize: 15,
+  chartSummary: {
+    alignItems: 'flex-end',
+    flexShrink: 0,
+  },
+  chartSummaryMain: {
+    fontSize: 13,
     fontWeight: '700',
     color: C.textSub,
   },
-  chartStatLabel: {
-    fontSize: 12,
+  chartSummarySecondary: {
+    fontSize: 11,
     color: C.textMuted,
-  },
-  chartStatSep: {
-    fontSize: 12,
-    color: C.textFaint,
-    marginHorizontal: 6,
+    marginTop: 2,
   },
 
-  // Tab row
+  // Tab switcher
   chartTabRow: {
     flexDirection: 'row',
     marginHorizontal: 16,
     backgroundColor: C.surface,
     borderRadius: 10,
     padding: 3,
-    marginBottom: 16,
+    marginBottom: 20,
+    gap: 2,
   },
   chartTab: {
     flex: 1,
@@ -684,38 +767,109 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   chartTabActive: {
-    backgroundColor: C.card,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
+    backgroundColor: C.accent + '28',
+    borderWidth: 1,
+    borderColor: C.accent + '50',
   },
   chartTabText: {
     fontSize: 13,
     fontWeight: '500',
     color: C.textMuted,
   },
-
-  // Chart body
-  chartBody: {
-    paddingBottom: 18,
-  },
-  chartExerciseLabel: {
-    fontSize: 11,
+  chartTabTextActive: {
+    color: C.text,
     fontWeight: '600',
-    letterSpacing: 0.5,
-    color: C.textMuted,
-    paddingHorizontal: 18,
-    marginBottom: 10,
   },
 
-  // Bar chart
-  chartScroll: {
-    paddingHorizontal: 16,
-    gap: 6,
-    alignItems: 'flex-end',
+  chartBody: {
+    paddingBottom: 20,
   },
+
+  // ── Bar chart ───────────────────────────────────────────────────────────────
+
+  chartOuter: {
+    paddingHorizontal: 16,
+  },
+  chartInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+
+  // Y-axis
+  yAxis: {
+    width: Y_AXIS_W,
+    height: CHART_H + 2,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    paddingRight: 6,
+    paddingBottom: 0,
+  },
+  yLabel: {
+    fontSize: 9,
+    color: C.textMuted,
+    fontWeight: '500',
+    lineHeight: 12,
+  },
+  yUnit: {
+    fontSize: 8,
+    color: C.textFaint,
+    fontWeight: '400',
+    position: 'absolute',
+    bottom: -16,
+    right: 6,
+  },
+
+  // Bars
+  barsScroll: {
+    paddingRight: 8,
+  },
+  barsArea: {
+    height: CHART_H,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: BAR_GAP,
+    position: 'relative',
+  },
+  gridLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: C.grid,
+  },
+  barColInner: {
+    width: BAR_W,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  bar: {
+    width: BAR_W - 10,
+    borderTopLeftRadius: 5,
+    borderTopRightRadius: 5,
+  },
+
+  // X-axis
+  xAxis: {
+    flexDirection: 'row',
+    gap: BAR_GAP,
+    paddingTop: 8,
+  },
+  xLabel: {
+    width: BAR_W,
+    alignItems: 'center',
+    gap: 2,
+  },
+  xDate: {
+    fontSize: 9,
+    color: C.textMuted,
+    textAlign: 'center',
+  },
+  xAnnotation: {
+    fontSize: 8,
+    color: C.textFaint,
+    textAlign: 'center',
+  },
+
   chartEmpty: {
     height: CHART_H + 60,
     justifyContent: 'center',
@@ -728,40 +882,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
-  barCol: {
-    width: BAR_W,
-    alignItems: 'center',
-    gap: 4,
-  },
-  barValue: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: C.textSub,
-  },
-  barTrack: {
-    height: CHART_H,
-    justifyContent: 'flex-end',
-    width: BAR_W - 8,
-  },
-  bar: {
-    width: BAR_W - 8,
-    borderRadius: 6,
-  },
-  barLabel: {
-    fontSize: 9,
-    color: C.textMuted,
-    textAlign: 'center',
-    width: BAR_W,
-    letterSpacing: 0.2,
-  },
-  barSubLabel: {
-    fontSize: 8,
-    color: C.textFaint,
-    textAlign: 'center',
-    width: BAR_W,
-  },
 
-  // ── Section label ──────────────────────────────────────────────────────────
+  // ── Section label ────────────────────────────────────────────────────────────
 
   sectionLabel: {
     fontSize: 11,
@@ -771,7 +893,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  // ── Muscle list ────────────────────────────────────────────────────────────
+  // ── Muscle list ──────────────────────────────────────────────────────────────
 
   muscleList: {
     backgroundColor: C.card,
@@ -788,7 +910,6 @@ const styles = StyleSheet.create({
     gap: 14,
     borderWidth: 1,
     borderColor: 'transparent',
-    borderRadius: 0,
   },
   muscleItemBar: {
     width: 3,
@@ -824,5 +945,4 @@ const styles = StyleSheet.create({
     backgroundColor: C.border,
     marginLeft: 17,
   },
-
 });
