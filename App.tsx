@@ -22,14 +22,12 @@ import { useAppState } from './src/hooks';
 import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import {
   WelcomeScreen,
-  MainFocusScreen,
   QuickPlanSetupScreen,
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
   DashboardScreen,
   ProgressScreen,
   SettingsScreen,
-  PhotoCaptureScreen,
   ProfileScreen,
   ProfileSetupScreen,
   AuthNavigator,
@@ -38,7 +36,6 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   PlanPreferences,
   PrimaryGoal,
-  PhotoCheckin,
   User,
 } from './src/types/domain';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -89,7 +86,6 @@ const linking = {
 
 type OnboardingStep =
   | 'profile'
-  | 'main_focus'
   | 'quick_plan'
   | 'current_physique'
   | 'target_physique'
@@ -344,7 +340,6 @@ function AppContent() {
     state,
     isLoading,
     updateUser,
-    addPhotoCheckin,
     startPhase,
     toggleWorkoutExercise,
     markAllWorkoutsComplete,
@@ -362,9 +357,6 @@ function AppContent() {
     undoLastWorkoutSwap,
   } = useAppState();
   
-  const [isPhotoCaptureVisible, setPhotoCaptureVisible] = useState(false);
-  const [photoCapturePhaseId, setPhotoCapturePhaseId] = useState<string | null>(null);
-  const [photoCaptureOptional, setPhotoCaptureOptional] = useState(false);
   const [isProfileVisible, setProfileVisible] = useState(false);
   const [isCreatingPlan, setIsCreatingPlan] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
@@ -511,15 +503,17 @@ function AppContent() {
 
   const handleQuickPlanComplete = useCallback(
     async (input: {
+      primaryGoal: PrimaryGoal;
       daysPerWeek: 3 | 4 | 5 | 6;
       equipmentLevel: 'bodyweight' | 'dumbbells' | 'full_gym';
       injuries: string[];
     }) => {
       if (!state?.user) return;
+      setTempPrimaryGoal(input.primaryGoal);
       const targetDaysPerWeek = input.daysPerWeek;
       const inferredSplit = mapDaysPerWeekToSplit(targetDaysPerWeek);
       const nextPreferences: PlanPreferences = {
-        primaryGoal: tempPrimaryGoal,
+        primaryGoal: input.primaryGoal,
         daysPerWeek: targetDaysPerWeek,
         equipmentLevel: input.equipmentLevel,
         injuries: input.injuries,
@@ -538,7 +532,7 @@ function AppContent() {
       }
       setOnboardingStep('current_physique');
     },
-    [state?.user, tempPrimaryGoal, updateUser]
+    [state?.user, updateUser]
   );
 
   const handleQuickPlanSkip = useCallback(() => {
@@ -554,16 +548,6 @@ function AppContent() {
     }
     setOnboardingStep('current_physique');
   }, [state?.user, tempPrimaryGoal]);
-
-  const handleMainFocusSelect = useCallback((goal: PrimaryGoal) => {
-    setTempPrimaryGoal(goal);
-    setOnboardingStep('quick_plan');
-  }, []);
-
-  const handleMainFocusSkip = useCallback(() => {
-    setTempPrimaryGoal('general_fitness');
-    setOnboardingStep('quick_plan');
-  }, []);
 
   const handleProfileSave = async (profile: User) => {
     await updateUser(profile);
@@ -651,7 +635,6 @@ function AppContent() {
       console.log('✅ Sessions loaded successfully');
       
       setOnboardingStep('complete');
-      setPhotoCaptureVisible(false);
     } catch (error) {
       console.error('❌ Failed to create plan:', error);
       alert('Failed to create plan. Please try again.');
@@ -706,7 +689,7 @@ function AppContent() {
 
     updateUser(newUser);
     setTempProfileData(profileData);
-    setOnboardingStep('main_focus');
+    setOnboardingStep('quick_plan');
   };
 
   useEffect(() => {
@@ -802,7 +785,7 @@ function AppContent() {
       eatingMode: state.user.eatingMode,
     });
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
-    setOnboardingStep('main_focus');
+    setOnboardingStep('quick_plan');
   }, [bootstrapComplete, isAuthenticated, onboardingStep, state?.currentPhase, state?.user]);
 
   const handleStartPhaseFromDashboard = useCallback(() => {
@@ -842,8 +825,8 @@ function AppContent() {
     );
     setTempPrimaryGoal(state.user.planPreferences?.primaryGoal ?? 'general_fitness');
     setTempCurrentLevel(state.user.currentPhysiqueLevel);
-    setOnboardingStep('main_focus');
-    console.log('✅ Onboarding step set to: main_focus');
+    setOnboardingStep('quick_plan');
+    console.log('✅ Onboarding step set to: quick_plan');
   }, [state?.user]);
 
 
@@ -895,18 +878,6 @@ function AppContent() {
     setOnboardingStep('profile');
   };
 
-  const closePhotoCapture = () => {
-    setPhotoCaptureVisible(false);
-    setPhotoCapturePhaseId(null);
-    setPhotoCaptureOptional(false);
-  };
-
-  const handlePhotoCaptured = async (photo: PhotoCheckin) => {
-    await addPhotoCheckin(photo);
-    closePhotoCapture();
-    setOnboardingStep('complete');
-  };
-
   if (isAuthLoading || isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -952,7 +923,6 @@ function AppContent() {
 
   const shouldShowOnboarding =
     onboardingStep === 'profile' ||
-    onboardingStep === 'main_focus' ||
     onboardingStep === 'quick_plan' ||
     onboardingStep === 'current_physique' ||
     onboardingStep === 'target_physique';
@@ -967,20 +937,11 @@ function AppContent() {
       );
     }
 
-    if (onboardingStep === 'main_focus') {
-      return (
-        <View style={styles.container}>
-          <MainFocusScreen onSelect={handleMainFocusSelect} onSkip={handleMainFocusSkip} />
-          <StatusBar style="light" />
-        </View>
-      );
-    }
-
     if (onboardingStep === 'quick_plan' && state?.user) {
       return (
         <View style={styles.container}>
           <QuickPlanSetupScreen
-            primaryGoal={tempPrimaryGoal}
+            initialPrimaryGoal={tempPrimaryGoal}
             onComplete={handleQuickPlanComplete}
             onSkip={handleQuickPlanSkip}
           />
@@ -1022,19 +983,6 @@ function AppContent() {
       );
     }
 
-  }
-
-  if (isPhotoCaptureVisible && photoCapturePhaseId) {
-    return (
-      <View style={styles.container}>
-        <PhotoCaptureScreen 
-          phasePlanId={photoCapturePhaseId}
-          onComplete={handlePhotoCaptured}
-          onSkip={photoCaptureOptional ? closePhotoCapture : undefined}
-        />
-        <StatusBar style="light" />
-      </View>
-    );
   }
 
   return (
