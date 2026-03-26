@@ -4,8 +4,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { EquipmentLevel, PrimaryGoal } from '../types/domain';
 
 type QuickPlanSetupScreenProps = {
-  primaryGoal: PrimaryGoal;
+  initialPrimaryGoal: PrimaryGoal;
   onComplete: (input: {
+    primaryGoal: PrimaryGoal;
     daysPerWeek: 3 | 4 | 5 | 6;
     equipmentLevel: EquipmentLevel;
     injuries: string[];
@@ -14,6 +15,14 @@ type QuickPlanSetupScreenProps = {
 };
 
 const DAY_OPTIONS: Array<3 | 4 | 5 | 6> = [3, 4, 5, 6];
+
+const GOAL_OPTIONS: Array<{ label: string; value: PrimaryGoal }> = [
+  { label: 'Build Muscle', value: 'build_muscle' },
+  { label: 'Get Stronger', value: 'get_stronger' },
+  { label: 'Lose Fat', value: 'lose_fat' },
+  { label: 'Endurance', value: 'endurance' },
+  { label: 'General Fitness', value: 'general_fitness' },
+];
 
 const EQUIPMENT_OPTIONS: Array<{ label: string; value: EquipmentLevel }> = [
   { label: 'Bodyweight', value: 'bodyweight' },
@@ -24,10 +33,11 @@ const EQUIPMENT_OPTIONS: Array<{ label: string; value: EquipmentLevel }> = [
 const INJURY_OPTIONS = ['Shoulder', 'Lower back', 'Knee', 'Elbow', 'Neck'];
 
 export const QuickPlanSetupScreen: React.FC<QuickPlanSetupScreenProps> = ({
-  primaryGoal,
+  initialPrimaryGoal,
   onComplete,
   onSkip,
 }) => {
+  const [primaryGoal, setPrimaryGoal] = useState<PrimaryGoal>(initialPrimaryGoal);
   const [daysPerWeek, setDaysPerWeek] = useState<3 | 4 | 5 | 6>(4);
   const [equipmentLevel, setEquipmentLevel] = useState<EquipmentLevel>('full_gym');
   const [injuries, setInjuries] = useState<string[]>([]);
@@ -49,6 +59,21 @@ export const QuickPlanSetupScreen: React.FC<QuickPlanSetupScreenProps> = ({
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.title}>Program Matching</Text>
           <Text style={styles.subtitle}>Set key preferences so we can match you to the right template.</Text>
+
+          <Text style={styles.sectionTitle}>Primary Goal</Text>
+          <View style={styles.row}>
+            {GOAL_OPTIONS.map((goal) => (
+              <TouchableOpacity
+                key={goal.value}
+                style={[styles.pill, primaryGoal === goal.value && styles.pillActive]}
+                onPress={() => setPrimaryGoal(goal.value)}
+              >
+                <Text style={[styles.pillText, primaryGoal === goal.value && styles.pillTextActive]}>
+                  {goal.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <Text style={styles.sectionTitle}>Training Days / Week</Text>
           <View style={styles.row}>
@@ -103,6 +128,7 @@ export const QuickPlanSetupScreen: React.FC<QuickPlanSetupScreenProps> = ({
             style={styles.primaryButton}
             onPress={() =>
             onComplete({
+                primaryGoal,
                 daysPerWeek,
                 equipmentLevel,
                 injuries,

@@ -1,14 +1,11 @@
 export { ProfileSetupScreen } from './ProfileSetupScreen';
 export { WelcomeScreen } from './WelcomeScreen';
-export { MainFocusScreen } from './MainFocusScreen';
 export { QuickPlanSetupScreen } from './QuickPlanSetupScreen';
 export { CurrentPhysiqueSelectionScreen } from './CurrentPhysiqueSelectionScreen';
 export { TargetPhysiqueSelectionScreen } from './TargetPhysiqueSelectionScreen';
-export { PhotoCaptureScreen } from './PhotoCaptureScreen';
 export { DashboardScreen } from './DashboardScreen';
 export { PlansScreen } from './PlansScreen';
 export { ProgressScreen } from './ProgressScreen';
-export { PhaseCompleteScreen } from './PhaseCompleteScreen';
 export { ProfileScreen } from './ProfileScreen';
 export { SettingsScreen } from './SettingsScreen';
 export { LibraryScreen } from './LibraryScreen';
