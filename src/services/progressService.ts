@@ -16,7 +16,7 @@ export type SwapReasonSignal = {
   key: string;
   label: string;
   count: number;
-  source: 'workout' | 'meal';
+  source: 'workout';
 };
 
 export const fetchProgressData = async (
@@ -125,10 +125,6 @@ const parseSwapReasonKeys = (notes?: string | null): string[] => {
 
 const reasonLabel = (key: string): string => {
   const normalized = key.replace(/^swap_reason:/, '');
-  if (normalized.startsWith('user_')) {
-    const value = normalized.replace(/^user_/, '');
-    return `Meal: ${value.replace(/_/g, ' ')}`;
-  }
   if (normalized === 'undo_last_swap') return 'Undo swap';
   return normalized.replace(/_/g, ' ');
 };
@@ -144,35 +140,21 @@ export const fetchSwapReasonSignals = async (
   const fromDate = formatDateYmd(from);
   const toDate = formatDateYmd(today);
 
-  const [workoutRes, mealRes] = await Promise.all([
-    supabase
-      .from('fitarc_plan_overrides')
-      .select('notes')
-      .eq('user_id', userId)
-      .eq('plan_id', planId)
-      .eq('is_active', true)
-      .gte('day_date', fromDate)
-      .lte('day_date', toDate),
-    supabase
-      .from('fitarc_meal_overrides')
-      .select('notes')
-      .eq('user_id', userId)
-      .eq('plan_id', planId)
-      .eq('is_active', true)
-      .gte('day_date', fromDate)
-      .lte('day_date', toDate),
-  ]);
+  const workoutRes = await supabase
+    .from('fitarc_plan_overrides')
+    .select('notes')
+    .eq('user_id', userId)
+    .eq('plan_id', planId)
+    .eq('is_active', true)
+    .gte('day_date', fromDate)
+    .lte('day_date', toDate);
 
   if (workoutRes.error) throw workoutRes.error;
-  const mealTableMissing =
-    mealRes.error?.code === '42P01' ||
-    mealRes.error?.message?.includes('fitarc_meal_overrides');
-  if (mealRes.error && !mealTableMissing) throw mealRes.error;
 
   const counts = new Map<string, SwapReasonSignal>();
-  const consume = (notes: string | null, source: 'workout' | 'meal') => {
+  const consume = (notes: string | null) => {
     parseSwapReasonKeys(notes).forEach((key) => {
-      const scopedKey = `${source}:${key}`;
+      const scopedKey = `workout:${key}`;
       const existing = counts.get(scopedKey);
       if (existing) {
         existing.count += 1;
@@ -182,15 +164,12 @@ export const fetchSwapReasonSignals = async (
         key,
         label: reasonLabel(key),
         count: 1,
-        source,
+        source: 'workout',
       });
     });
   };
 
-  (workoutRes.data ?? []).forEach((row: any) => consume(row.notes ?? null, 'workout'));
-  ((mealTableMissing ? [] : mealRes.data) ?? []).forEach((row: any) =>
-    consume(row.notes ?? null, 'meal')
-  );
+  (workoutRes.data ?? []).forEach((row: any) => consume(row.notes ?? null));
 
   return Array.from(counts.values()).sort((a, b) => b.count - a.count).slice(0, 6);
 };
