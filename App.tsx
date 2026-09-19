@@ -18,6 +18,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ExpoLinking from 'expo-linking';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAppState } from './src/hooks';
 import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import {
@@ -31,6 +32,7 @@ import {
   ProfileScreen,
   ProfileSetupScreen,
   AuthNavigator,
+  TrainingRuntimeScreen,
 } from './src/screens';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
@@ -911,6 +913,15 @@ function AppContent() {
     );
   }
 
+  if (state?.user) {
+    return (
+      <View style={styles.appShell}>
+        <TrainingRuntimeScreen user={state.user} legacySessions={state.workoutSessions} onLogout={handleLogout} />
+        <StatusBar style="light" />
+      </View>
+    );
+  }
+
   if (isCreatingPlan) {
     return (
       <View style={styles.loadingContainer}>
@@ -1162,11 +1173,13 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <FabActionProvider>
-        <AppContent />
-      </FabActionProvider>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <FabActionProvider>
+          <AppContent />
+        </FabActionProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 
