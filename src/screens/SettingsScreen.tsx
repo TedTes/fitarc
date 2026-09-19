@@ -582,7 +582,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       {/* ── Preferred Weights panel ─────────────────────────────────────────── */}
       <Modal animationType="slide" transparent visible={defaultsPanelVisible} onRequestClose={() => setDefaultsPanelVisible(false)}>
         <View style={s.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setDefaultsPanelVisible(false)} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setDefaultsPanelVisible(false)} />
           <View style={s.modalSheet}>
             <View style={s.modalHandle} />
             <View style={s.modalHeaderRow}>
@@ -677,7 +677,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       {/* ── Add Exercise Default modal ──────────────────────────────────────── */}
       <Modal animationType="slide" transparent visible={defaultModalVisible} onRequestClose={() => setDefaultModalVisible(false)}>
         <View style={s.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setDefaultModalVisible(false)} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setDefaultModalVisible(false)} />
           <View style={s.modalSheet}>
             <View style={s.modalHandle} />
             <View style={s.modalHeaderRow}>
@@ -728,7 +728,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       {/* ── Terms modal ─────────────────────────────────────────────────────── */}
       <Modal animationType="slide" transparent visible={termsModalVisible} onRequestClose={() => setTermsModalVisible(false)}>
         <View style={s.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setTermsModalVisible(false)} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setTermsModalVisible(false)} />
           <View style={[s.modalSheet, { maxHeight: '80%' }]}>
             <View style={s.modalHandle} />
             <View style={s.modalHeaderRow}>

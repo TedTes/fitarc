@@ -906,7 +906,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       onRequestClose={closeTemplateModal}
     >
       <View style={s.modalOverlay} pointerEvents="box-none">
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={closeTemplateModal} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={closeTemplateModal} />
         <View style={s.modalSheet}>
           <View style={s.sheetHandle} />
 
