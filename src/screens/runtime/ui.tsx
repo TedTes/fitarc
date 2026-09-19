@@ -60,8 +60,9 @@ export const Txt = ({ variant = 'body', tone = 'primary', header, style, ...rest
 export const ChromeContext = createContext<{ chip: string | null; sync: SyncStatus; onSyncPress: () => void }>({ chip: null, sync: 'synced', onSyncPress: () => undefined });
 
 /** `goal · wk 2/6` with the branch mark. Carries the save state only when it isn't clean. */
-const RuntimeChip = () => {
-  const { chip, sync, onSyncPress } = useContext(ChromeContext);
+const RuntimeChip = ({ override }: { override?: string }) => {
+  const { chip: contextChip, sync, onSyncPress } = useContext(ChromeContext);
+  const chip = override ?? contextChip;
   if (!chip) return null;
   const trouble = sync === 'device' || sync === 'failed';
   const spoken = sync === 'device' ? 'Saved on this device only. Tap to retry sync' : sync === 'failed' ? 'Not saved. Tap to retry' : sync === 'saving' ? 'Saving' : 'Synced';
@@ -80,13 +81,13 @@ const RuntimeChip = () => {
 };
 
 /** `name.` in bold mono with the orange dot, a muted line beneath, and the runtime chip on the right. */
-export const ScreenBrand = ({ name, sub }: { name: string; sub?: string }) => (
+export const ScreenBrand = ({ name, sub, chip }: { name: string; sub?: string; chip?: string }) => (
   <View style={styles.brandRow}>
     <View style={styles.flex}>
       <Txt variant="label" style={styles.brandName} accessibilityRole="header">{name}<Txt variant="label" style={styles.brandDot}>.</Txt></Txt>
       {sub ? <Txt variant="mono" tone="muted" numberOfLines={2}>{sub}</Txt> : null}
     </View>
-    <RuntimeChip />
+    <RuntimeChip override={chip} />
   </View>
 );
 

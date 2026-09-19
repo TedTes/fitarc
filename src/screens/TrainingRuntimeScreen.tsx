@@ -162,7 +162,6 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
 
   const block = weekView?.block ?? state.block;
   const status = weekView?.status;
-  const openSolver = () => go('solver');
   const chip = `${goalLabel(state.source.goal)} · wk ${block.currentWeek}/${block.durationWeeks}`;
 
   return (
@@ -179,7 +178,7 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
           <BlockSurface state={state} block={block} sessionActive={inSession} onNextBlock={nextBlock} />
         </View>
         <View style={[styles.flex, surface !== 'week' && styles.hidden]}>
-          {status ? <WeekSurface state={state} block={block} status={status} onOpenSolver={openSolver} onOpenBlock={() => go('block')} /> : null}
+          {status ? <WeekSurface state={state} block={block} status={status} /> : null}
         </View>
         <View style={[styles.flex, surface !== 'source' && styles.hidden]}>
           {editingSource ? (

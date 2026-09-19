@@ -53,11 +53,12 @@ export const computeSessionDiff = (
 export const computeWeeklyStatus = (
   block: TrainingBlock,
   sessions: SessionPrescription[],
-  results: SetResult[]
+  results: SetResult[],
+  weekNumber: number = block.currentWeek
 ): WeeklyStatus => {
   const blockStart = new Date(`${block.startedOn}T12:00:00`);
   const weekStart = new Date(blockStart);
-  weekStart.setDate(blockStart.getDate() + (block.currentWeek - 1) * 7);
+  weekStart.setDate(blockStart.getDate() + (weekNumber - 1) * 7);
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekStart.getDate() + 7);
   const weekSessions = sessions.filter((session) => {
@@ -110,18 +111,18 @@ export const computeWeeklyStatus = (
       min: target.min, max: target.max, state,
     };
   });
-  const phase = block.phases.find((item) => block.currentWeek >= item.startWeek && block.currentWeek <= item.endWeek) ?? block.phases[0];
+  const phase = block.phases.find((item) => weekNumber >= item.startWeek && weekNumber <= item.endWeek) ?? block.phases[0];
   const weeklyFatigueCapacity = Math.max(1, block.slots.reduce((slotSum, slot) => slotSum + slot.plannedExercises.reduce((sum, plan) => {
     const exercise = RUNTIME_EXERCISES.find((candidate) => candidate.id === plan.exerciseId);
     return sum + plan.sets * (exercise?.fatigueCost ?? 1) * (6 - phase.targetRir);
   }, 0), 0));
   const fatiguePercent = Math.min(100, Math.round((fatiguePoints / weeklyFatigueCapacity) * 100));
   const repeatedMisses = misses >= 3;
-  const deloadRecommended = block.currentWeek >= block.durationWeeks || (weekState === 'complete' && fatiguePercent >= 80 && repeatedMisses);
+  const deloadRecommended = weekNumber >= block.durationWeeks || (weekState === 'complete' && fatiguePercent >= 80 && repeatedMisses);
   const reasons = [
     ...(fatiguePercent >= 80 ? ['Systemic fatigue budget is above 80%.'] : []),
     ...(repeatedMisses ? ['At least three prescribed rep targets were missed.'] : []),
-    ...(block.currentWeek >= block.durationWeeks ? ['The scheduled recovery week has arrived.'] : []),
+    ...(weekNumber >= block.durationWeeks ? ['The scheduled recovery week has arrived.'] : []),
   ];
   return {
     weekState, sessionsLogged, totalSessions, muscles, fatiguePercent,
