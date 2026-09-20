@@ -37,4 +37,15 @@ export const nextPendingSet = (state: RuntimeState) => {
   return null;
 };
 
+/** The next set for a chosen stack item, used when the lifter jumps between exercises. */
+export const pendingSetForExercise = (state: RuntimeState, exerciseId: string) => {
+  const session = state.activeSession;
+  if (!session) return null;
+  const exerciseIndex = session.exercises.findIndex((entry) => entry.exercise.id === exerciseId);
+  if (exerciseIndex < 0) return null;
+  const entry = session.exercises[exerciseIndex];
+  const set = entry.sets.find((item) => item.status === 'pending');
+  return set ? { entry, set, exerciseIndex, exerciseCount: session.exercises.length } : null;
+};
+
 export const todayISO = () => new Date().toISOString().slice(0, 10);

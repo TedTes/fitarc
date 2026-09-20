@@ -1,9 +1,10 @@
 import { arbitratePrescription } from './arbitration';
 import { compileBlock, validateBlock } from './blockCompiler';
 import { solveSession } from './sessionSolver';
-import { commitRuntimeSession, getSwapCandidates, previewTrainingSessionDetailed, recordRuntimeSet, skipRemainingRuntimeSets, skipRuntimeExercise, solveTrainingSession, substituteRuntimeExercise } from './runtimeService';
+import { commitRuntimeSession, getSwapCandidates, previewTrainingSessionDetailed, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise, solveTrainingSession, substituteRuntimeExercise } from './runtimeService';
 import { solveNextSet } from './setSolver';
 import { computeWeeklyStatus } from './status';
+import { restSecondsFor } from './trainingPolicy';
 import type { Muscle, RuntimeState, SetResult, TrainingSource } from './types';
 
 const expect = (condition: boolean, message: string) => {
@@ -31,6 +32,7 @@ export const runRuntimeContractChecks = () => {
   expect(repsPrimary.action === 'decrease', 'missed reps must override an optimistic RIR');
   const deload = arbitratePrescription({ phase: 'deload', recovery: 'yes', plannedSets: 4, weeklySetsAfterSession: 10, weeklyMaximum: 20, hasPain: false, exerciseAvailable: true });
   expect(deload.allowedSets === 2 && !deload.allowLoadProgression, 'deload must cap volume and progression');
+  expect(restSecondsFor('strength', true) > restSecondsFor('hypertrophy', false), 'compound strength work must receive more rest than hypertrophy isolation work');
 
   const source: TrainingSource = {
     id: '00000000-0000-4000-8000-000000000003', userId: '00000000-0000-4000-8000-000000000004',
@@ -97,6 +99,11 @@ export const runRuntimeContractChecks = () => {
   const detailed = previewTrainingSessionDetailed(fresh0, context);
   expect(detailed.slot !== null && detailed.weekNumber === 1, 'a preview must expose its slot and calendar week');
   const started = solveTrainingSession(fresh0, context);
+  const originalOrder = started.activeSession!.exercises.map((entry) => entry.exercise.id);
+  const reversedOrder = [...originalOrder].reverse();
+  const reordered = reorderRuntimeExercises(started, reversedOrder);
+  expect(reordered.activeSession!.exercises.map((entry) => entry.exercise.id).join('|') === reversedOrder.join('|'), 'active exercises must follow the user order');
+  expect(reordered.sessions[reordered.sessions.length - 1].exercises.map((entry) => entry.exercise.id).join('|') === reversedOrder.join('|'), 'saved active session must keep the user order');
   const first = started.activeSession!.exercises[0];
   const candidates = getSwapCandidates(started, first.exercise.id, 3);
   expect(candidates.length > 0 && candidates.every((item) => item.id !== first.exercise.id), 'swap candidates must exclude the current lift');

@@ -156,6 +156,30 @@ export const recordRuntimeSet = (
   };
 };
 
+/** Reorders the active session without changing its prescribed work. */
+export const reorderRuntimeExercises = (
+  state: RuntimeState,
+  orderedExerciseIds: string[]
+): RuntimeState => {
+  if (!state.activeSession) throw new Error('active_session_required');
+  const current = state.activeSession.exercises;
+  if (orderedExerciseIds.length !== current.length || new Set(orderedExerciseIds).size !== current.length) {
+    throw new Error('invalid_exercise_order');
+  }
+  const byId = new Map(current.map((entry) => [entry.exercise.id, entry]));
+  const exercises = orderedExerciseIds.map((exerciseId) => {
+    const entry = byId.get(exerciseId);
+    if (!entry) throw new Error('invalid_exercise_order');
+    return entry;
+  });
+  const session = { ...state.activeSession, exercises };
+  return {
+    ...state,
+    activeSession: session,
+    sessions: state.sessions.map((item) => item.id === session.id ? session : item),
+  };
+};
+
 export const commitRuntimeSession = (state: RuntimeState): RuntimeState => {
   if (!state.activeSession) throw new Error('active_session_required');
   const completed = { ...state.activeSession, status: 'committed' as const };

@@ -60,3 +60,9 @@ export const hardSetCredit = (reportedRir: number, targetRir: number): number =>
   reportedRir <= targetRir ? 1 : 0;
 
 export const secondaryMuscleCredit = 0.5;
+
+/** Rest is part of the prescribed dose, so the runtime owns it rather than asking the user. */
+export const restSecondsFor = (goal: RuntimeGoal, compound: boolean): number => {
+  if (goal === 'strength') return compound ? 180 : 90;
+  return compound ? 120 : 75;
+};
