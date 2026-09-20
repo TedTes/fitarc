@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import type { RuntimeState, TrainingBlock } from '../../runtime';
 import { colors, space } from './theme';
-import { Button, Card, Divider, ScreenBrand, Txt } from './ui';
-import { exerciseName, muscleList, PHASE_COPY, slotPlain } from './copy';
+import { Button, Divider, ScreenBrand, Txt } from './ui';
+import { exerciseName, muscleList, PHASE_COPY } from './copy';
 import { committedSlotIds, phaseOfWeek } from './selectors';
 
 type Props = {
@@ -13,57 +13,45 @@ type Props = {
   onNextBlock: () => void;
 };
 
-const SlotDetails = ({ slot, width }: { slot: TrainingBlock['slots'][number]; width: number }) => {
-  const sets = slot.plannedExercises.reduce((sum, plan) => sum + plan.sets, 0);
-  return (
-    <Card style={[styles.slotCard, { width }]}>
-      <View style={styles.between} accessible accessibilityLabel={`${slot.label}, ${slotPlain(slot)}. ${slot.plannedExercises.length} exercises, ${sets} physical sets.`}>
-        <View style={styles.slotIdentity}>
-          <Txt variant="code">{slot.label} · {slotPlain(slot)}</Txt>
-          <Txt variant="caption" tone="secondary">{muscleList(slot.targetMuscles)} · {sets} sets</Txt>
-        </View>
-      </View>
-      <Divider />
-      {slot.plannedExercises.map((plan, index) => (
-        <View key={`${plan.exerciseId}:${index}`} style={styles.exerciseRow}>
-          <Txt variant="mono" tone="muted" style={styles.exerciseNumber}>{index + 1}</Txt>
-          <Txt variant="caption" style={styles.flex}>{exerciseName(plan.exerciseId)}</Txt>
-          {plan.selection.substituted ? <Txt variant="label" tone="warning">swapped</Txt> : null}
-          <Txt variant="mono" tone="secondary">{plan.sets} sets</Txt>
-        </View>
-      ))}
-    </Card>
-  );
-};
+const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
+const PHASE_SHORT = { accumulate: 'acc', intensify: 'int', peak: 'peak', deload: 'deload' } as const;
 
 /** build.block: the compiled artifact. Inspectable, versioned, never edited by hand. */
 export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props) => {
-  const { width: windowWidth } = useWindowDimensions();
-  const carousel = useRef<ScrollView>(null);
-  const [visibleSlot, setVisibleSlot] = useState(0);
-  const source = state.source;
+  const { height: windowHeight } = useWindowDimensions();
+  const slotReel = useRef<ScrollView>(null);
+  const details = useRef<ScrollView>(null);
   const current = phaseOfWeek(block, block.currentWeek);
   const committed = committedSlotIds(state, block);
   const atEnd = current.kind === 'deload';
-  const cardWidth = Math.max(280, windowWidth - space.lg * 2);
+  const rowHeight = Math.round(clamp(windowHeight * 0.075, 52, 70));
+  const exerciseRowHeight = Math.round(clamp(windowHeight * 0.09, 58, 82));
   const focusSlotId = state.activeSession?.slotId
     ?? block.slots.find((slot) => !committed.has(slot.id))?.id
     ?? [...state.sessions].reverse().find((session) => session.blockId === block.id && session.status === 'committed')?.slotId
     ?? block.slots[0]?.id;
-  const orderedSlots = useMemo(() => {
-    const focus = block.slots.find((slot) => slot.id === focusSlotId);
-    return focus ? [focus, ...block.slots.filter((slot) => slot.id !== focus.id)] : block.slots;
-  }, [block.slots, focusSlotId]);
+  const [selectedSlotId, setSelectedSlotId] = useState(focusSlotId);
+  const selectedIndex = Math.max(0, block.slots.findIndex((slot) => slot.id === selectedSlotId));
+  const selectedSlot = block.slots[selectedIndex] ?? block.slots[0];
+  const reelRows = Math.min(3, block.slots.length);
+  const selectedSets = selectedSlot?.plannedExercises.reduce((sum, plan) => sum + plan.sets, 0) ?? 0;
+
+  const reelOffset = useMemo(() => {
+    const firstVisible = clamp(selectedIndex - 1, 0, Math.max(0, block.slots.length - reelRows));
+    return firstVisible * rowHeight;
+  }, [block.slots.length, reelRows, rowHeight, selectedIndex]);
 
   useEffect(() => {
-    setVisibleSlot(0);
-    carousel.current?.scrollTo({ x: 0, animated: false });
+    setSelectedSlotId(focusSlotId);
   }, [block.id, focusSlotId]);
 
-  const updateVisibleSlot = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const index = Math.round(event.nativeEvent.contentOffset.x / (cardWidth + space.md));
-    setVisibleSlot(Math.max(0, Math.min(orderedSlots.length - 1, index)));
-  };
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      slotReel.current?.scrollTo({ y: reelOffset, animated: true });
+      details.current?.scrollTo({ y: 0, animated: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [reelOffset, selectedSlotId]);
 
   const confirmNextBlock = () => Alert.alert(
     'Compile the next block?',
@@ -71,68 +59,129 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
     [{ text: 'Not yet', style: 'cancel' }, { text: 'Compile next block', onPress: onNextBlock }]
   );
 
-  return (
-    <ScrollView contentContainerStyle={styles.page}>
-      <ScreenBrand name="build.block" sub={`compiled artifact · v${block.version} · ${source?.daysPerWeek}d · ${source?.sessionMinutes}m`} />
-      {(block.version > 1 ? state.lastBlockDiff.slice(0, 2) : []).map((line) => <Txt key={line} variant="mono" tone="muted">↻ {line}</Txt>)}
+  if (!selectedSlot) return null;
 
-      <View style={styles.section}>
-        <Txt variant="label" tone="muted">PHASE PIPELINE</Txt>
-        <Card style={styles.phaseStrip}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.phaseStripContent}>
-            {block.phases.map((phase) => {
-              const isCurrent = block.currentWeek >= phase.startWeek && block.currentWeek <= phase.endWeek;
-              const weeks = phase.startWeek === phase.endWeek ? `W${phase.startWeek}` : `W${phase.startWeek}–${phase.endWeek}`;
+  return (
+    <View style={styles.page}>
+      <ScreenBrand name="build.block" />
+
+      <View style={styles.phaseStrip}>
+        {block.phases.map((phase) => {
+          const isCurrent = block.currentWeek >= phase.startWeek && block.currentWeek <= phase.endWeek;
+          const weeks = phase.startWeek === phase.endWeek ? `W${phase.startWeek}` : `W${phase.startWeek}–${phase.endWeek}`;
+          return (
+            <View key={`${phase.kind}:${phase.startWeek}`} style={styles.phaseItem} accessible accessibilityLabel={`${weeks}, ${PHASE_COPY[phase.kind].name}${isCurrent ? ', current phase' : ''}`}>
+              {isCurrent ? <View style={styles.phaseDot} /> : null}
+              <Txt variant="mono" tone={isCurrent ? 'accent' : 'secondary'}>{weeks} {PHASE_SHORT[phase.kind]}</Txt>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.workspace}>
+        <View style={styles.sessionsSection}>
+          <View style={styles.reelMeta}>
+            <Txt variant="label" tone="muted">SLOTS</Txt>
+            <Txt variant="mono" tone="secondary">{selectedIndex + 1} / {block.slots.length}</Txt>
+          </View>
+          <ScrollView
+            ref={slotReel}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+            decelerationRate="fast"
+            snapToInterval={rowHeight}
+            style={[styles.slotViewport, { height: reelRows * rowHeight }]}
+            accessibilityLabel="Weekly sessions. Scroll vertically and select a training day."
+          >
+            {block.slots.map((slot) => {
+              const selected = slot.id === selectedSlot.id;
+              const active = state.activeSession?.slotId === slot.id;
+              const done = committed.has(slot.id);
+              const stateLabel = active ? '▶ active' : selected ? '▶ view' : done ? '✓ done' : 'planned';
+              const stateTone = active || selected ? 'accent' : done ? 'success' : 'secondary';
+              const visibleMuscles = slot.targetMuscles.slice(0, 3);
+              const hiddenMuscles = slot.targetMuscles.length - visibleMuscles.length;
               return (
-                <View key={`${phase.kind}:${phase.startWeek}`} style={styles.phaseItem} accessible accessibilityLabel={`${weeks}, ${PHASE_COPY[phase.kind].name}${isCurrent ? ', current phase' : ''}`}>
-                  {isCurrent ? <View style={styles.phaseDot} /> : null}
-                  <Txt variant="mono" tone={isCurrent ? 'accent' : 'secondary'}>{weeks} {PHASE_COPY[phase.kind].name}</Txt>
-                </View>
+                <Pressable
+                  key={slot.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${slot.label}, ${done ? 'completed' : active ? 'active' : 'planned'}`}
+                  accessibilityState={{ selected }}
+                  onPress={() => setSelectedSlotId(slot.id)}
+                  style={({ pressed }) => [styles.slotRow, { height: rowHeight }, selected && styles.slotRowSelected, pressed && styles.pressed]}
+                >
+                  <Txt variant="label" tone={stateTone} style={styles.slotState}>{stateLabel}</Txt>
+                  <View style={styles.slotName}>
+                    <Txt variant="code" numberOfLines={1}>{slot.label}</Txt>
+                    <Txt variant="caption" tone="muted" numberOfLines={1}>{muscleList(visibleMuscles)}{hiddenMuscles > 0 ? ` +${hiddenMuscles}` : ''}</Txt>
+                  </View>
+                  {selected && done ? <Txt variant="label" tone="success" accessibilityLabel="Completed">✓</Txt> : null}
+                </Pressable>
               );
             })}
           </ScrollView>
-        </Card>
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.sectionHead}>
-          <Txt variant="label" tone="muted">SESSIONS THIS WEEK</Txt>
-          <Txt variant="caption" tone="muted">{visibleSlot + 1} / {orderedSlots.length} · swipe</Txt>
         </View>
-        <ScrollView
-          ref={carousel}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          snapToInterval={cardWidth + space.md}
-          snapToAlignment="start"
-          decelerationRate="fast"
-          disableIntervalMomentum
-          onMomentumScrollEnd={updateVisibleSlot}
-          contentContainerStyle={styles.carousel}
-          accessibilityLabel="Weekly sessions. Swipe horizontally for another training day."
-        >
-          {orderedSlots.map((slot) => <SlotDetails key={slot.id} slot={slot} width={cardWidth} />)}
-        </ScrollView>
-      </View>
 
-      {atEnd ? <Button label="Compile next block" onPress={confirmNextBlock} disabled={sessionActive} hint={sessionActive ? 'Commit or discard the active session first' : undefined} /> : null}
-    </ScrollView>
+        <Divider />
+
+        <View style={styles.detailsSection}>
+          <ScrollView
+            ref={details}
+            style={styles.detailsViewport}
+            contentContainerStyle={styles.detailsContent}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+          >
+            <View style={styles.workoutMeta}>
+              <Txt variant="label" tone="muted">{selectedSlot.plannedExercises.length} LIFTS</Txt>
+              <Txt variant="mono" tone="secondary">{selectedSets} sets</Txt>
+            </View>
+            {selectedSlot.plannedExercises.map((plan, index) => (
+              <View key={`${plan.exerciseId}:${index}`} style={[styles.exerciseRow, { minHeight: exerciseRowHeight }]}>
+                <Txt variant="mono" tone="muted" style={styles.exerciseNumber}>{index + 1}</Txt>
+                <View style={styles.exerciseIdentity}>
+                  <Txt variant="caption">{exerciseName(plan.exerciseId)}</Txt>
+                  <Txt variant="mono" tone="muted">{plan.sets} × {current.minReps}–{current.maxReps} · RIR {current.targetRir}</Txt>
+                </View>
+                {plan.selection.substituted ? <Txt variant="heading" tone="warning" accessible accessibilityLabel="Substituted exercise">↔</Txt> : null}
+              </View>
+            ))}
+            {atEnd ? (
+              <Button
+                label="Compile next block"
+                onPress={confirmNextBlock}
+                disabled={sessionActive}
+                hint={sessionActive ? 'Commit or discard the active session first' : undefined}
+                style={styles.nextBlockButton}
+              />
+            ) : null}
+          </ScrollView>
+        </View>
+      </View>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  page: { padding: space.lg, paddingBottom: space.xxl * 2, gap: space.xl },
-  section: { gap: space.sm },
-  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: space.md, flexWrap: 'wrap' },
-  between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md, flexWrap: 'wrap' },
-  phaseStrip: { paddingVertical: space.md, paddingHorizontal: 0 },
-  phaseStripContent: { paddingHorizontal: space.lg, alignItems: 'center', gap: space.lg },
+  page: { flex: 1, minHeight: 0, padding: space.lg, paddingBottom: space.md, gap: space.md },
+  phaseStrip: { minHeight: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   phaseItem: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   phaseDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent },
-  carousel: { gap: space.md },
-  slotCard: { gap: space.md },
-  slotIdentity: { flex: 1, gap: 2 },
-  exerciseRow: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  exerciseNumber: { width: 18 },
+  workspace: { flex: 1, minHeight: 0 },
+  sessionsSection: { gap: space.xs },
+  reelMeta: { minHeight: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: space.md },
+  slotViewport: { backgroundColor: colors.surface },
+  slotRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.md, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
+  slotRowSelected: { backgroundColor: colors.accentSoft, borderLeftWidth: 4, borderLeftColor: colors.accent },
+  slotState: { width: 64 },
+  slotName: { flex: 1, minWidth: 0 },
+  detailsSection: { flex: 1, minHeight: 0 },
+  detailsViewport: { flex: 1 },
+  detailsContent: { flexGrow: 1 },
+  workoutMeta: { minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  exerciseRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  exerciseNumber: { width: 20 },
+  exerciseIdentity: { flex: 1, minWidth: 0, gap: 2 },
+  nextBlockButton: { marginTop: space.md },
+  pressed: { opacity: 0.7 },
 });
