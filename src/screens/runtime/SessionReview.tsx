@@ -83,6 +83,7 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
       message: 'Now in history and shaping future prescriptions. The block was not recompiled.',
       action: { label: 'week', run: onOpenWeek },
     });
+    onOpenWeek();
   };
 
   const discard = () => Alert.alert(
@@ -92,7 +93,10 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
       text: 'Discard session', style: 'destructive',
       onPress: () => {
         const outcome = apply(discardRuntimeSession);
-        if (outcome.ok) notify({ tone: 'info', title: 'discarded → working weights restored' });
+        if (outcome.ok) {
+          notify({ tone: 'info', title: 'discarded → working weights restored' });
+          onOpenWeek();
+        }
         else notify({ tone: 'error', ...describeRuntimeError(outcome.error), sticky: true });
       },
     }]

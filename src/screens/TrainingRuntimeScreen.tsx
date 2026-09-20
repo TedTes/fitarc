@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User, WorkoutSessionEntry } from '../types/domain';
@@ -27,6 +27,7 @@ const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typ
   { key: 'week', label: 'week', spoken: 'week, status', icon: 'stats-chart-outline', iconOn: 'stats-chart', hint: "This week's dose and fatigue" },
   { key: 'source', label: 'source', spoken: 'source, your constraints', icon: 'options-outline', iconOn: 'options', hint: 'Your goal and constraints' },
 ];
+const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, source: 3 };
 
 export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props) => {
   const insets = useSafeAreaInsets();
@@ -39,6 +40,17 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
   const [fresh, setFresh] = useState<{ id: number; action?: { label: string; run: () => void } } | null>(null);
   const [dismissedId, setDismissedId] = useState<number | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [workoutTabsVisible, setWorkoutTabsVisible] = useState(false);
+  const [tabBarWidth, setTabBarWidth] = useState(0);
+  const tabReveal = useRef(new Animated.Value(1)).current;
+  const tabPosition = useRef(new Animated.Value(0)).current;
+  const previousSurface = useRef<Surface>('solver');
+  const surfaceOpacity = useRef<Record<Surface, Animated.Value>>({
+    solver: new Animated.Value(1), block: new Animated.Value(0), week: new Animated.Value(0), source: new Animated.Value(0),
+  }).current;
+  const surfaceOffset = useRef<Record<Surface, Animated.Value>>({
+    solver: new Animated.Value(0), block: new Animated.Value(0), week: new Animated.Value(0), source: new Animated.Value(0),
+  }).current;
   const eventId = useRef(0);
   const restoredNotice = useRef(false);
   const suggestedSeeds = useMemo(() => deriveLegacySeeds(legacySessions), [legacySessions]);
@@ -64,6 +76,42 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
 
   const progress = sessionProgress(state);
   const inSession = Boolean(progress);
+  const workoutActive = surface === 'solver' && Boolean(progress && progress.pending > 0);
+  const tabsShown = !keyboardOpen && (!workoutActive || workoutTabsVisible);
+
+  useEffect(() => {
+    Animated.timing(tabReveal, {
+      toValue: tabsShown ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [tabReveal, tabsShown]);
+
+  useEffect(() => {
+    const previous = previousSurface.current;
+    const direction = SURFACE_INDEX[surface] >= SURFACE_INDEX[previous] ? 1 : -1;
+
+    Animated.timing(tabPosition, {
+      toValue: SURFACE_INDEX[surface], duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+    }).start();
+
+    if (previous === surface) return;
+    surfaceOpacity[surface].stopAnimation();
+    surfaceOffset[surface].stopAnimation();
+    surfaceOpacity[previous].stopAnimation();
+    surfaceOffset[previous].stopAnimation();
+    surfaceOpacity[surface].setValue(0);
+    surfaceOffset[surface].setValue(direction * 18);
+
+    Animated.parallel([
+      Animated.timing(surfaceOpacity[previous], { toValue: 0, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(surfaceOffset[previous], { toValue: direction * -12, duration: 190, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(surfaceOpacity[surface], { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(surfaceOffset[surface], { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start(() => surfaceOffset[previous].setValue(0));
+    previousSurface.current = surface;
+  }, [surface, surfaceOffset, surfaceOpacity, tabPosition]);
 
   // An active session survives restarts. A completed session needs an explicit reminder because
   // the next action is commit/discard; an in-progress session already identifies itself in set.log.
@@ -77,7 +125,10 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
   useEffect(() => { if (inSession) setSurface('solver'); }, [inSession]);
 
   const weekView = useMemo(() => (loading ? null : getRuntimeWeekView(state)), [loading, state]);
-  const go = useCallback((next: Surface) => setSurface(next), []);
+  const go = useCallback((next: Surface) => {
+    setSurface(next);
+    if (next === 'solver') setWorkoutTabsVisible(false);
+  }, []);
 
   const compile = useCallback((source: TrainingSource) => {
     const first = !state.source;
@@ -167,30 +218,83 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
   return (
     <ChromeContext.Provider value={{ chip, sync, onSyncPress }}>
     <KeyboardAvoidingView style={[styles.root, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {surface === 'solver' ? line : null}
-
       {/* Every surface stays mounted so a half-entered set or an open form survives a look at another destination. */}
-      <View style={styles.flex}>
-        <View style={[styles.flex, surface !== 'solver' && styles.hidden]}>
-          <TodaySurface state={state} apply={apply} notify={notify} onOpenSource={() => go('source')} onOpenWeek={() => go('week')} />
-        </View>
-        <View style={[styles.flex, surface !== 'block' && styles.hidden]}>
+      <View style={styles.surfaceStage}>
+        <Animated.View
+          pointerEvents={surface === 'solver' ? 'auto' : 'none'}
+          accessibilityElementsHidden={surface !== 'solver'}
+          importantForAccessibility={surface === 'solver' ? 'auto' : 'no-hide-descendants'}
+          style={[styles.surfaceLayer, surface === 'solver' && styles.surfaceActive, { opacity: surfaceOpacity.solver, transform: [{ translateX: surfaceOffset.solver }] }]}
+        >
+          {line}
+          <TodaySurface
+            state={state} apply={apply} notify={notify} active={surface === 'solver'}
+            workoutTabsVisible={workoutTabsVisible}
+            onToggleWorkoutTabs={() => setWorkoutTabsVisible((visible) => !visible)}
+            onOpenSource={() => go('source')} onOpenWeek={() => go('week')}
+          />
+        </Animated.View>
+        <Animated.View
+          pointerEvents={surface === 'block' ? 'auto' : 'none'}
+          accessibilityElementsHidden={surface !== 'block'}
+          importantForAccessibility={surface === 'block' ? 'auto' : 'no-hide-descendants'}
+          style={[styles.surfaceLayer, surface === 'block' && styles.surfaceActive, { opacity: surfaceOpacity.block, transform: [{ translateX: surfaceOffset.block }] }]}
+        >
           <BlockSurface state={state} block={block} sessionActive={inSession} onNextBlock={nextBlock} />
-        </View>
-        <View style={[styles.flex, surface !== 'week' && styles.hidden]}>
+        </Animated.View>
+        <Animated.View
+          pointerEvents={surface === 'week' ? 'auto' : 'none'}
+          accessibilityElementsHidden={surface !== 'week'}
+          importantForAccessibility={surface === 'week' ? 'auto' : 'no-hide-descendants'}
+          style={[styles.surfaceLayer, surface === 'week' && styles.surfaceActive, { opacity: surfaceOpacity.week, transform: [{ translateX: surfaceOffset.week }] }]}
+        >
           {status ? <WeekSurface state={state} block={block} status={status} /> : null}
-        </View>
-        <View style={[styles.flex, surface !== 'source' && styles.hidden]}>
+        </Animated.View>
+        <Animated.View
+          pointerEvents={surface === 'source' ? 'auto' : 'none'}
+          accessibilityElementsHidden={surface !== 'source'}
+          importantForAccessibility={surface === 'source' ? 'auto' : 'no-hide-descendants'}
+          style={[styles.surfaceLayer, surface === 'source' && styles.surfaceActive, { opacity: surfaceOpacity.source, transform: [{ translateX: surfaceOffset.source }] }]}
+        >
           {editingSource ? (
             <SourceIntake mode="edit" user={user} initial={state.source} blockVersion={state.block.version} suggestedSeeds={suggestedSeeds} sessionActive={inSession} onSubmit={compile} onCancel={() => setEditingSource(false)} />
           ) : (
             <SourceSurface state={state} sync={sync} onEdit={() => setEditingSource(true)} onLogout={onLogout} />
           )}
-        </View>
+        </Animated.View>
       </View>
 
-      {keyboardOpen ? null : (
-        <View accessibilityRole="tablist" style={[styles.tabs, { paddingBottom: Math.max(insets.bottom, space.sm) }]}>
+      <Animated.View
+        accessibilityRole="tablist"
+        pointerEvents={tabsShown ? 'auto' : 'none'}
+        onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
+        style={[
+          styles.tabs,
+          {
+            paddingBottom: tabReveal.interpolate({ inputRange: [0, 1], outputRange: [0, Math.max(insets.bottom, space.sm)] }),
+            height: tabReveal.interpolate({ inputRange: [0, 1], outputRange: [0, 60 + Math.max(insets.bottom, space.sm)] }),
+            opacity: tabReveal,
+            transform: [{ translateY: tabReveal.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
+          },
+        ]}
+      >
+          {tabBarWidth > 0 ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.tabIndicator,
+                {
+                  width: tabBarWidth / TABS.length,
+                  transform: [{
+                    translateX: tabPosition.interpolate({
+                      inputRange: [0, TABS.length - 1],
+                      outputRange: [0, (tabBarWidth / TABS.length) * (TABS.length - 1)],
+                    }),
+                  }],
+                },
+              ]}
+            />
+          ) : null}
           {TABS.map((tab) => {
             const selected = surface === tab.key;
             return (
@@ -201,7 +305,7 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
                 accessibilityHint={tab.hint}
                 accessibilityState={{ selected }}
                 onPress={() => go(tab.key)}
-                style={({ pressed }) => [styles.tab, selected && styles.tabSelected, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
               >
                 <View>
                   <Ionicons name={selected ? tab.iconOn : tab.icon} size={24} color={selected ? colors.accent : colors.textSecondary} />
@@ -211,8 +315,7 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
               </Pressable>
             );
           })}
-        </View>
-      )}
+      </Animated.View>
     </KeyboardAvoidingView>
     </ChromeContext.Provider>
   );
@@ -223,10 +326,12 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.ground },
   center: { flex: 1, alignItems: 'stretch', justifyContent: 'center', gap: space.lg, padding: space.xl, backgroundColor: colors.ground },
   centerText: { textAlign: 'center' },
-  hidden: { display: 'none' },
-  tabs: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
-  tab: { flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: 2, paddingTop: space.sm, borderTopWidth: 3, borderTopColor: 'transparent' },
-  tabSelected: { borderTopColor: colors.accent },
+  surfaceStage: { flex: 1, position: 'relative', overflow: 'hidden' },
+  surfaceLayer: { ...StyleSheet.absoluteFillObject },
+  surfaceActive: { zIndex: 1 },
+  tabs: { position: 'relative', flexDirection: 'row', overflow: 'hidden', borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
+  tabIndicator: { position: 'absolute', zIndex: 2, top: 0, left: 0, height: 3, backgroundColor: colors.accent },
+  tab: { zIndex: 1, flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: 2, paddingTop: space.sm },
   pressed: { opacity: 0.7 },
   liveDot: { position: 'absolute', top: -2, right: -6, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.warning, borderWidth: 1, borderColor: colors.surface },
   signOut: { alignItems: 'center', justifyContent: 'center', minHeight: TOUCH, paddingTop: space.sm },
