@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { signUp } from '../services/authService';
+import { SocialAuthButtons } from '../components/SocialAuthButtons';
 
 type RegisterScreenProps = {
   onNavigateToLogin: () => void;
@@ -23,61 +20,7 @@ const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
 export const RegisterScreen: React.FC<RegisterScreenProps> = ({
   onNavigateToLogin,
 }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-
-  const validateInputs = () => {
-    if (!email.trim() || !password.trim() || !confirmPassword.trim()) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return false;
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      Alert.alert('Error', 'Please enter a valid email address');
-      return false;
-    }
-
-    if (password.length < 8) {
-      Alert.alert('Error', 'Password must be at least 8 characters long');
-      return false;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleRegister = async () => {
-    if (!validateInputs()) return;
-
-    setIsLoading(true);
-    try {
-      await signUp({
-        email: email.trim().toLowerCase(),
-        password,
-      });
-
-      Alert.alert(
-        'Check your email',
-        'We sent you a confirmation email. Confirm your address to start using fitarc.',
-        [{ text: 'OK', onPress: onNavigateToLogin }]
-      );
-    } catch (error: any) {
-      console.error('Register error:', error);
-      Alert.alert(
-        'Registration failed',
-        error.message || 'Unable to create account. Please try again.'
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   return (
     <View style={styles.container}>
@@ -86,89 +29,36 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
         >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-          >
+          <ScrollView contentContainerStyle={styles.scrollContent}>
             <View style={styles.content}>
-              {/* Header */}
               <View style={styles.header}>
-                <Text style={styles.logo}>🚀</Text>
+                <Text style={styles.logo}>↗</Text>
                 <Text style={styles.title}>Create account</Text>
                 <Text style={styles.subtitle}>
-                  Join fitarc and start building your next physique
+                  Use Google or Apple so your identity is verified before profile setup.
                 </Text>
               </View>
 
-              {/* Form */}
-              <View style={styles.form}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Email</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="you@example.com"
-                    placeholderTextColor="rgba(255,255,255,0.4)"
-                    keyboardType='email-address'
-                    autoCapitalize='none'
-                    editable={!isLoading}
-                  />
-                </View>
+              <SocialAuthButtons
+                disabled={isLoading}
+                onLoadingChange={setIsLoading}
+              />
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Password</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={password}
-                    onChangeText={setPassword}
-                    placeholder="••••••••"
-                    placeholderTextColor="rgba(255,255,255,0.4)"
-                    secureTextEntry
-                    autoCapitalize='none'
-                    editable={!isLoading}
-                  />
-                  <Text style={styles.helperText}>
-                    Minimum 8 characters. Use a mix of letters, numbers, symbols.
-                  </Text>
-                </View>
+              <Text style={styles.disclosure}>
+                Fitarc receives your verified email and basic account identity. Your workout data
+                stays attached to that account.
+              </Text>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Confirm password</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    placeholder="••••••••"
-                    placeholderTextColor="rgba(255,255,255,0.4)"
-                    secureTextEntry
-                    autoCapitalize='none'
-                    editable={!isLoading}
-                  />
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.registerButton, isLoading && styles.registerButtonDisabled]}
-                  onPress={handleRegister}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.registerButtonText}>Create account</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.loginLink}
-                  onPress={onNavigateToLogin}
-                  disabled={isLoading}
-                >
-                  <Text style={styles.loginLinkText}>
-                    Already have an account? <Text style={styles.loginLinkHighlight}>Sign in</Text>
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                style={styles.loginLink}
+                onPress={onNavigateToLogin}
+                disabled={isLoading}
+              >
+                <Text style={styles.loginLinkText}>
+                  Existing password account?{' '}
+                  <Text style={styles.loginLinkHighlight}>Sign in</Text>
+                </Text>
+              </TouchableOpacity>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -201,66 +91,39 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 48,
+    marginBottom: 40,
   },
   logo: {
-    fontSize: 64,
-    marginBottom: 16,
+    color: '#6C63FF',
+    fontSize: 58,
+    fontWeight: '300',
+    lineHeight: 64,
+    marginBottom: 12,
   },
   title: {
     fontSize: 32,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   subtitle: {
+    maxWidth: 340,
     fontSize: 16,
+    lineHeight: 23,
     color: 'rgba(255,255,255,0.7)',
     textAlign: 'center',
   },
-  form: {
-    width: '100%',
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-  },
-  helperText: {
-    marginTop: 8,
+  disclosure: {
+    marginTop: 20,
+    color: 'rgba(255,255,255,0.5)',
     fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
-  },
-  registerButton: {
-    backgroundColor: '#6C63FF',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  registerButtonDisabled: {
-    opacity: 0.6,
-  },
-  registerButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    lineHeight: 18,
+    textAlign: 'center',
   },
   loginLink: {
     alignItems: 'center',
+    marginTop: 32,
+    paddingVertical: 12,
   },
   loginLinkText: {
     fontSize: 14,

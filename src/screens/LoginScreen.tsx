@@ -1,287 +1,365 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
   Alert,
-  ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
+  SafeAreaView,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { signIn } from '../services/authService';
+import { CompilerGlyphs, Scanlines } from '../components/AuthRuntimeVisual';
+import { SocialAuthButtons } from '../components/SocialAuthButtons';
+import { resendVerificationEmail, signIn } from '../services/authService';
+import { monoFace, useMonoFonts } from './runtime/fonts';
+import { colors, mono } from './runtime/theme';
 
 type LoginScreenProps = {
-  onNavigateToRegister: () => void;
   onNavigateToForgotPassword: () => void;
 };
 
-const SCREEN_GRADIENT = ['#0A0E27', '#151932', '#1E2340'] as const;
-
 export const LoginScreen: React.FC<LoginScreenProps> = ({
-  onNavigateToRegister,
   onNavigateToForgotPassword,
 }) => {
+  const { height } = useWindowDimensions();
+  const fontsReady = useMonoFonts();
+  const monoRegular = fontsReady ? monoFace('400') ?? mono : mono;
+  const monoSemiBold = fontsReady ? monoFace('600') ?? mono : mono;
+  const [emailMode, setEmailMode] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const compact = height < 760;
+  const meshHeight = useMemo(
+    () => Math.max(compact ? 120 : 150, Math.min(260, height * 0.26)),
+    [compact, height]
+  );
 
-  const getLoginErrorMessage = (error: any) => {
-    const rawMessage = (error?.message ?? '').toString();
-    const message = rawMessage.toLowerCase();
-
-    if (message.includes('invalid login credentials')) {
-      return 'Incorrect email or password. Please try again.';
-    }
-    if (message.includes('email not confirmed')) {
-      return 'Please confirm your email before signing in.';
-    }
-    if (message.includes('user not found')) {
-      return 'No account found with that email. Create a new account?';
-    }
-    if (message.includes('network') || message.includes('timeout')) {
-      return 'Network issue. Please check your connection and try again.';
-    }
-
-    return rawMessage || 'Unable to sign in. Please check your credentials.';
+  const isUnverifiedEmailError = (error: any) => {
+    const code = String(error?.code ?? '').toLowerCase();
+    const message = String(error?.message ?? '').toLowerCase();
+    return code === 'email_not_verified' || message.includes('email not confirmed');
   };
 
-  const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please enter both email and password');
+  const offerVerificationResend = () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    Alert.alert(
+      'Confirm your email',
+      `Open the confirmation link sent to ${normalizedEmail} before signing in.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Resend email',
+          onPress: () => {
+            void resendVerificationEmail(normalizedEmail)
+              .then(() => Alert.alert('Email sent', 'Check your inbox and spam folder.'))
+              .catch(() => Alert.alert('Unable to resend', 'Please wait a moment and try again.'));
+          },
+        },
+      ]
+    );
+  };
+
+  const loginErrorMessage = (error: any) => {
+    const rawMessage = String(error?.message ?? '');
+    const message = rawMessage.toLowerCase();
+    if (message.includes('invalid login credentials')) return 'Incorrect email or password.';
+    if (message.includes('network') || message.includes('timeout')) {
+      return 'Check your connection and try again.';
+    }
+    return rawMessage || 'Unable to sign in. Please try again.';
+  };
+
+  const handleEmailLogin = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || !password) {
+      Alert.alert('Check credentials', 'Enter a valid email and password.');
       return;
     }
-
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      Alert.alert('Error', 'Please enter a valid email address');
-      return;
-    }
-
     setIsLoading(true);
     try {
-      await signIn({ email: email.trim().toLowerCase(), password });
-      // Auth context will handle the user state update
+      await signIn({ email: normalizedEmail, password });
     } catch (error: any) {
-      Alert.alert(
-        'Login Failed',
-        getLoginErrorMessage(error)
-      );
+      if (isUnverifiedEmailError(error)) {
+        offerVerificationResend();
+      } else {
+        Alert.alert('Sign-in failed', loginErrorMessage(error));
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <LinearGradient colors={SCREEN_GRADIENT} style={styles.gradient}>
+    <View style={styles.root}>
+      <Image
+        accessibilityIgnoresInvertColors
+        accessible={false}
+        fadeDuration={0}
+        resizeMode="contain"
+        source={require('../../assets/images/login-athlete.png')}
+        style={[styles.athleteBackground, compact && styles.athleteBackgroundCompact]}
+      />
+      <Scanlines />
+      <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardView}
+          style={styles.flex}
         >
           <ScrollView
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[styles.scrollContent, compact && styles.scrollContentCompact]}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            <View style={styles.content}>
-              {/* Logo/Header */}
-              <View style={styles.header}>
-                <Text style={styles.logo}>💪</Text>
-                <Text style={styles.title}>fitarc</Text>
-                <Text style={styles.subtitle}>Transform your physique</Text>
+            <View style={styles.shell}>
+              <View style={[styles.terminal, compact && styles.terminalCompact]}>
+                <Text style={[styles.runtimeBrand, { fontFamily: monoSemiBold }]}>training.runtime</Text>
+                <Text style={[styles.command, { fontFamily: monoRegular }]}>
+                  <Text style={styles.commandPrompt}>$ </Text>auth --login
+                </Text>
+                <View style={styles.compilerRow}>
+                  <Text style={[styles.compilerText, { fontFamily: monoRegular }]}>compiling block</Text>
+                  <CompilerGlyphs active={isLoading} />
+                  <Text style={[styles.compilerText, { fontFamily: monoRegular }]}>athlete.mesh</Text>
+                </View>
               </View>
 
-              {/* Form */}
-              <View style={styles.form}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Email</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="you@example.com"
-                    placeholderTextColor="rgba(255,255,255,0.4)"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    editable={!isLoading}
-                  />
-                </View>
+              <View style={[styles.heroSpacer, { minHeight: meshHeight }]} pointerEvents="none" />
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Password</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={password}
-                    onChangeText={setPassword}
-                    placeholder="••••••••"
-                    placeholderTextColor="rgba(255,255,255,0.4)"
-                    secureTextEntry
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    editable={!isLoading}
-                  />
-                </View>
+              <View style={styles.authPanel}>
+                <Text style={[styles.title, compact && styles.titleCompact]}>
+                  {'Compile your\nnext block.'}
+                </Text>
+                <Text style={styles.subtitle}>Sign in once. The runtime handles the rest.</Text>
 
-                <TouchableOpacity
-                  style={styles.forgotButton}
-                  onPress={onNavigateToForgotPassword}
-                  disabled={isLoading}
-                >
-                  <Text style={styles.forgotText}>Forgot password?</Text>
-                </TouchableOpacity>
+                {emailMode ? (
+                  <View style={styles.emailForm}>
+                    <TextInput
+                      accessibilityLabel="Email"
+                      style={[styles.input, { fontFamily: monoRegular }]}
+                      value={email}
+                      onChangeText={setEmail}
+                      placeholder="email"
+                      placeholderTextColor={colors.textMuted}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!isLoading}
+                    />
+                    <TextInput
+                      accessibilityLabel="Password"
+                      style={[styles.input, { fontFamily: monoRegular }]}
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="password"
+                      placeholderTextColor={colors.textMuted}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      editable={!isLoading}
+                      onSubmitEditing={() => void handleEmailLogin()}
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      style={({ pressed }) => [styles.emailSubmit, pressed && styles.pressed]}
+                      onPress={() => void handleEmailLogin()}
+                      disabled={isLoading}
+                    >
+                      <Text style={[styles.emailSubmitText, { fontFamily: monoSemiBold }]}>
+                        {isLoading ? 'authenticating...' : 'sign in →'}
+                      </Text>
+                    </Pressable>
+                    <View style={styles.emailLinks}>
+                      <Pressable onPress={() => setEmailMode(false)} disabled={isLoading}>
+                        <Text style={[styles.textLink, { fontFamily: monoRegular }]}>← oauth</Text>
+                      </Pressable>
+                      <Pressable onPress={onNavigateToForgotPassword} disabled={isLoading}>
+                        <Text style={[styles.textLink, { fontFamily: monoRegular }]}>reset password</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <SocialAuthButtons
+                      disabled={isLoading}
+                      onLoadingChange={setIsLoading}
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      style={styles.passwordEntry}
+                      onPress={() => setEmailMode(true)}
+                      disabled={isLoading}
+                    >
+                      <Text style={[styles.passwordEntryText, { fontFamily: monoRegular }]}>
+                        // existing password account
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
 
-                <TouchableOpacity
-                  style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
-                  onPress={handleLogin}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.loginButtonText}>Sign In</Text>
-                  )}
-                </TouchableOpacity>
-
-                <View style={styles.divider}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>or</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-
-                <TouchableOpacity
-                  style={styles.registerButton}
-                  onPress={onNavigateToRegister}
-                  disabled={isLoading}
-                >
-                  <Text style={styles.registerButtonText}>
-                    Create new account
-                  </Text>
-                </TouchableOpacity>
+                <Text style={[styles.legal, { fontFamily: monoRegular }]}>
+                  // agree to terms & privacy by continuing
+                </Text>
               </View>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-      </LinearGradient>
+      </SafeAreaView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#0A0E27',
+    backgroundColor: '#050606',
   },
-  gradient: {
+  safeArea: {
     flex: 1,
   },
-  keyboardView: {
+  flex: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
-    paddingVertical: 40,
+    paddingVertical: 20,
   },
-  content: {
+  scrollContentCompact: {
+    paddingVertical: 12,
+  },
+  shell: {
+    flex: 1,
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 430,
     alignSelf: 'center',
   },
-  header: {
-    alignItems: 'center',
-    marginBottom: 48,
-  },
-  logo: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.7)',
-  },
-  form: {
+  athleteBackground: {
+    ...StyleSheet.absoluteFillObject,
     width: '100%',
+    height: '100%',
+    opacity: 0.11,
+    transform: [{ scale: 1.035 }],
   },
-  inputGroup: {
-    marginBottom: 20,
+  athleteBackgroundCompact: {
+    opacity: 0.085,
+    transform: [{ scale: 1.01 }],
   },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
+  heroSpacer: {
+    flex: 1,
+    marginTop: 8,
+    marginBottom: 0,
+  },
+  terminal: {
+    gap: 12,
+    paddingHorizontal: 4,
     marginBottom: 8,
   },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+  terminalCompact: {
+    gap: 7,
   },
-  forgotButton: {
-    alignSelf: 'flex-end',
-    marginBottom: 24,
+  runtimeBrand: {
+    color: '#739B52',
+    fontSize: 15,
+    letterSpacing: 0.3,
   },
-  forgotText: {
-    fontSize: 14,
-    color: '#6C63FF',
-    fontWeight: '600',
+  command: {
+    color: colors.text,
+    fontSize: 15,
   },
-  loginButton: {
-    backgroundColor: '#6C63FF',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 24,
+  commandPrompt: {
+    color: '#88B75E',
   },
-  loginButtonDisabled: {
-    opacity: 0.6,
-  },
-  loginButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  divider: {
+  compilerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    flexWrap: 'wrap',
+    gap: 9,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+  compilerText: {
+    color: '#739B52',
+    fontSize: 13,
   },
-  dividerText: {
+  authPanel: {
+    gap: 14,
+  },
+  title: {
+    color: colors.text,
+    width: '100%',
+    fontSize: 24,
+    lineHeight: 28,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: -0.45,
+  },
+  titleCompact: {
+    fontSize: 22,
+    lineHeight: 26,
+  },
+  subtitle: {
+    color: colors.textSecondary,
     fontSize: 14,
-    color: 'rgba(255,255,255,0.5)',
-    marginHorizontal: 16,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 8,
   },
-  registerButton: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    padding: 18,
-    alignItems: 'center',
+  passwordEntry: {
+    alignSelf: 'center',
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  passwordEntryText: {
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  legal: {
+    color: '#737A83',
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  emailForm: {
+    gap: 10,
+  },
+  input: {
+    minHeight: 50,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: colors.borderStrong,
+    borderRadius: 8,
+    backgroundColor: colors.surface,
+    color: colors.text,
+    fontSize: 15,
+    paddingHorizontal: 14,
   },
-  registerButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
+  emailSubmit: {
+    minHeight: 50,
+    borderRadius: 8,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emailSubmitText: {
+    color: colors.accentText,
+    fontSize: 14,
+  },
+  emailLinks: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  textLink: {
+    color: colors.textMuted,
+    fontSize: 12,
+    paddingVertical: 8,
+  },
+  pressed: {
+    opacity: 0.72,
   },
 });

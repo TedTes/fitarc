@@ -1,5 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { AuthUser, getCurrentUser, onAuthStateChange, signOut as authSignOut } from '../services/authService';
+import {
+  AuthUser,
+  getCurrentUser,
+  isAuthUserVerified,
+  onAuthStateChange,
+  signOut as authSignOut,
+} from '../services/authService';
 
 type AuthContextType = {
   user: AuthUser | null;
@@ -71,7 +77,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const value = {
     user,
     isLoading,
-    isAuthenticated: !!user,
+    isAuthenticated: isAuthUserVerified(user),
     signOut,
   };
 
