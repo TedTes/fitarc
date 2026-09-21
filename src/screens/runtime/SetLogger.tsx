@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   discardRuntimeSession, getSwapCandidates, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise,
   restSecondsFor, substituteRuntimeExercise, undoLastRuntimeSet,
@@ -18,8 +17,15 @@ type Props = {
   state: RuntimeState;
   apply: (transform: (current: RuntimeState) => RuntimeState) => ApplyResult;
   notify: Notify;
-  navigationVisible: boolean;
-  onToggleNavigation: () => void;
+  onDockChange: (dock: WorkoutDockState | null) => void;
+};
+
+export type WorkoutDockState = {
+  phase: 'ready' | 'set' | 'rest';
+  seconds: number;
+  primaryDisabled: boolean;
+  onPrimary: () => void;
+  onReset: () => void;
 };
 
 type RestState = {
@@ -30,9 +36,24 @@ type RestState = {
   nextExerciseId: string;
 };
 
-const formatClock = (seconds: number) => {
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+const DockBridge = ({ phase, seconds, primaryDisabled, onPrimary, onReset, onChange }: WorkoutDockState & {
+  onChange: (dock: WorkoutDockState | null) => void;
+}) => {
+  const actions = useRef({ onPrimary, onReset });
+  actions.current = { onPrimary, onReset };
+
+  useEffect(() => {
+    onChange({
+      phase,
+      seconds,
+      primaryDisabled,
+      onPrimary: () => actions.current.onPrimary(),
+      onReset: () => actions.current.onReset(),
+    });
+  }, [onChange, phase, primaryDisabled, seconds]);
+
+  useEffect(() => () => onChange(null), [onChange]);
+  return null;
 };
 
 /** What the engine uses as a replacement's first load. Mirrors substituteRuntimeExercise. */
@@ -60,8 +81,7 @@ const SolverHeader = ({ state, session, now }: { state: RuntimeState; session: S
 };
 
 /** set.log: one prescription, one signal, the runtime's reply. Everything else is behind the menu. */
-export const SetLogger = ({ state, apply, notify, navigationVisible, onToggleNavigation }: Props) => {
-  const insets = useSafeAreaInsets();
+export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const { height: windowHeight } = useWindowDimensions();
   const stackRowHeight = Math.round(Math.max(54, Math.min(76, windowHeight * 0.085)));
   const [reps, setReps] = useState('');
@@ -75,7 +95,6 @@ export const SetLogger = ({ state, apply, notify, navigationVisible, onToggleNav
   const [ordering, setOrdering] = useState(false);
   const stackScroll = useRef<ScrollView>(null);
   const frameScroll = useRef<ScrollView>(null);
-  const navigationChevron = useRef(new Animated.Value(navigationVisible ? 1 : 0)).current;
   const defaultPending = nextPendingSet(state);
   const selectedPending = selectedExerciseId ? pendingSetForExercise(state, selectedExerciseId) : null;
   const pending = selectedPending ?? defaultPending;
@@ -94,15 +113,6 @@ export const SetLogger = ({ state, apply, notify, navigationVisible, onToggleNav
     const timer = setInterval(() => setClockNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    Animated.timing(navigationChevron, {
-      toValue: navigationVisible ? 1 : 0,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [navigationChevron, navigationVisible]);
 
   useEffect(() => {
     if (!rest && !selectedPending && defaultPending) setSelectedExerciseId(defaultPending.entry.exercise.id);
@@ -272,9 +282,34 @@ export const SetLogger = ({ state, apply, notify, navigationVisible, onToggleNav
   const resting = rest?.nextSetId === set.id;
   const secondsLeft = resting ? Math.max(0, Math.ceil((rest.until - clockNow) / 1000)) : 0;
   const setSeconds = setStartedAt === null ? 0 : Math.max(0, Math.floor((clockNow - setStartedAt) / 1000));
+  const dockPhase: WorkoutDockState['phase'] = resting ? 'rest' : setStartedAt === null ? 'ready' : 'set';
+  const resetDockTimer = () => {
+    if (resting) {
+      setRest((value) => value ? { ...value, until: Date.now() + value.durationSeconds * 1000 } : null);
+    } else {
+      setSetStartedAt(null);
+    }
+  };
+  const runDockPrimary = () => {
+    if (resting) {
+      setRest((value) => value ? { ...value, until: Date.now() } : null);
+    } else if (setStartedAt === null) {
+      setSetStartedAt(Date.now());
+    } else {
+      submit();
+    }
+  };
 
   return (
     <View style={styles.flex}>
+      <DockBridge
+        phase={dockPhase}
+        seconds={resting ? secondsLeft : setSeconds}
+        primaryDisabled={dockPhase === 'set' && (rir === null || !repsValid || submitting)}
+        onPrimary={runDockPrimary}
+        onReset={resetDockTimer}
+        onChange={onDockChange}
+      />
       <View style={styles.page}>
         <SolverHeader state={state} session={session} now={clockNow} />
 
@@ -444,81 +479,6 @@ export const SetLogger = ({ state, apply, notify, navigationVisible, onToggleNav
         </View>
       </View>
 
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={navigationVisible ? 'Hide navigation tabs' : 'Show navigation tabs'}
-          accessibilityState={{ expanded: navigationVisible }}
-          onPress={onToggleNavigation}
-          hitSlop={10}
-          style={({ pressed }) => [styles.navHandle, pressed && styles.pressed]}
-        >
-          <Animated.View style={{ transform: [{ rotate: navigationChevron.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] }) }] }}>
-            <Ionicons name="chevron-up" size={18} color={colors.textMuted} />
-          </Animated.View>
-        </Pressable>
-        {resting && rest ? (
-          <View style={styles.timerFooter} accessible accessibilityLabel={`Resting, ${secondsLeft} seconds left`}>
-            <View style={styles.timerReadout}>
-              <Txt variant="label" tone="accent">REST</Txt>
-              <Txt style={styles.footerTimer}>{formatClock(secondsLeft)}</Txt>
-            </View>
-            <Pressable
-              accessibilityRole="button" accessibilityLabel="Restart rest timer"
-              onPress={() => setRest((value) => value ? { ...value, until: Date.now() + value.durationSeconds * 1000 } : null)}
-              style={({ pressed }) => [styles.timerIconButton, pressed && styles.pressed]}
-            ><Ionicons name="refresh" size={24} color={colors.textSecondary} /></Pressable>
-            <Pressable
-              accessibilityRole="button" accessibilityLabel="Skip rest"
-              onPress={() => setRest((value) => value ? { ...value, until: Date.now() } : null)}
-              style={({ pressed }) => [styles.timerIconPrimary, pressed && styles.pressed]}
-            >
-              <Ionicons name="play-skip-forward" size={24} color={colors.accent} />
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.timerFooter}>
-            <View style={styles.timerReadout} accessible accessibilityLabel={`Set timer, ${setSeconds} seconds`}>
-              <Txt variant="label" tone={setStartedAt === null ? 'muted' : 'accent'}>{setStartedAt === null ? 'READY' : 'SET'}</Txt>
-              <Txt style={styles.footerTimer}>{formatClock(setSeconds)}</Txt>
-            </View>
-            {setStartedAt === null ? (
-              <>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="Start set timer"
-                  onPress={() => setSetStartedAt(Date.now())}
-                  style={({ pressed }) => [styles.timerIconPrimary, pressed && styles.pressed]}
-                >
-                  <Ionicons name="play" size={28} color={colors.accent} />
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="Rest becomes available after starting the set"
-                  accessibilityState={{ disabled: true }} disabled
-                  style={[styles.timerIconButton, styles.timerPhaseDisabled]}
-                ><Ionicons name="pause" size={24} color={colors.textMuted} /></Pressable>
-              </>
-            ) : (
-              <>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="Reset set timer"
-                  onPress={() => setSetStartedAt(null)}
-                  style={({ pressed }) => [styles.timerIconButton, pressed && styles.pressed]}
-                ><Ionicons name="refresh" size={24} color={colors.textSecondary} /></Pressable>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="Finish set and start rest"
-                  accessibilityState={{ disabled: rir === null || !repsValid, busy: submitting }}
-                  disabled={rir === null || !repsValid || submitting}
-                  onPress={submit}
-                  style={({ pressed }) => [styles.timerIconPrimary, (rir === null || !repsValid || submitting) && styles.timerPhaseDisabled, pressed && styles.pressed]}
-                >
-                  <Ionicons name="pause" size={26} color={rir === null || !repsValid ? colors.textMuted : colors.accent} />
-                </Pressable>
-              </>
-            )}
-          </View>
-        )}
-      </View>
-
       <Sheet visible={sheet === 'menu'} onClose={() => setSheet(null)} title={exercise.name}>
         <Txt variant="label" tone="muted">this lift</Txt>
         <OptionRow icon="swap-horizontal" title="Swap lift" onPress={() => setSheet('swap')} />
@@ -603,14 +563,6 @@ const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 0, padding: space.lg, paddingBottom: space.md, gap: space.lg },
   stepDisabled: { opacity: 0.4 },
   pressed: { opacity: 0.7 },
-  footer: { borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.ground, padding: space.lg },
-  navHandle: { alignSelf: 'center', width: 56, height: 24, alignItems: 'center', justifyContent: 'center', marginTop: -space.md, marginBottom: space.xs },
-  timerFooter: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  timerReadout: { flex: 1, minWidth: 0 },
-  timerIconButton: { flex: 1, height: 52, alignItems: 'center', justifyContent: 'center' },
-  timerIconPrimary: { flex: 1, height: 52, alignItems: 'center', justifyContent: 'center' },
-  timerPhaseDisabled: { opacity: 0.35 },
-  footerTimer: { color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: '800', fontVariant: ['tabular-nums'] },
   option: { flexDirection: 'row', gap: space.md, alignItems: 'center', padding: space.lg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, minHeight: TOUCH },
   optionDanger: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
   optionDisabled: { opacity: 0.5 },

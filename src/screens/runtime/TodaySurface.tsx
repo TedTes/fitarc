@@ -7,6 +7,7 @@ import { Txt } from './ui';
 import { describeRuntimeError } from './copy';
 import { nextPendingSet, todayISO } from './selectors';
 import { SetLogger } from './SetLogger';
+import type { WorkoutDockState } from './SetLogger';
 import { SessionReview } from './SessionReview';
 import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
@@ -16,8 +17,7 @@ type Props = {
   apply: (transform: (current: RuntimeState) => RuntimeState) => ApplyResult;
   notify: Notify;
   active: boolean;
-  workoutTabsVisible: boolean;
-  onToggleWorkoutTabs: () => void;
+  onDockChange: (dock: WorkoutDockState | null) => void;
   onOpenSource: () => void;
   onOpenWeek: () => void;
 };
@@ -26,7 +26,7 @@ type Props = {
  * solver() has no pre-session preview. Entering it compiles today's prescription
  * from the saved source and opens the active STACK + FRAME runtime immediately.
  */
-export const TodaySurface = ({ state, apply, notify, active, workoutTabsVisible, onToggleWorkoutTabs, onOpenSource, onOpenWeek }: Props) => {
+export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpenSource, onOpenWeek }: Props) => {
   const attempted = useRef<string | null>(null);
   const session = state.activeSession;
   const date = todayISO();
@@ -49,14 +49,14 @@ export const TodaySurface = ({ state, apply, notify, active, workoutTabsVisible,
       const problem = describeRuntimeError(outcome.error);
       notify({
         tone: 'error', title: problem.title, message: problem.message, sticky: true,
-        action: { label: 'source', run: onOpenSource },
+        action: { label: 'account', run: onOpenSource },
       });
     }
   }, [active, apply, date, notify, onOpenSource, session, startKey, state.block, state.source]);
 
   if (session) {
     return nextPendingSet(state)
-      ? <SetLogger state={state} apply={apply} notify={notify} navigationVisible={workoutTabsVisible} onToggleNavigation={onToggleWorkoutTabs} />
+      ? <SetLogger state={state} apply={apply} notify={notify} onDockChange={onDockChange} />
       : <SessionReview state={state} apply={apply} notify={notify} onOpenWeek={onOpenWeek} />;
   }
 

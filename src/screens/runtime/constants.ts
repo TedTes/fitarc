@@ -19,7 +19,7 @@ export const DAY_OPTIONS = [3, 4, 5] as const;
 export const MINUTE_OPTIONS = [30, 45, 60, 75] as const;
 
 /** The four persistent destinations. Keys are the runtime names. */
-export type Surface = 'solver' | 'block' | 'week' | 'source';
+export type Surface = 'solver' | 'block' | 'week' | 'account';
 
 /** Something the shell shows once, above the current surface, after an action. */
 export type Notice = {

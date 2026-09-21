@@ -17,12 +17,10 @@ import { NavigationContainer, useNavigationContainerRef } from '@react-navigatio
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as ExpoLinking from 'expo-linking';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAppState } from './src/hooks';
 import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import {
-  WelcomeScreen,
   QuickPlanSetupScreen,
   CurrentPhysiqueSelectionScreen,
   TargetPhysiqueSelectionScreen,
@@ -31,6 +29,7 @@ import {
   SettingsScreen,
   ProfileScreen,
   ProfileSetupScreen,
+  ProfileSetupData,
   AuthNavigator,
   TrainingRuntimeScreen,
 } from './src/screens';
@@ -50,8 +49,8 @@ import {
   completePhase as completeRemotePhase 
 } from './src/services/phaseService';
 import { generatePlanDaysForPlan, linkPlanToMatchedTemplates } from './src/services/planRuntimeService';
-import { supabase } from './src/lib/supabaseClient';
 import { deleteAccount as deleteAccountService } from './src/services/accountService';
+import { completeAuthRedirect } from './src/services/authService';
 
 type RootTabParamList = {
   Today:    undefined;
@@ -362,7 +361,6 @@ function AppContent() {
   const [isProfileVisible, setProfileVisible] = useState(false);
   const [isCreatingPlan, setIsCreatingPlan] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootTabParamList | null>(null);
-  const [showWelcome, setShowWelcome] = useState(true);
   const { getFabAction } = useFabAction();
   const tabFabPop = useRef(new Animated.Value(0)).current;
   const showPlanTabs = Boolean(state?.user);
@@ -456,20 +454,8 @@ function AppContent() {
   useEffect(() => {
     const handleDeepLink = async (url: string | null) => {
       if (!url) return;
-      const parsed = ExpoLinking.parse(url);
-      const code = parsed.queryParams?.code as string | undefined;
-      const accessToken = parsed.queryParams?.access_token as string | undefined;
-      const refreshToken = parsed.queryParams?.refresh_token as string | undefined;
-
       try {
-        if (code) {
-          await supabase.auth.exchangeCodeForSession(code);
-        } else if (accessToken && refreshToken) {
-          await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          });
-        }
+        await completeAuthRedirect(url);
       } catch (error) {
         Alert.alert(
           'Authentication failed',
@@ -650,16 +636,7 @@ function AppContent() {
     await handleStartNewArc(targetLevelId, goalType);
   };
 
-  const handleProfileSetupComplete = async (profileData: {
-    name: string;
-    sex: 'male' | 'female' | 'other';
-    age: number;
-    heightCm: number;
-    weightKg: number;
-    experienceLevel: 'beginner' | 'intermediate' | 'advanced';
-    trainingSplit: 'full_body' | 'upper_lower' | 'push_pull_legs' | 'bro_split' | 'custom';
-    eatingMode: 'mild_deficit' | 'recomp' | 'lean_bulk' | 'maintenance';
-  }) => {
+  const handleProfileSetupComplete = async (profileData: ProfileSetupData) => {
     if (!authUser) {
       Alert.alert('Error', 'Unable to complete setup. Please sign in again.');
       return;
@@ -675,6 +652,13 @@ function AppContent() {
       experienceLevel: profileData.experienceLevel,
       trainingSplit: profileData.trainingSplit,
       eatingMode: profileData.eatingMode,
+      planPreferences: {
+        primaryGoal: profileData.primaryGoal,
+        daysPerWeek: profileData.daysPerWeek,
+        sessionMinutes: profileData.sessionMinutes,
+        equipmentLevel: profileData.equipmentLevel,
+        injuries: profileData.injuries,
+      },
       currentPhysiqueLevel: 1,
       createdAt: new Date().toISOString(),
     };
@@ -691,11 +675,13 @@ function AppContent() {
 
     updateUser(newUser);
     setTempProfileData(profileData);
-    setOnboardingStep('quick_plan');
+    setTempPrimaryGoal(profileData.primaryGoal);
+    setTempPlanPreferences(newUser.planPreferences ?? null);
+    setOnboardingStep('current_physique');
   };
 
   useEffect(() => {
-    if (!authUser) return;
+    if (!isAuthenticated || !authUser) return;
     if (!state) return;
     if (state.currentPhase) {
       setBootstrapComplete(true);
@@ -754,6 +740,7 @@ function AppContent() {
     };
   }, [
     authUser?.id,
+    isAuthenticated,
     state?.currentPhase,
     updateUser,
     hydrateFromRemote,
@@ -897,14 +884,6 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
-    if (showWelcome) {
-      return (
-        <View style={styles.container}>
-          <WelcomeScreen onGetStarted={() => setShowWelcome(false)} />
-          <StatusBar style="light" />
-        </View>
-      );
-    }
     return (
       <View style={styles.container}>
         <AuthNavigator />
@@ -916,7 +895,13 @@ function AppContent() {
   if (state?.user) {
     return (
       <View style={styles.appShell}>
-        <TrainingRuntimeScreen user={state.user} legacySessions={state.workoutSessions} onLogout={handleLogout} />
+        <TrainingRuntimeScreen
+          user={state.user}
+          legacySessions={state.workoutSessions}
+          onSaveProfile={handleProfileSave}
+          onLogout={handleLogout}
+          onDeleteAccount={handleDeleteAccount}
+        />
         <StatusBar style="light" />
       </View>
     );
@@ -942,7 +927,15 @@ function AppContent() {
     if (onboardingStep === 'profile' || !state?.user) {
       return (
         <View style={styles.container}>
-          <ProfileSetupScreen onComplete={handleProfileSetupComplete} />
+          <ProfileSetupScreen
+            initialName={String(
+              authUser?.user_metadata?.full_name ??
+              authUser?.user_metadata?.name ??
+              authUser?.user_metadata?.given_name ??
+              ''
+            ).trim()}
+            onComplete={handleProfileSetupComplete}
+          />
           <StatusBar style="light" />
         </View>
       );

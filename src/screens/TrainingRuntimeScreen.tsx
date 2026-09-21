@@ -3,33 +3,43 @@ import { ActivityIndicator, Animated, Easing, Keyboard, KeyboardAvoidingView, Pl
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User, WorkoutSessionEntry } from '../types/domain';
-import { compileNextRuntimeBlock, compileTrainingBlock, deriveLegacySeeds, getRuntimeWeekView } from '../runtime';
+import { compileNextRuntimeBlock, compileTrainingBlock, createRuntimeId, deriveLegacySeeds, getRuntimeWeekView } from '../runtime';
 import type { TrainingSource } from '../runtime';
-import { colors, space, TOUCH } from './runtime/theme';
+import { colors, space } from './runtime/theme';
 import { Banner, Button, ChromeContext, Txt } from './runtime/ui';
 import { describeRuntimeError, goalLabel } from './runtime/copy';
-import { Notify, Surface } from './runtime/constants';
+import { DUMBBELLS, FULL_GYM, Notify, Surface } from './runtime/constants';
 import { EventLine, RuntimeEvent } from './runtime/EventLog';
 import { sessionProgress } from './runtime/selectors';
 import { useRuntimeController } from './runtime/useRuntimeController';
 import { SourceIntake } from './runtime/SourceIntake';
-import { SourceSurface } from './runtime/SourceSurface';
+import { AccountSurface } from './runtime/AccountSurface';
 import { BlockSurface } from './runtime/BlockSurface';
 import { TodaySurface } from './runtime/TodaySurface';
+import type { WorkoutDockState } from './runtime/SetLogger';
 import { WeekSurface } from './runtime/WeekSurface';
 import { useMonoFonts } from './runtime/fonts';
 
-type Props = { user: User; legacySessions: WorkoutSessionEntry[]; onLogout: () => void | Promise<void> };
+type Props = {
+  user: User;
+  legacySessions: WorkoutSessionEntry[];
+  onSaveProfile: (profile: User) => void | Promise<void>;
+  onLogout: () => void | Promise<void>;
+  onDeleteAccount: () => void | Promise<void>;
+};
 
 const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typeof Ionicons.glyphMap; iconOn: keyof typeof Ionicons.glyphMap; hint: string }> = [
   { key: 'solver', label: 'solver()', spoken: 'solver, today\'s workout', icon: 'barbell-outline', iconOn: 'barbell', hint: "Today's workout, fitted to current conditions" },
   { key: 'block', label: 'block', spoken: 'block, your compiled plan', icon: 'layers-outline', iconOn: 'layers', hint: 'The compiled six-week plan' },
   { key: 'week', label: 'week', spoken: 'week, status', icon: 'stats-chart-outline', iconOn: 'stats-chart', hint: "This week's dose and fatigue" },
-  { key: 'source', label: 'source', spoken: 'source, your constraints', icon: 'options-outline', iconOn: 'options', hint: 'Your goal and constraints' },
+  { key: 'account', label: 'account', spoken: 'account settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Profile, training source, and account controls' },
 ];
-const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, source: 3 };
+const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, account: 3 };
+const TAB_SLOT_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 3, account: 4 };
+const TAB_SLOTS = [TABS[0], TABS[1], null, TABS[2], TABS[3]] as const;
+const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props) => {
+export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const insets = useSafeAreaInsets();
   const fontsReady = useMonoFonts();
   const { state, loading: stateLoading, loadError, reload, sync, apply, retrySync } = useRuntimeController(user.id);
@@ -41,19 +51,44 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
   const [dismissedId, setDismissedId] = useState<number | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [workoutTabsVisible, setWorkoutTabsVisible] = useState(false);
+  const [workoutDock, setWorkoutDock] = useState<WorkoutDockState | null>(null);
+  const [autoCompileError, setAutoCompileError] = useState<string | null>(null);
   const [tabBarWidth, setTabBarWidth] = useState(0);
   const tabReveal = useRef(new Animated.Value(1)).current;
+  const dockTransition = useRef(new Animated.Value(0)).current;
   const tabPosition = useRef(new Animated.Value(0)).current;
   const previousSurface = useRef<Surface>('solver');
   const surfaceOpacity = useRef<Record<Surface, Animated.Value>>({
-    solver: new Animated.Value(1), block: new Animated.Value(0), week: new Animated.Value(0), source: new Animated.Value(0),
+    solver: new Animated.Value(1), block: new Animated.Value(0), week: new Animated.Value(0), account: new Animated.Value(0),
   }).current;
   const surfaceOffset = useRef<Record<Surface, Animated.Value>>({
-    solver: new Animated.Value(0), block: new Animated.Value(0), week: new Animated.Value(0), source: new Animated.Value(0),
+    solver: new Animated.Value(0), block: new Animated.Value(0), week: new Animated.Value(0), account: new Animated.Value(0),
   }).current;
   const eventId = useRef(0);
   const restoredNotice = useRef(false);
+  const autoCompileAttempted = useRef(false);
   const suggestedSeeds = useMemo(() => deriveLegacySeeds(legacySessions), [legacySessions]);
+  const onboardingSource = useMemo<TrainingSource>(() => {
+    const preferences = user.planPreferences;
+    const preferredDays = preferences?.daysPerWeek;
+    const fallbackDays = user.trainingSplit === 'upper_lower' ? 4 : user.trainingSplit === 'push_pull_legs' || user.trainingSplit === 'bro_split' ? 5 : 3;
+    const days: 3 | 4 | 5 = preferredDays === 3 ? 3 : preferredDays === 4 ? 4 : preferredDays ? 5 : fallbackDays;
+    const equipment = preferences?.equipmentLevel === 'dumbbells' ? DUMBBELLS : FULL_GYM;
+    return {
+      id: createRuntimeId(),
+      userId: user.id,
+      version: 1,
+      goal: preferences?.primaryGoal === 'get_stronger' ? 'strength' : 'hypertrophy',
+      experience: user.experienceLevel === 'advanced' ? 'advanced' : 'intermediate',
+      daysPerWeek: days,
+      sessionMinutes: preferences?.sessionMinutes ?? 60,
+      equipment,
+      excludedExerciseIds: [],
+      limitations: preferences?.injuries ?? [],
+      seedWorkingSets: suggestedSeeds,
+      createdAt: new Date().toISOString(),
+    };
+  }, [suggestedSeeds, user.experienceLevel, user.id, user.planPreferences]);
 
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardOpen(true));
@@ -76,24 +111,38 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
 
   const progress = sessionProgress(state);
   const inSession = Boolean(progress);
-  const workoutActive = surface === 'solver' && Boolean(progress && progress.pending > 0);
-  const tabsShown = !keyboardOpen && (!workoutActive || workoutTabsVisible);
+  const timerRunning = workoutDock?.phase === 'set' || workoutDock?.phase === 'rest';
+  const showDock = !keyboardOpen && surface === 'solver' && Boolean(progress?.pending) && timerRunning && !workoutTabsVisible;
+  const bottomVisible = !keyboardOpen;
+
+  useEffect(() => {
+    if (!timerRunning) setWorkoutTabsVisible(false);
+  }, [timerRunning]);
 
   useEffect(() => {
     Animated.timing(tabReveal, {
-      toValue: tabsShown ? 1 : 0,
+      toValue: bottomVisible ? 1 : 0,
       duration: 220,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     }).start();
-  }, [tabReveal, tabsShown]);
+  }, [bottomVisible, tabReveal]);
+
+  useEffect(() => {
+    Animated.timing(dockTransition, {
+      toValue: showDock ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [dockTransition, showDock]);
 
   useEffect(() => {
     const previous = previousSurface.current;
     const direction = SURFACE_INDEX[surface] >= SURFACE_INDEX[previous] ? 1 : -1;
 
     Animated.timing(tabPosition, {
-      toValue: SURFACE_INDEX[surface], duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      toValue: TAB_SLOT_INDEX[surface], duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
     }).start();
 
     if (previous === surface) return;
@@ -136,7 +185,7 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
     if (!outcome.ok) {
       const problem = describeRuntimeError(outcome.error);
       notify({ tone: 'error', title: first ? `compile failed · ${problem.message}` : `recompile failed · ${problem.message}`, sticky: true });
-      return;
+      return false;
     }
     setEditingSource(false);
     setSurface('block');
@@ -146,7 +195,18 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
       message: first ? 'Your first six weeks are ready.' : outcome.state.lastBlockDiff.join(' · '),
       action: { label: 'solver()', run: () => setSurface('solver') },
     });
+    return true;
   }, [apply, notify, state.source]);
+
+  useEffect(() => {
+    if (loading || loadError || state.source || state.block || autoCompileAttempted.current) return;
+    autoCompileAttempted.current = true;
+    if (compile(onboardingSource)) {
+      setSurface('solver');
+    } else {
+      setAutoCompileError('The saved constraints do not leave enough compatible exercises to build every session.');
+    }
+  }, [compile, loadError, loading, onboardingSource, state.block, state.source]);
 
   const nextBlock = useCallback(() => {
     const outcome = apply(compileNextRuntimeBlock);
@@ -201,13 +261,19 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
   // ── First launch: no runtime yet ──
   if (!state.source || !state.block) {
     return (
-      <KeyboardAvoidingView style={[styles.root, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        {line}
-        <SourceIntake mode="first" user={user} initial={null} suggestedSeeds={suggestedSeeds} onSubmit={compile} />
-        <Pressable accessibilityRole="button" accessibilityLabel="Sign out" onPress={() => void onLogout()} style={[styles.signOut, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
-          <Txt variant="caption" tone="muted">Not you? Sign out</Txt>
-        </Pressable>
-      </KeyboardAvoidingView>
+      <View style={[styles.center, { paddingTop: insets.top }]} accessibilityLabel="Compiling your training block" accessible>
+        {autoCompileError ? (
+          <>
+            <Banner tone="error" title="Could not compile your block" message={autoCompileError} />
+            <Button label="Sign out" variant="secondary" onPress={() => void onLogout()} />
+          </>
+        ) : (
+          <>
+            <ActivityIndicator color={colors.accent} size="large" />
+            <Txt variant="code" tone="secondary" style={styles.centerText}>compiling your block…</Txt>
+          </>
+        )}
+      </View>
     );
   }
 
@@ -229,9 +295,8 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
           {line}
           <TodaySurface
             state={state} apply={apply} notify={notify} active={surface === 'solver'}
-            workoutTabsVisible={workoutTabsVisible}
-            onToggleWorkoutTabs={() => setWorkoutTabsVisible((visible) => !visible)}
-            onOpenSource={() => go('source')} onOpenWeek={() => go('week')}
+            onDockChange={setWorkoutDock}
+            onOpenSource={() => go('account')} onOpenWeek={() => go('week')}
           />
         </Animated.View>
         <Animated.View
@@ -251,51 +316,97 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
           {status ? <WeekSurface state={state} block={block} status={status} /> : null}
         </Animated.View>
         <Animated.View
-          pointerEvents={surface === 'source' ? 'auto' : 'none'}
-          accessibilityElementsHidden={surface !== 'source'}
-          importantForAccessibility={surface === 'source' ? 'auto' : 'no-hide-descendants'}
-          style={[styles.surfaceLayer, surface === 'source' && styles.surfaceActive, { opacity: surfaceOpacity.source, transform: [{ translateX: surfaceOffset.source }] }]}
+          pointerEvents={surface === 'account' ? 'auto' : 'none'}
+          accessibilityElementsHidden={surface !== 'account'}
+          importantForAccessibility={surface === 'account' ? 'auto' : 'no-hide-descendants'}
+          style={[styles.surfaceLayer, surface === 'account' && styles.surfaceActive, { opacity: surfaceOpacity.account, transform: [{ translateX: surfaceOffset.account }] }]}
         >
           {editingSource ? (
-            <SourceIntake mode="edit" user={user} initial={state.source} blockVersion={state.block.version} suggestedSeeds={suggestedSeeds} sessionActive={inSession} onSubmit={compile} onCancel={() => setEditingSource(false)} />
+            <SourceIntake user={user} initial={state.source} blockVersion={state.block.version} sessionActive={inSession} onSubmit={compile} onCancel={() => setEditingSource(false)} />
           ) : (
-            <SourceSurface state={state} sync={sync} onEdit={() => setEditingSource(true)} onLogout={onLogout} />
+            <AccountSurface
+              user={user} state={state} sync={sync}
+              onEditSource={() => setEditingSource(true)} onSaveProfile={onSaveProfile}
+              onLogout={onLogout} onDeleteAccount={onDeleteAccount}
+            />
           )}
         </Animated.View>
       </View>
 
       <Animated.View
-        accessibilityRole="tablist"
-        pointerEvents={tabsShown ? 'auto' : 'none'}
-        onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
+        pointerEvents={bottomVisible ? 'auto' : 'none'}
         style={[
-          styles.tabs,
+          styles.bottomStage,
           {
-            paddingBottom: tabReveal.interpolate({ inputRange: [0, 1], outputRange: [0, Math.max(insets.bottom, space.sm)] }),
             height: tabReveal.interpolate({ inputRange: [0, 1], outputRange: [0, 60 + Math.max(insets.bottom, space.sm)] }),
             opacity: tabReveal,
+            overflow: bottomVisible ? 'visible' : 'hidden',
             transform: [{ translateY: tabReveal.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
           },
         ]}
       >
+        <Animated.View
+          accessibilityRole="tablist"
+          pointerEvents={showDock ? 'none' : 'auto'}
+          onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
+          style={[
+            styles.bottomLayer,
+            styles.tabsLayer,
+            { paddingBottom: Math.max(insets.bottom, space.sm) },
+            {
+              opacity: dockTransition.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+              transform: [{ translateY: dockTransition.interpolate({ inputRange: [0, 1], outputRange: [0, 10] }) }],
+            },
+          ]}
+        >
           {tabBarWidth > 0 ? (
             <Animated.View
               pointerEvents="none"
               style={[
                 styles.tabIndicator,
                 {
-                  width: tabBarWidth / TABS.length,
+                  width: tabBarWidth / TAB_SLOTS.length,
                   transform: [{
                     translateX: tabPosition.interpolate({
-                      inputRange: [0, TABS.length - 1],
-                      outputRange: [0, (tabBarWidth / TABS.length) * (TABS.length - 1)],
+                      inputRange: [0, TAB_SLOTS.length - 1],
+                      outputRange: [0, (tabBarWidth / TAB_SLOTS.length) * (TAB_SLOTS.length - 1)],
                     }),
                   }],
                 },
               ]}
             />
           ) : null}
-          {TABS.map((tab) => {
+          {TAB_SLOTS.map((tab) => {
+            if (!tab) {
+              return (
+                <View key="workout-control" style={styles.controlSlot}>
+                  {inSession && workoutDock?.phase === 'ready' ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Start set timer"
+                      accessibilityHint={surface === 'solver' ? 'Starts timing the current set' : 'Opens the workout and starts timing the current set'}
+                      onPress={() => {
+                        setWorkoutTabsVisible(false);
+                        if (surface !== 'solver') setSurface('solver');
+                        workoutDock.onPrimary();
+                      }}
+                      style={({ pressed }) => [styles.startFab, pressed && styles.startFabPressed]}
+                    >
+                      <Ionicons name="play" size={23} color={colors.ground} />
+                    </Pressable>
+                  ) : surface === 'solver' && timerRunning && workoutTabsVisible ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Return to workout controls"
+                      onPress={() => setWorkoutTabsVisible(false)}
+                      style={({ pressed }) => [styles.returnDockButton, pressed && styles.pressed]}
+                    >
+                      <Ionicons name="chevron-up" size={21} color={colors.textSecondary} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            }
             const selected = surface === tab.key;
             return (
               <Pressable
@@ -315,6 +426,55 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onLogout }: Props)
               </Pressable>
             );
           })}
+        </Animated.View>
+
+        <Animated.View
+          pointerEvents={showDock ? 'auto' : 'none'}
+          style={[
+            styles.bottomLayer,
+            styles.dockLayer,
+            { paddingBottom: Math.max(insets.bottom, space.sm) },
+            {
+              opacity: dockTransition,
+              transform: [{ translateY: dockTransition.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
+            },
+          ]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Show navigation tabs"
+            onPress={() => setWorkoutTabsVisible(true)}
+            style={({ pressed }) => [styles.dockHandle, pressed && styles.pressed]}
+          >
+            <Ionicons name="chevron-up" size={20} color={colors.textMuted} />
+          </Pressable>
+          <View style={styles.dockReadout} accessible accessibilityLabel={`${workoutDock?.phase === 'rest' ? 'Rest' : 'Set'} timer ${formatClock(workoutDock?.seconds ?? 0)}`}>
+            <Txt variant="label" tone="accent" style={styles.dockLabel}>{workoutDock?.phase === 'rest' ? 'REST' : 'SET'}</Txt>
+            <Txt style={styles.dockTime}>{formatClock(workoutDock?.seconds ?? 0)}</Txt>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={workoutDock?.phase === 'rest' ? 'Restart rest timer' : 'Reset set timer'}
+            onPress={workoutDock?.onReset}
+            style={({ pressed }) => [styles.dockAction, pressed && styles.pressed]}
+          >
+            <Ionicons name="refresh" size={27} color={colors.textSecondary} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={workoutDock?.phase === 'rest' ? 'Skip rest' : 'Finish set and start rest'}
+            accessibilityState={{ disabled: Boolean(workoutDock?.primaryDisabled) }}
+            disabled={workoutDock?.primaryDisabled}
+            onPress={workoutDock?.onPrimary}
+            style={({ pressed }) => [styles.dockAction, workoutDock?.primaryDisabled && styles.dockActionDisabled, pressed && styles.pressed]}
+          >
+            <Ionicons
+              name={workoutDock?.phase === 'rest' ? 'play-skip-forward' : 'checkmark'}
+              size={30}
+              color={colors.accent}
+            />
+          </Pressable>
+        </Animated.View>
       </Animated.View>
     </KeyboardAvoidingView>
     </ChromeContext.Provider>
@@ -329,10 +489,34 @@ const styles = StyleSheet.create({
   surfaceStage: { flex: 1, position: 'relative', overflow: 'hidden' },
   surfaceLayer: { ...StyleSheet.absoluteFillObject },
   surfaceActive: { zIndex: 1 },
-  tabs: { position: 'relative', flexDirection: 'row', overflow: 'hidden', borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
+  bottomStage: { position: 'relative', borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
+  bottomLayer: { ...StyleSheet.absoluteFillObject },
+  tabsLayer: { flexDirection: 'row', backgroundColor: colors.surface },
+  dockLayer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, paddingHorizontal: space.lg },
   tabIndicator: { position: 'absolute', zIndex: 2, top: 0, left: 0, height: 3, backgroundColor: colors.accent },
   tab: { zIndex: 1, flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: 2, paddingTop: space.sm },
+  controlSlot: { zIndex: 4, flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.7 },
   liveDot: { position: 'absolute', top: -2, right: -6, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.warning, borderWidth: 1, borderColor: colors.surface },
-  signOut: { alignItems: 'center', justifyContent: 'center', minHeight: TOUCH, paddingTop: space.sm },
+  startFab: {
+    width: 52, height: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 26,
+    backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.surface,
+    shadowColor: '#000', shadowOpacity: 0.24, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6,
+    transform: [{ translateY: -9 }],
+  },
+  startFabPressed: { opacity: 0.86, transform: [{ translateY: -9 }, { scale: 0.96 }] },
+  returnDockButton: {
+    width: 42, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 16,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, transform: [{ translateY: -5 }],
+  },
+  dockHandle: {
+    position: 'absolute', zIndex: 2, top: -16, left: '50%', width: 44, height: 28, marginLeft: -22,
+    alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  dockReadout: { flex: 1, alignSelf: 'stretch', justifyContent: 'center' },
+  dockLabel: { fontSize: 11, lineHeight: 14 },
+  dockTime: { color: colors.text, fontSize: 27, lineHeight: 31, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  dockAction: { width: 72, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  dockActionDisabled: { opacity: 0.3 },
 });
