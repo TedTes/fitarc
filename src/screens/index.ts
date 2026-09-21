@@ -1,4 +1,4 @@
-export { ProfileSetupScreen } from './ProfileSetupScreen';
+export { ProfileSetupScreen, type ProfileSetupData } from './ProfileSetupScreen';
 export { WelcomeScreen } from './WelcomeScreen';
 export { QuickPlanSetupScreen } from './QuickPlanSetupScreen';
 export { CurrentPhysiqueSelectionScreen } from './CurrentPhysiqueSelectionScreen';

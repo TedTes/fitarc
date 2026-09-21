@@ -19,6 +19,7 @@ export type EquipmentLevel = 'bodyweight' | 'dumbbells' | 'full_gym';
 export type PlanPreferences = {
   primaryGoal?: PrimaryGoal;
   daysPerWeek?: 3 | 4 | 5 | 6;
+  sessionMinutes?: 30 | 45 | 60 | 75;
   equipmentLevel?: EquipmentLevel;
   injuries?: string[];
 };
