@@ -37,6 +37,8 @@ yarn-error.*
 # local tool state
 .claude/
 supabase/.temp/
+__pycache__/
+*.pyc
 
 # typescript
 *.tsbuildinfo
