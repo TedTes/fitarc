@@ -870,7 +870,8 @@ function AppContent() {
   if (isAuthLoading || isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6C63FF" />
+        <ActivityIndicator size="large" color="#F48D4D" />
+        <StatusBar style="light" />
       </View>
     );
   }
@@ -878,7 +879,8 @@ function AppContent() {
   if (isAuthenticated && !bootstrapComplete) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6C63FF" />
+        <ActivityIndicator size="large" color="#F48D4D" />
+        <StatusBar style="light" />
       </View>
     );
   }
@@ -910,7 +912,7 @@ function AppContent() {
   if (isCreatingPlan) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6C63FF" />
+        <ActivityIndicator size="large" color="#F48D4D" />
         <Text style={styles.loadingText}>Matching your program…</Text>
         <StatusBar style="light" />
       </View>
@@ -1179,13 +1181,13 @@ export default function App() {
 const styles = StyleSheet.create({
   appShell: {
     flex: 1,
-    backgroundColor: '#0A0E27',
+    backgroundColor: '#090B0F',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0A0E27',
+    backgroundColor: '#090B0F',
   },
   loadingText: {
     marginTop: 16,
@@ -1195,7 +1197,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#0A0E27',
+    backgroundColor: '#090B0F',
   },
   profileSheet: {
     position: 'absolute',
