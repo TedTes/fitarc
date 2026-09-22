@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { computeWeeklyStatus } from '../../runtime';
-import type { RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
+import { computeWeeklyStatus, RUNTIME_EXERCISES } from '../../runtime';
+import type { Muscle, RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
 import { Card, Divider, Meter, ScreenBrand, Txt } from './ui';
 import { formatSets, goalLabel, muscleLabel, PHASE_COPY } from './copy';
 import { phaseOfWeek } from './selectors';
+import { MuscleMap, type MuscleMapTone } from './MuscleMap';
+import { liftsForPart, partLabel } from './muscleParts';
 
 type Props = {
   state: RuntimeState;
@@ -27,6 +29,10 @@ const rowStatus = (item: WeeklyMuscleStatus, value: number) => {
 /** status/week: a selectable block-week ledger of committed evidence and projected dose. */
 export const WeekSurface = ({ state, block, status }: Props) => {
   const [selectedWeek, setSelectedWeek] = useState(block.currentWeek);
+  const [muscleView, setMuscleView] = useState<'front' | 'back'>('front');
+  const [selectedMuscle, setSelectedMuscle] = useState<Muscle | null>(null);
+  // One muscle inside the selected group (for example the lats within back). null means the whole group.
+  const [selectedPart, setSelectedPart] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedWeek(block.currentWeek);
@@ -48,6 +54,25 @@ export const WeekSurface = ({ state, block, status }: Props) => {
   const highFatigue = selectedStatus.fatiguePercent >= DELOAD_CHECK;
   const sessionTone = closed ? colors.success : displayState === 'live' ? colors.accent : colors.textMuted;
   const sessionIcon = closed ? 'checkmark-circle' : displayState === 'live' ? 'radio-button-on' : 'time-outline';
+  const muscleTones = useMemo(() => muscles.reduce<Partial<Record<Muscle, MuscleMapTone>>>((result, item) => {
+    const value = closed ? item.completedSets : item.projectedSets ?? item.completedSets;
+    result[item.muscle] = rowStatus(item, value).tone;
+    return result;
+  }, {}), [closed, muscles]);
+  const plannedExerciseIds = useMemo(
+    () => new Set(block.slots.flatMap((slot) => slot.plannedExercises.map((item) => item.exerciseId))),
+    [block]
+  );
+  const selectedPartName = selectedPart ? partLabel(selectedPart) : null;
+  const selectedExercises = useMemo(() => {
+    if (!selectedMuscle) return [];
+    if (selectedPart && selectedPartName) {
+      return liftsForPart(selectedPart, plannedExerciseIds).map((lift) => (lift.role === 'assist' ? `${lift.name} (assist)` : lift.name));
+    }
+    return RUNTIME_EXERCISES.filter((exercise) => plannedExerciseIds.has(exercise.id)
+      && (exercise.primaryMuscles.includes(selectedMuscle) || exercise.secondaryMuscles.includes(selectedMuscle)))
+      .map((exercise) => exercise.name);
+  }, [plannedExerciseIds, selectedMuscle, selectedPart, selectedPartName]);
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
@@ -93,6 +118,53 @@ export const WeekSurface = ({ state, block, status }: Props) => {
         </Txt>
       </Card>
 
+      <Card style={styles.mapCard}>
+        <View style={styles.mapHeader}>
+          <View style={styles.flex}>
+            <Txt variant="label" tone="muted">MUSCLE MAP</Txt>
+            <Txt variant="caption" tone="secondary">weekly dose · tap a muscle</Txt>
+          </View>
+          <View style={styles.viewSwitch} accessibilityRole="radiogroup" accessibilityLabel="Muscle map view">
+            {(['front', 'back'] as const).map((view) => (
+              <Pressable
+                key={view}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: muscleView === view }}
+                onPress={() => setMuscleView(view)}
+                style={({ pressed }) => [styles.viewChoice, muscleView === view && styles.viewChoiceActive, pressed && styles.pressed]}
+              >
+                <Txt variant="label" tone={muscleView === view ? 'accent' : 'muted'}>{view}</Txt>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+        <MuscleMap
+          view={muscleView} tones={muscleTones} selected={selectedMuscle} selectedPart={selectedPart}
+          onSelect={(muscle, part) => { setSelectedMuscle(muscle); setSelectedPart(part === muscle ? null : part); }}
+        />
+        <View style={styles.mapLegend}>
+          <Legend color={colors.success} label="in range" />
+          <Legend color={colors.warning} label="under" />
+          <Legend color={colors.danger} label="over" />
+        </View>
+        <Divider />
+        <View style={styles.mapSelection}>
+          <Txt variant="label" tone={selectedMuscle ? 'accent' : 'muted'}>
+            {selectedMuscle ? (selectedPartName ?? muscleLabel(selectedMuscle)).toUpperCase() : 'SELECT A MUSCLE'}
+          </Txt>
+          <Txt variant="caption" tone="secondary" numberOfLines={3}>
+            {selectedMuscle
+              ? selectedExercises.length
+                ? selectedExercises.join(' · ')
+                : selectedPartName ? 'No compiled lift targets this muscle directly.' : 'No compiled lift targets this muscle.'
+              : 'See the lifts in this block that train each region.'}
+          </Txt>
+          {selectedPartName ? (
+            <Txt variant="caption" tone="muted">Part of {muscleLabel(selectedMuscle as Muscle).toLowerCase()}. Sets are counted for the whole group.</Txt>
+          ) : null}
+        </View>
+      </Card>
+
       <Card style={styles.table}>
         <View style={styles.tableHeader} accessible>
           <Txt variant="label" tone="muted" style={styles.muscleName}>MUSCLE</Txt>
@@ -109,9 +181,10 @@ export const WeekSurface = ({ state, block, status }: Props) => {
           return (
             <View key={item.muscle}>
               {index > 0 ? <Divider /> : null}
-              <View
-                style={styles.muscleRow}
-                accessible
+              <Pressable
+                onPress={() => { setSelectedMuscle(item.muscle); setSelectedPart(null); }}
+                style={({ pressed }) => [styles.muscleRow, selectedMuscle === item.muscle && styles.muscleRowSelected, pressed && styles.pressed]}
+                accessibilityRole="button"
                 accessibilityLabel={`${muscleLabel(item.muscle)}. ${formatSets(value)} of ${formatSets(plan)} planned set credits. Productive range ${item.min} to ${item.max}. ${stateCopy.label}.`}
               >
                 <Txt variant="caption" style={[styles.muscleName, styles.muscleLabel]} numberOfLines={1}>{muscleLabel(item.muscle)}</Txt>
@@ -124,7 +197,7 @@ export const WeekSurface = ({ state, block, status }: Props) => {
                   <Txt variant="label" tone={stateCopy.tone} numberOfLines={1}>{stateCopy.label}</Txt>
                   <Ionicons name={stateCopy.icon} size={19} color={colors[stateCopy.tone]} />
                 </View>
-              </View>
+              </Pressable>
             </View>
           );
         })}
@@ -162,6 +235,13 @@ export const WeekSurface = ({ state, block, status }: Props) => {
   );
 };
 
+const Legend = ({ color, label }: { color: string; label: string }) => (
+  <View style={styles.legendItem}>
+    <View style={[styles.legendDot, { backgroundColor: color }]} />
+    <Txt variant="caption" tone="muted">{label}</Txt>
+  </View>
+);
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   page: { padding: space.lg, paddingBottom: space.xxl * 2, gap: space.md },
@@ -174,9 +254,19 @@ const styles = StyleSheet.create({
   currentDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.textMuted },
   currentDotSelected: { backgroundColor: colors.accent },
   sessionSummary: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.md },
+  mapCard: { paddingBottom: space.md, gap: space.sm },
+  mapHeader: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  viewSwitch: { flexDirection: 'row', borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, overflow: 'hidden' },
+  viewChoice: { minWidth: 58, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  viewChoiceActive: { backgroundColor: colors.accentSoft },
+  mapLegend: { flexDirection: 'row', justifyContent: 'center', gap: space.lg },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  legendDot: { width: 7, height: 7, borderRadius: 4 },
+  mapSelection: { gap: space.xs, minHeight: 42 },
   table: { paddingVertical: 0, gap: 0 },
   tableHeader: { flexDirection: 'row', alignItems: 'center', minHeight: 38, gap: space.sm },
   muscleRow: { flexDirection: 'row', alignItems: 'center', minHeight: 58, gap: space.sm },
+  muscleRowSelected: { backgroundColor: colors.accentSoft, marginHorizontal: -space.md, paddingHorizontal: space.md },
   muscleName: { flex: 1, minWidth: 70 },
   muscleLabel: { fontWeight: '700' },
   doseValue: { fontWeight: '700' },
