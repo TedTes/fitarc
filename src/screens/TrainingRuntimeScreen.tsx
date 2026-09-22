@@ -35,8 +35,6 @@ const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typ
   { key: 'account', label: 'account', spoken: 'account settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Profile, training source, and account controls' },
 ];
 const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, account: 3 };
-const TAB_SLOT_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 3, account: 4 };
-const TAB_SLOTS = [TABS[0], TABS[1], null, TABS[2], TABS[3]] as const;
 const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
 export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
@@ -142,7 +140,7 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onL
     const direction = SURFACE_INDEX[surface] >= SURFACE_INDEX[previous] ? 1 : -1;
 
     Animated.timing(tabPosition, {
-      toValue: TAB_SLOT_INDEX[surface], duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      toValue: SURFACE_INDEX[surface], duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
     }).start();
 
     if (previous === surface) return;
@@ -365,67 +363,18 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onL
               style={[
                 styles.tabIndicator,
                 {
-                  width: tabBarWidth / TAB_SLOTS.length,
+                  width: tabBarWidth / TABS.length,
                   transform: [{
                     translateX: tabPosition.interpolate({
-                      inputRange: [0, TAB_SLOTS.length - 1],
-                      outputRange: [0, (tabBarWidth / TAB_SLOTS.length) * (TAB_SLOTS.length - 1)],
+                      inputRange: [0, TABS.length - 1],
+                      outputRange: [0, (tabBarWidth / TABS.length) * (TABS.length - 1)],
                     }),
                   }],
                 },
               ]}
             />
           ) : null}
-          {TAB_SLOTS.map((tab) => {
-            if (!tab) {
-              return (
-                <View key="workout-control" style={styles.controlSlot}>
-                  {timerRunning ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`${workoutDock?.phase === 'rest' ? 'Rest' : 'Set'} timer ${formatClock(workoutDock?.seconds ?? 0)}. Return to workout controls`}
-                      onPress={() => {
-                        setWorkoutTabsVisible(false);
-                        if (surface !== 'solver') setSurface('solver');
-                      }}
-                      style={({ pressed }) => [styles.timerFab, pressed && styles.pressed]}
-                    >
-                      <Txt style={styles.timerFabText}>{formatClock(workoutDock?.seconds ?? 0)}</Txt>
-                    </Pressable>
-                  ) : inSession && workoutDock?.phase === 'ready' ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Start set timer"
-                      accessibilityHint={surface === 'solver' ? 'Starts timing the current set' : 'Opens the workout and starts timing the current set'}
-                      onPress={() => {
-                        setWorkoutTabsVisible(false);
-                        if (surface !== 'solver') setSurface('solver');
-                        workoutDock.onPrimary();
-                      }}
-                      style={({ pressed }) => [styles.startFab, pressed && styles.startFabPressed]}
-                    >
-                      <View style={styles.workoutStartGlyph} pointerEvents="none">
-                        <View style={styles.motionMarks}>
-                          <View style={[styles.motionMark, styles.motionMarkShort]} />
-                          <View style={styles.motionMark} />
-                        </View>
-                        <Ionicons name="stopwatch-outline" size={27} color={colors.ground} />
-                      </View>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Open today's workout"
-                      accessibilityHint="Opens the workout timer"
-                      onPress={() => go('solver')}
-                      style={({ pressed }) => [styles.idleClockFab, pressed && styles.pressed]}
-                    >
-                      <Ionicons name="stopwatch-outline" size={25} color={colors.textSecondary} />
-                    </Pressable>
-                  )}
-                </View>
-              );
-            }
+          {TABS.map((tab) => {
             const selected = surface === tab.key;
             return (
               <Pressable
@@ -512,30 +461,8 @@ const styles = StyleSheet.create({
   dockLayer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, paddingHorizontal: space.lg },
   tabIndicator: { position: 'absolute', zIndex: 2, top: 0, left: 0, height: 3, backgroundColor: colors.accent },
   tab: { zIndex: 1, flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: 2, paddingTop: space.sm },
-  controlSlot: { zIndex: 4, flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.7 },
   liveDot: { position: 'absolute', top: -2, right: -6, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.warning, borderWidth: 1, borderColor: colors.surface },
-  startFab: {
-    width: 52, height: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 26,
-    backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.surface,
-    shadowColor: '#000', shadowOpacity: 0.24, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6,
-    transform: [{ translateY: -9 }],
-  },
-  startFabPressed: { opacity: 0.86, transform: [{ translateY: -9 }, { scale: 0.96 }] },
-  workoutStartGlyph: { flexDirection: 'row', alignItems: 'center', marginLeft: -3 },
-  motionMarks: { width: 9, alignItems: 'flex-end', gap: 4, marginRight: -1 },
-  motionMark: { width: 8, height: 2, borderRadius: 1, backgroundColor: colors.ground },
-  motionMarkShort: { width: 5 },
-  idleClockFab: {
-    width: 46, height: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 23,
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong, transform: [{ translateY: -6 }],
-  },
-  timerFab: {
-    minWidth: 62, height: 44, paddingHorizontal: space.sm, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 22, backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent,
-    transform: [{ translateY: -6 }],
-  },
-  timerFabText: { color: colors.accent, fontSize: 16, lineHeight: 20, fontWeight: '800', fontVariant: ['tabular-nums'] },
   dockReadout: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   dockLabel: { fontSize: 11, lineHeight: 14 },
   dockTime: { color: colors.text, fontSize: 27, lineHeight: 31, fontWeight: '800', fontVariant: ['tabular-nums'] },
