@@ -16,6 +16,8 @@ const PART_LIFTS: Record<string, PartLifts> = {
   teres_major: { primary: ['lat_pulldown', 'pull_up'], assist: ['cable_row', 'chest_supported_row'] },
   lats: { primary: ['lat_pulldown', 'pull_up'], assist: ['cable_row', 'chest_supported_row'] },
   erectors: { primary: ['romanian_deadlift'], assist: ['back_squat'] },
+  upper_chest: { primary: ['incline_db_press'], assist: ['bench_press'] },
+  lower_chest: { primary: ['bench_press', 'machine_chest_press', 'neutral_grip_floor_press', 'cable_fly'], assist: ['incline_db_press'] },
 };
 
 /** Name of a split part such as `lats`, or null for a part that is just its whole group. */

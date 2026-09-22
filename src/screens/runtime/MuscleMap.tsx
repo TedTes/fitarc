@@ -46,8 +46,10 @@ const look = (tone: MuscleMapTone | undefined, emphasis: Emphasis) => {
   const color = toneColor(tone ?? 'neutral');
   if (emphasis === 'active') return { color, fill: 0.52, stroke: 1, width: 1.5 };
   if (emphasis === 'sibling') return { color, fill: 0.34, stroke: 0.7, width: 1 };
-  if (tone) return { color, fill: 0.24, stroke: 0.5, width: 0.9 };
-  return { color, fill: 0.06, stroke: 0.28, width: 0.8 };
+  // No ambient status wash and no outline: an unselected muscle stays a bare sliver of fill,
+  // so adjoining shapes (e.g. quads/calves at the knee) don't draw a seam where they meet.
+  // Status colour and the outline only appear once you tap a muscle (active/sibling above).
+  return { color, fill: 0.06, stroke: 0, width: 0.8 };
 };
 
 /**
