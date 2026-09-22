@@ -12,24 +12,24 @@ export default function PrivacyPolicy() {
         <div className="container">
           <div className="policy-card">
             <h1>Privacy Policy</h1>
-            <p className="policy-updated">Last updated: January 1, 2026</p>
+            <p className="policy-updated">Last updated: September 21, 2026</p>
 
             <p>
-              FitArc helps you plan workouts, track meals, and follow progress
-              over time. This policy explains what data we collect, how we use
-              it, and the choices you have.
+              FitArc compiles training blocks, adapts workouts to your constraints,
+              and tracks training progress over time. This policy explains what
+              data we collect, how we use it, and the choices you have.
             </p>
 
             <h2>Information We Collect</h2>
             <ul>
               <li>Account details (email and basic profile settings).</li>
-              <li>Fitness data you provide (plans, workouts, meals, progress logs).</li>
+              <li>Fitness data you provide (training constraints, plans, workouts, and progress logs).</li>
               <li>Device and app data (app version, device type, and usage events).</li>
             </ul>
 
             <h2>How We Use Your Information</h2>
             <ul>
-              <li>Provide core app features like planning and tracking.</li>
+              <li>Provide core app features like compiling, adapting, and tracking workouts.</li>
               <li>Sync your data across devices and keep it available.</li>
               <li>Improve stability, performance, and user experience.</li>
             </ul>
@@ -43,8 +43,8 @@ export default function PrivacyPolicy() {
 
             <h2>Data Retention</h2>
             <p>
-              We keep your data while your account is active. You can request
-              deletion by contacting us.
+              We keep your data while your account is active. You can delete
+              your account in the app or contact us for help.
             </p>
 
             <h2>Your Choices</h2>
