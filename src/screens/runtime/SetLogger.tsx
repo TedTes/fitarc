@@ -8,7 +8,8 @@ import {
 import type { ExerciseDefinition, RuntimeState, SessionPrescription } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
 import { Button, Divider, IconButton, Sheet, Txt } from './ui';
-import { describeRuntimeError, equipmentLabel, formatKg, muscleList, setsWord } from './copy';
+import { describeRuntimeError, formatKg, muscleList, setsWord } from './copy';
+import { ExerciseMuscleDetails, ExerciseTargetPreview } from './ExerciseMuscles';
 import { nextPendingSet, pendingSetForExercise, sessionProgress } from './selectors';
 import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
@@ -82,12 +83,15 @@ const SolverHeader = ({ state, session, now }: { state: RuntimeState; session: S
 
 /** set.log: one prescription, one signal, the runtime's reply. Everything else is behind the menu. */
 export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const stackRowHeight = Math.round(Math.max(54, Math.min(76, windowHeight * 0.085)));
+  const visibleStackRows = windowHeight < 620 ? 1 : windowHeight < 740 ? 2 : 3;
+  const frameLabelStyle = [styles.frameLabel, windowWidth < 360 && styles.frameLabelCompact];
   const [reps, setReps] = useState('');
   const [rir, setRir] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [sheet, setSheet] = useState<null | 'menu' | 'swap'>(null);
+  const [sheet, setSheet] = useState<null | 'menu' | 'swap' | 'details' | 'swapDetails'>(null);
+  const [swapPreview, setSwapPreview] = useState<ExerciseDefinition | null>(null);
   const [rest, setRest] = useState<RestState | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [setStartedAt, setSetStartedAt] = useState<number | null>(null);
@@ -273,6 +277,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   );
 
   const candidates = sheet === 'swap' ? getSwapCandidates(state, exercise.id, 4) : [];
+  const closeSheet = () => setSheet(sheet === 'swapDetails' ? 'swap' : sheet === 'swap' ? 'menu' : null);
+  const sheetTitle = sheet === 'swap' ? `Swap ${exercise.name}` : sheet === 'swapDetails' && swapPreview ? swapPreview.name : exercise.name;
   const priorDose = lastOfExercise ?? beat;
   const loadChange = priorDose ? Number((set.loadKg - priorDose.prescribedLoadKg).toFixed(2)) : 0;
   const frameRule = priorDose
@@ -334,7 +340,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
             ref={stackScroll}
             showsVerticalScrollIndicator={false}
             nestedScrollEnabled
-            style={[styles.stackViewport, { height: Math.min(3, session.exercises.length) * stackRowHeight }]}
+            style={[styles.stackViewport, { height: Math.min(visibleStackRows, session.exercises.length) * stackRowHeight }]}
             contentContainerStyle={styles.stackTrack}
             decelerationRate="fast"
             snapToInterval={stackRowHeight}
@@ -407,23 +413,14 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
           >
+          <ExerciseTargetPreview exercise={exercise} compact={windowHeight < 740} label={resting ? 'Next lift · muscles' : 'Muscles worked'} onPress={() => setSheet('details')} />
           <View style={styles.frameFacts}>
             <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={styles.frameLabel}>{lastOfExercise ? 'last committed' : 'last session'}</Txt>
-              <Txt variant="code" tone={priorDose ? 'secondary' : 'muted'} style={styles.frameValue}>
-                {priorDose ? `${formatKg(priorDose.prescribedLoadKg)} × ${priorDose.completedReps} @ RIR${priorDose.reportedRir}` : 'none · establishes baseline'}
-              </Txt>
-            </View>
-            <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={styles.frameLabel}>this set</Txt>
+              <Txt variant="label" tone="muted" style={frameLabelStyle}>this set</Txt>
               <Txt variant="code" style={styles.frameValue}>{formatKg(set.loadKg)} × {set.maxReps} @ RIR{set.targetRir}</Txt>
             </View>
-            <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={styles.frameLabel}>rule</Txt>
-              <Txt variant="mono" tone="accent" style={styles.frameValue}>{frameRule}</Txt>
-            </View>
             <View style={[styles.frameAdjustRow, resting && styles.controlsResting]} pointerEvents={resting ? 'none' : 'auto'}>
-              <Txt variant="label" tone="muted" style={styles.frameLabel}>reps done</Txt>
+              <Txt variant="label" tone="muted" style={frameLabelStyle}>reps done</Txt>
               <View style={styles.inlineValue}>
                 <TextInput
                   style={styles.inlineRepsInput} value={reps} onChangeText={(value) => setReps(value.replace(/[^0-9]/g, '').slice(0, 2))}
@@ -446,7 +443,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
               </View>
             </View>
             <View style={[styles.frameAdjustRow, resting && styles.controlsResting]} pointerEvents={resting ? 'none' : 'auto'}>
-              <Txt variant="label" tone="muted" style={styles.frameLabel}>RIR</Txt>
+              <Txt variant="label" tone="muted" style={frameLabelStyle}>RIR</Txt>
               <View style={styles.inlineValue} accessible accessibilityLabel={`RIR ${rir ?? 3}, target ${set.targetRir}`}>
                 <Txt variant="number" tone="accent">{rir === 4 ? '4+' : rir ?? 3}</Txt>
                 <Txt variant="mono" tone="muted">/ target {set.targetRir}</Txt>
@@ -466,6 +463,16 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
                 ><Ionicons name="add" size={16} color={colors.text} /></Pressable>
               </View>
             </View>
+            <View style={styles.frameRow}>
+              <Txt variant="label" tone="muted" style={frameLabelStyle}>{lastOfExercise ? 'last committed' : 'last session'}</Txt>
+              <Txt variant="code" tone={priorDose ? 'secondary' : 'muted'} style={styles.frameValue}>
+                {priorDose ? `${formatKg(priorDose.prescribedLoadKg)} × ${priorDose.completedReps} @ RIR${priorDose.reportedRir}` : 'none · establishes baseline'}
+              </Txt>
+            </View>
+            <View style={styles.frameRow}>
+              <Txt variant="label" tone="muted" style={frameLabelStyle}>rule</Txt>
+              <Txt variant="mono" tone="accent" style={styles.frameValue}>{frameRule}</Txt>
+            </View>
           </View>
 
           {canUndo ? (
@@ -477,10 +484,15 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
             </ScrollView>
           </View>
         </View>
+        {dockPhase === 'ready' ? (
+          <Button label="Start set" icon="play" onPress={runDockPrimary} hint={`Start the timer for ${exercise.name}`} />
+        ) : null}
       </View>
 
-      <Sheet visible={sheet === 'menu'} onClose={() => setSheet(null)} title={exercise.name}>
+      <Sheet visible={sheet !== null} onClose={closeSheet} title={sheetTitle}>
+        {sheet === 'menu' ? <>
         <Txt variant="label" tone="muted">this lift</Txt>
+        <OptionRow icon="body-outline" title="Muscles & exercise details" onPress={() => setSheet('details')} />
         <OptionRow icon="swap-horizontal" title="Swap lift" onPress={() => setSheet('swap')} />
         <OptionRow icon="play-skip-forward" title="Skip exercise" onPress={skipExercise} />
         <OptionRow icon="bandage" tone="danger" title="Report pain" onPress={reportPain} />
@@ -488,14 +500,16 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
         <Txt variant="label" tone="muted">session · {results.length} logged · {progress.pending} pending</Txt>
         <OptionRow icon="flag" title="Finish early and review" disabled={results.length === 0} onPress={finishEarly} />
         <OptionRow icon="trash" tone="danger" title="Discard session" onPress={discard} />
-      </Sheet>
-
-      <Sheet visible={sheet === 'swap'} onClose={() => setSheet('menu')} title={`Swap ${exercise.name}`}>
+        </> : null}
+        {sheet === 'details' ? <ExerciseMuscleDetails key={exercise.id} exercise={exercise} reason={entry.reason} /> : null}
+        {sheet === 'swap' ? <>
+        <Txt variant="caption" tone="secondary">Compare muscle targets before choosing a replacement. Your logged sets stay.</Txt>
+        <ExerciseTargetPreview exercise={exercise} label={`Current · ${exercise.name}`} onPress={() => setSheet('details')} />
+        <Txt variant="label" tone="muted">Available replacements</Txt>
         {candidates.length ? candidates.map((candidate) => (
-          <OptionRow
-            key={candidate.id} icon="barbell" title={candidate.name}
-            detail={`targets ${muscleList(candidate.primaryMuscles)} · ${candidate.equipment.map(equipmentLabel).join(', ')} · starts at ${formatKg(startingLoad(state, candidate))}`}
-            onPress={() => swapTo(candidate)}
+          <ExerciseTargetPreview
+            key={candidate.id} exercise={candidate} label={candidate.name}
+            onPress={() => { setSwapPreview(candidate); setSheet('swapDetails'); }}
           />
         )) : (
           <>
@@ -504,6 +518,14 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
           </>
         )}
         <Button label="Back" variant="ghost" onPress={() => setSheet('menu')} />
+        </> : null}
+        {sheet === 'swapDetails' && swapPreview ? <>
+          <Txt variant="caption" tone="secondary">Replacing {exercise.name} · primary: {muscleList(exercise.primaryMuscles)}</Txt>
+          <ExerciseMuscleDetails key={swapPreview.id} exercise={swapPreview} />
+          <Txt variant="code" tone="secondary">Starts at {formatKg(startingLoad(state, swapPreview))} · {setsWord(remainingHere)} remaining</Txt>
+          <Button label={`Use ${swapPreview.name}`} onPress={() => swapTo(swapPreview)} />
+          <Button label="Compare other lifts" variant="ghost" onPress={() => setSheet('swap')} />
+        </> : null}
       </Sheet>
     </View>
   );
@@ -552,6 +574,7 @@ const styles = StyleSheet.create({
   frameRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   frameAdjustRow: { minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: space.md },
   frameLabel: { width: 112 },
+  frameLabelCompact: { width: 84 },
   frameValue: { flex: 1 },
   inlineValue: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: space.xs },
   inlineRepsInput: { width: 34, minHeight: 34, color: colors.text, fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'], textAlign: 'center', borderBottomWidth: 1, borderBottomColor: colors.accent, paddingVertical: 0 },

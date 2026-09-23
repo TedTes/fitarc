@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { computeWeeklyStatus, RUNTIME_EXERCISES } from '../../runtime';
-import type { Muscle, RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
+import type { ExerciseDefinition, Muscle, RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
 import { Card, Divider, Meter, ScreenBrand, Txt } from './ui';
 import { formatSets, goalLabel, muscleLabel, PHASE_COPY } from './copy';
 import { phaseOfWeek } from './selectors';
 import { MuscleMap, type MuscleMapTone } from './MuscleMap';
 import { liftsForPart, partLabel } from './muscleParts';
+import { ExerciseDetailsSheet } from './ExerciseMuscles';
+import { isMuscleVisible, viewForMuscle } from './muscleTargeting';
 
 type Props = {
   state: RuntimeState;
@@ -28,11 +30,14 @@ const rowStatus = (item: WeeklyMuscleStatus, value: number) => {
 
 /** status/week: a selectable block-week ledger of committed evidence and projected dose. */
 export const WeekSurface = ({ state, block, status }: Props) => {
+  const scroll = useRef<ScrollView>(null);
+  const mapOffset = useRef(0);
   const [selectedWeek, setSelectedWeek] = useState(block.currentWeek);
   const [muscleView, setMuscleView] = useState<'front' | 'back'>('front');
   const [selectedMuscle, setSelectedMuscle] = useState<Muscle | null>(null);
   // One muscle inside the selected group (for example the lats within back). null means the whole group.
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
+  const [inspectedExercise, setInspectedExercise] = useState<ExerciseDefinition | null>(null);
 
   useEffect(() => {
     setSelectedWeek(block.currentWeek);
@@ -67,15 +72,19 @@ export const WeekSurface = ({ state, block, status }: Props) => {
   const selectedExercises = useMemo(() => {
     if (!selectedMuscle) return [];
     if (selectedPart && selectedPartName) {
-      return liftsForPart(selectedPart, plannedExerciseIds).map((lift) => (lift.role === 'assist' ? `${lift.name} (assist)` : lift.name));
+      return liftsForPart(selectedPart, plannedExerciseIds).flatMap((lift) => {
+        const exercise = RUNTIME_EXERCISES.find((item) => item.name === lift.name);
+        return exercise ? [{ exercise, assist: lift.role === 'assist' }] : [];
+      });
     }
     return RUNTIME_EXERCISES.filter((exercise) => plannedExerciseIds.has(exercise.id)
       && (exercise.primaryMuscles.includes(selectedMuscle) || exercise.secondaryMuscles.includes(selectedMuscle)))
-      .map((exercise) => exercise.name);
+      .map((exercise) => ({ exercise, assist: !exercise.primaryMuscles.includes(selectedMuscle) }));
   }, [plannedExerciseIds, selectedMuscle, selectedPart, selectedPartName]);
+  const selectedDose = muscles.find((item) => item.muscle === selectedMuscle);
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
+    <ScrollView ref={scroll} contentContainerStyle={styles.page}>
       <ScreenBrand
         name="status/week"
         sub={`${PHASE_COPY[phase.kind].name} · week ${displayState}`}
@@ -118,11 +127,12 @@ export const WeekSurface = ({ state, block, status }: Props) => {
         </Txt>
       </Card>
 
+      <View onLayout={(event) => { mapOffset.current = event.nativeEvent.layout.y; }}>
       <Card style={styles.mapCard}>
         <View style={styles.mapHeader}>
           <View style={styles.flex}>
             <Txt variant="label" tone="muted">MUSCLE MAP</Txt>
-            <Txt variant="caption" tone="secondary">weekly dose · tap a muscle</Txt>
+            <Txt variant="caption" tone="secondary">{closed ? 'logged volume' : 'projected week volume'} · tap a muscle</Txt>
           </View>
           <View style={styles.viewSwitch} accessibilityRole="radiogroup" accessibilityLabel="Muscle map view">
             {(['front', 'back'] as const).map((view) => (
@@ -130,7 +140,10 @@ export const WeekSurface = ({ state, block, status }: Props) => {
                 key={view}
                 accessibilityRole="radio"
                 accessibilityState={{ checked: muscleView === view }}
-                onPress={() => setMuscleView(view)}
+                onPress={() => {
+                  setMuscleView(view);
+                  if (selectedMuscle && !isMuscleVisible(selectedMuscle, view)) { setSelectedMuscle(null); setSelectedPart(null); }
+                }}
                 style={({ pressed }) => [styles.viewChoice, muscleView === view && styles.viewChoiceActive, pressed && styles.pressed]}
               >
                 <Txt variant="label" tone={muscleView === view ? 'accent' : 'muted'}>{view}</Txt>
@@ -140,30 +153,48 @@ export const WeekSurface = ({ state, block, status }: Props) => {
         </View>
         <MuscleMap
           view={muscleView} tones={muscleTones} selected={selectedMuscle} selectedPart={selectedPart}
+          overview
           onSelect={(muscle, part) => { setSelectedMuscle(muscle); setSelectedPart(part === muscle ? null : part); }}
         />
         <View style={styles.mapLegend}>
           <Legend color={colors.success} label="in range" />
-          <Legend color={colors.warning} label="under" />
+          <Legend color={colors.warning} label="under / high" />
           <Legend color={colors.danger} label="over" />
         </View>
         <Divider />
         <View style={styles.mapSelection}>
+          <View style={styles.selectionHeader}>
           <Txt variant="label" tone={selectedMuscle ? 'accent' : 'muted'}>
             {selectedMuscle ? (selectedPartName ?? muscleLabel(selectedMuscle)).toUpperCase() : 'SELECT A MUSCLE'}
           </Txt>
+          {selectedMuscle ? <Pressable accessibilityRole="button" accessibilityLabel="Show volume for all muscles"
+            onPress={() => { setSelectedMuscle(null); setSelectedPart(null); }} style={styles.clearSelection}>
+            <Txt variant="mono" tone="secondary">all muscles</Txt>
+          </Pressable> : null}
+          </View>
+          {selectedDose ? <Txt variant="caption" tone="secondary">
+            {formatSets(selectedDose.completedSets)} logged{closed ? '' : ` · ${formatSets(selectedDose.projectedSets ?? selectedDose.completedSets)} projected`} · range {selectedDose.min}–{selectedDose.max} set credits
+          </Txt> : null}
           <Txt variant="caption" tone="secondary" numberOfLines={3}>
             {selectedMuscle
               ? selectedExercises.length
-                ? selectedExercises.join(' · ')
+                ? 'Lifts in your block · tap to inspect'
                 : selectedPartName ? 'No compiled lift targets this muscle directly.' : 'No compiled lift targets this muscle.'
               : 'See the lifts in this block that train each region.'}
           </Txt>
+          {selectedExercises.map(({ exercise, assist }) => (
+            <Pressable key={exercise.id} accessibilityRole="button" accessibilityLabel={`Inspect ${exercise.name}${assist ? ', assisting lift' : ''}`}
+              onPress={() => setInspectedExercise(exercise)} style={({ pressed }) => [styles.relatedLift, pressed && styles.pressed]}>
+              <Txt variant="caption" style={styles.flex}>{exercise.name}{assist ? ' · assist' : ''}</Txt>
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+            </Pressable>
+          ))}
           {selectedPartName ? (
             <Txt variant="caption" tone="muted">Part of {muscleLabel(selectedMuscle as Muscle).toLowerCase()}. Sets are counted for the whole group.</Txt>
           ) : null}
         </View>
       </Card>
+      </View>
 
       <Card style={styles.table}>
         <View style={styles.tableHeader} accessible>
@@ -182,7 +213,11 @@ export const WeekSurface = ({ state, block, status }: Props) => {
             <View key={item.muscle}>
               {index > 0 ? <Divider /> : null}
               <Pressable
-                onPress={() => { setSelectedMuscle(item.muscle); setSelectedPart(null); }}
+                onPress={() => {
+                  setSelectedMuscle(item.muscle); setSelectedPart(null);
+                  setMuscleView((view) => viewForMuscle(item.muscle, view));
+                  scroll.current?.scrollTo({ y: mapOffset.current, animated: true });
+                }}
                 style={({ pressed }) => [styles.muscleRow, selectedMuscle === item.muscle && styles.muscleRowSelected, pressed && styles.pressed]}
                 accessibilityRole="button"
                 accessibilityLabel={`${muscleLabel(item.muscle)}. ${formatSets(value)} of ${formatSets(plan)} planned set credits. Productive range ${item.min} to ${item.max}. ${stateCopy.label}.`}
@@ -231,6 +266,7 @@ export const WeekSurface = ({ state, block, status }: Props) => {
           />
         </View>
       </Card>
+      <ExerciseDetailsSheet exercise={inspectedExercise} onClose={() => setInspectedExercise(null)} />
     </ScrollView>
   );
 };
@@ -243,6 +279,9 @@ const Legend = ({ color, label }: { color: string; label: string }) => (
 );
 
 const styles = StyleSheet.create({
+  selectionHeader: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+  clearSelection: { minHeight: TOUCH, justifyContent: 'center', paddingHorizontal: space.sm },
+  relatedLift: { minHeight: TOUCH, flexDirection: 'row', alignItems: 'center', gap: space.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingVertical: space.sm },
   flex: { flex: 1 },
   page: { padding: space.lg, paddingBottom: space.xxl * 2, gap: space.md },
   weekPicker: { gap: space.sm, paddingVertical: 2 },

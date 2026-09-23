@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "muscle-map:check": "node scripts/check-muscle-targeting.cjs",
     "runtime:check": "tsc src/runtime/runtimeCases.ts --outDir /tmp/fitarc-runtime-check --module commonjs --target es2020 --esModuleInterop --skipLibCheck && node -e \"require('/tmp/fitarc-runtime-check/runtimeCases.js').runRuntimeContractChecks(); console.log('runtime contracts passed')\""
   },
   "dependencies": {

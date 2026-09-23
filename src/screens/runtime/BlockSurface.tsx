@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import type { RuntimeState, TrainingBlock } from '../../runtime';
+import { RUNTIME_EXERCISES } from '../../runtime';
+import { Ionicons } from '@expo/vector-icons';
+import { ExerciseDetailsSheet } from './ExerciseMuscles';
 import { colors, space } from './theme';
 import { Button, Divider, ScreenBrand, Txt } from './ui';
 import { exerciseName, muscleList, PHASE_COPY } from './copy';
@@ -31,6 +34,8 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
     ?? [...state.sessions].reverse().find((session) => session.blockId === block.id && session.status === 'committed')?.slotId
     ?? block.slots[0]?.id;
   const [selectedSlotId, setSelectedSlotId] = useState(focusSlotId);
+  const [inspectedExerciseId, setInspectedExerciseId] = useState<string | null>(null);
+  const inspectedExercise = RUNTIME_EXERCISES.find((item) => item.id === inspectedExerciseId) ?? null;
   const selectedIndex = Math.max(0, block.slots.findIndex((slot) => slot.id === selectedSlotId));
   const selectedSlot = block.slots[selectedIndex] ?? block.slots[0];
   const reelRows = Math.min(3, block.slots.length);
@@ -137,14 +142,17 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
               <Txt variant="mono" tone="secondary">{selectedSets} sets</Txt>
             </View>
             {selectedSlot.plannedExercises.map((plan, index) => (
-              <View key={`${plan.exerciseId}:${index}`} style={[styles.exerciseRow, { minHeight: exerciseRowHeight }]}>
+              <Pressable key={`${plan.exerciseId}:${index}`} onPress={() => setInspectedExerciseId(plan.exerciseId)}
+                accessibilityRole="button" accessibilityLabel={`Inspect ${exerciseName(plan.exerciseId)}, muscle targets and exercise details`}
+                style={({ pressed }) => [styles.exerciseRow, { minHeight: exerciseRowHeight }, pressed && styles.pressed]}>
                 <Txt variant="mono" tone="muted" style={styles.exerciseNumber}>{index + 1}</Txt>
                 <View style={styles.exerciseIdentity}>
                   <Txt variant="caption">{exerciseName(plan.exerciseId)}</Txt>
                   <Txt variant="mono" tone="muted">{plan.sets} × {current.minReps}–{current.maxReps} · RIR {current.targetRir}</Txt>
                 </View>
                 {plan.selection.substituted ? <Txt variant="heading" tone="warning" accessible accessibilityLabel="Substituted exercise">↔</Txt> : null}
-              </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </Pressable>
             ))}
             {atEnd ? (
               <Button
@@ -158,6 +166,8 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
           </ScrollView>
         </View>
       </View>
+      <ExerciseDetailsSheet exercise={inspectedExercise} onClose={() => setInspectedExerciseId(null)}
+        reason={selectedSlot.plannedExercises.find((plan) => plan.exerciseId === inspectedExerciseId)?.selection.reasons.join(' ')} />
     </View>
   );
 };
