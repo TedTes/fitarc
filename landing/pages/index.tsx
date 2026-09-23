@@ -1,6 +1,6 @@
 import Head from 'next/head'
 import { useState } from 'react'
-import { MUSCLE_MASKS, type MuscleMapView } from '../lib/muscleMasks'
+import { MUSCLE_MAP_SIZE, MUSCLE_MASKS, type MuscleMapView } from '../lib/muscleMasks'
 
 const APP_STORE_URL = 'https://apps.apple.com/ca/app/fitarc/id6757266123'
 
@@ -60,16 +60,19 @@ const MAP_DETAILS: Record<string, string> = {
   calves: 'Standing calf raise · Seated calf raise',
 }
 
+const defaultMapSelection = (view: MuscleMapView) => {
+  const { muscle, part, label } = MUSCLE_MASKS[view].find((mask) => mask.part === 'lats') ?? MUSCLE_MASKS[view][0]
+  return { muscle, part, label: label ?? muscle }
+}
+
 const LandingMuscleMap = () => {
   const [view, setView] = useState<MuscleMapView>('front')
-  const [selection, setSelection] = useState({ muscle: 'chest', part: 'chest', label: 'Chest' })
+  const [selection, setSelection] = useState(() => defaultMapSelection('front'))
   const masks = MUSCLE_MASKS[view]
 
   const showView = (next: MuscleMapView) => {
     setView(next)
-    setSelection(next === 'front'
-      ? { muscle: 'chest', part: 'chest', label: 'Chest' }
-      : { muscle: 'back', part: 'lats', label: 'Latissimus dorsi' })
+    setSelection(defaultMapSelection(next))
   }
 
   return <>
@@ -81,7 +84,7 @@ const LandingMuscleMap = () => {
     </div>
     <div className="landing-muscle-map">
       <img src={`/images/muscle-map/athlete-${view}-v2.png`} alt={`${view} anatomy muscle map`} />
-      <svg className="muscle-overlay" viewBox="0 0 512 768" aria-label={`Interactive ${view} muscle regions`}>
+      <svg className="muscle-overlay" viewBox={`0 0 ${MUSCLE_MAP_SIZE.width} ${MUSCLE_MAP_SIZE.height}`} aria-label={`Interactive ${view} muscle regions`}>
         {masks.map(({ muscle, part, label, visible, hit }) => {
           const active = selection.part === part
           const select = () => setSelection({ muscle, part, label: label ?? muscle })
