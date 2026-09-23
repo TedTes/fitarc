@@ -18,6 +18,14 @@ const PART_LIFTS: Record<string, PartLifts> = {
   erectors: { primary: ['romanian_deadlift'], assist: ['back_squat'] },
   upper_chest: { primary: ['incline_db_press'], assist: ['bench_press'] },
   lower_chest: { primary: ['bench_press', 'machine_chest_press', 'neutral_grip_floor_press', 'cable_fly'], assist: ['incline_db_press'] },
+  // The three quad heads aren't distinguished by which compiled lift trains them -- every
+  // squat-pattern compound here loads all three together. Honest answer: same list for each.
+  vastus_lateralis: { primary: ['back_squat', 'hack_squat', 'leg_press', 'goblet_squat'], assist: [] },
+  rectus_femoris: { primary: ['back_squat', 'hack_squat', 'leg_press', 'goblet_squat'], assist: [] },
+  vastus_medialis: { primary: ['back_squat', 'hack_squat', 'leg_press', 'goblet_squat'], assist: [] },
+  // Same for the two hamstring parts: no compiled lift here isolates one over the other.
+  biceps_femoris: { primary: ['romanian_deadlift', 'seated_leg_curl'], assist: ['hip_thrust'] },
+  medial_hamstrings: { primary: ['romanian_deadlift', 'seated_leg_curl'], assist: ['hip_thrust'] },
 };
 
 /** Name of a split part such as `lats`, or null for a part that is just its whole group. */

@@ -55,9 +55,70 @@ PARTS = {
              [(213,273),(228,270),(240,265),(243,241),(252,239),(252,295),(240,295),(228,291),(217,285),(209,279)],
              [(299,273),(284,270),(272,265),(269,241),(260,239),(260,295),(272,295),(284,291),(295,285),(303,279)],
            ]},
-        }
+        },
+        'hamstrings': {
+            # Two visible masses from behind: biceps femoris on the outer half, semitendinosus
+            # and semimembranosus together on the inner half (they run too close together on this
+            # picture to trace separately, so they share one part, same as mid_traps/rhomboids above).
+            # Seeds trace the ONE real crease actually visible in this image (found via a black-hat
+            # ridge filter, not guessed proportions): it runs roughly (183,390)->(192,435)->(184,478),
+            # offset +-6px so the watershed (CLAHE on, real signal now that codex resculpted this)
+            # has room to snap precisely to it instead of inheriting a straight seed line.
+            'biceps_femoris': {
+                'label': 'Biceps femoris (outer hamstring)',
+                'pieces': [
+                    [(168.0,390),(168.0,400),(168.0,412),(168.0,425),(168.0,435),(168.0,448),(168.0,465),(168.0,478),(168.0,488),(182.0,488),(178.0,478),(180.0,465),(183.0,448),(186.0,435),(185.0,425),(183.0,412),(180.0,400),(177.0,390)],
+                    [(343.0,390),(343.0,400),(343.0,412),(343.0,425),(343.0,435),(343.0,448),(343.0,465),(343.0,478),(343.0,488),(329.0,488),(333.0,478),(331.0,465),(328.0,448),(325.0,435),(326.0,425),(328.0,412),(331.0,400),(334.0,390)],
+                ],
+            },
+            'medial_hamstrings': {
+                'label': 'Semitendinosus / semimembranosus (inner hamstring)',
+                'pieces': [
+                    [(189.0,390),(192.0,400),(195.0,412),(197.0,425),(198.0,435),(195.0,448),(192.0,465),(190.0,478),(194.0,488),(252.0,488),(252.0,478),(252.0,465),(252.0,448),(252.0,435),(252.0,425),(252.0,412),(252.0,400),(252.0,390)],
+                    [(322.0,390),(319.0,400),(316.0,412),(314.0,425),(313.0,435),(316.0,448),(319.0,465),(321.0,478),(317.0,488),(259.0,488),(259.0,478),(259.0,465),(259.0,448),(259.0,435),(259.0,425),(259.0,412),(259.0,400),(259.0,390)],
+                ],
+            },
+        },
     },
     'front': {
+        'quads': {
+            # Three visible heads, split as vertical-ish bands across the thigh: outer
+            # (vastus lateralis), center (rectus femoris, over the front of the femur), inner
+            # (vastus medialis, which bulges more just above the knee -- its seed widens there).
+            # Not an even three-way split: vastus medialis is barely present high on the thigh and
+            # bulges out low near the knee (its classic "teardrop"), rectus femoris is a fairly
+            # constant-width band down the center, vastus lateralis takes the rest of the outer
+            # sweep. Proportions (lateral/center/medial) move from 50/40/10 at the hip to 40/32/28
+            # at the knee across the same four heights used elsewhere in this file.
+            # A Y, not three parallel columns: the two real creases (found via a black-hat ridge
+            # filter) run roughly (205,378)->(190,420) and (220,398)->(205,432), converging to a
+            # point around (197,430) -- rectus femoris is a wedge that tapers out there, matching
+            # where a hand-marked reference photo showed it actually ending. Below that point,
+            # vastus lateralis and vastus medialis meet directly on one boundary down to the knee.
+            # Everything offset +-6px from the real lines so the (CLAHE-on) watershed has room to
+            # snap precisely instead of inheriting a straight seed line.
+            'vastus_lateralis': {
+                'label': 'Vastus lateralis (outer quad)',
+                'pieces': [
+                    [(168.0,378),(168.0,395),(168.0,410),(168.0,422),(168.0,430),(168.0,445),(168.0,460),(168.0,478),(168.0,485),(181.0,485),(183.6,478),(186.1,460),(188.7,445),(190.7,430),(183.5,422),(188.0,410),(193.6,395),(199.0,378)],
+                    [(343.0,378),(343.0,395),(343.0,410),(343.0,422),(343.0,430),(343.0,445),(343.0,460),(343.0,478),(343.0,485),(330.0,485),(327.4,478),(324.9,460),(322.3,445),(320.3,430),(327.5,422),(323.0,410),(317.4,395),(312.0,378)],
+                ],
+            },
+            'rectus_femoris': {
+                'label': 'Rectus femoris (center quad)',
+                'pieces': [
+                    [(211.0,378),(205.6,395),(200.0,410),(195.5,422),(196.7,427),(203.1,422),(208.4,410),(215.4,395),(223.4,378)],
+                    [(300.0,378),(305.4,395),(311.0,410),(315.5,422),(314.3,427),(307.9,422),(302.6,410),(295.6,395),(287.6,378)],
+                ],
+            },
+            'vastus_medialis': {
+                'label': 'Vastus medialis (inner quad)',
+                'pieces': [
+                    [(235.4,378),(227.4,395),(220.4,410),(215.1,422),(202.7,430),(200.7,445),(198.1,460),(195.6,478),(193.0,485),(248.0,485),(248.0,478),(248.0,460),(248.0,445),(248.0,430),(248.0,422),(248.0,410),(248.0,395),(248.0,378)],
+                    [(275.6,378),(283.6,395),(290.6,410),(295.9,422),(308.3,430),(310.3,445),(312.9,460),(315.4,478),(318.0,485),(263.0,485),(263.0,478),(263.0,460),(263.0,445),(263.0,430),(263.0,422),(263.0,410),(263.0,395),(263.0,378)],
+                ],
+            },
+        },
         'chest': {
             # The picture shows a faint diagonal crease near y=150-165 on each side: the seam between the
             # clavicular (upper) and sternal (lower) head of pectoralis major.

@@ -117,9 +117,15 @@ def trace_view(view):
     return pieces
 
 
-def groove_cost(view):
-    """Topography for the part watershed: thin dark seams (black-hat) and edge strength, both high on a seam."""
-    g = cv2.cvtColor(cv2.imread(IMAGE % view), cv2.COLOR_BGR2GRAY).astype(np.float32)
+def groove_cost(view, clahe=False):
+    """Topography for the part watershed: thin dark seams (black-hat) and edge strength, both high on a seam.
+
+    `clahe`: on a smoothly-shaded area (e.g. the thigh) the real seams are faint in raw pixel
+    values but still there -- local contrast boosting brings them up to where black-hat/Sobel can
+    find them, without changing where anything actually is. Off by default so the already
+    well-defined groups (back, chest) keep tracing exactly as before."""
+    raw = cv2.cvtColor(cv2.imread(IMAGE % view), cv2.COLOR_BGR2GRAY)
+    g = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(raw).astype(np.float32) if clahe else raw.astype(np.float32)
     dark = cv2.morphologyEx(cv2.GaussianBlur(g, (0, 0), 0.9), cv2.MORPH_BLACKHAT,
                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)))
     soft = cv2.GaussianBlur(g, (0, 0), 1.3)
@@ -138,7 +144,10 @@ def split_group(view, group, domain):
             core = ndi.distance_transform_edt(raster(poly) & domain) > 1.5
             labels[i * 10 + side + 1] = (part, side)
             markers[core] = i * 10 + side + 1
-    flooded = watershed(groove_cost(view), markers, mask=domain)
+    # CLAHE on for the groups that now have real (if lower-contrast) creases in the source photo
+    # to snap to -- confirmed with an offline ridge-filter check, not assumed. Off elsewhere so
+    # the already-precise groups (back, chest) don't change.
+    flooded = watershed(groove_cost(view, clahe=group in ('quads', 'hamstrings')), markers, mask=domain)
     columns = np.arange(W)[None, :]
     parts = {part: np.zeros((H, W), bool) for part in spec}
     for label, (part, side) in labels.items():
