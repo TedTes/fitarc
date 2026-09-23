@@ -2,7 +2,6 @@ import { StatusBar } from 'expo-status-bar';
 import {
   StyleSheet,
   View,
-  ActivityIndicator,
   Text,
   TouchableOpacity,
   Animated,
@@ -18,6 +17,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AthleteLoadingScreen } from './src/components/AthleteBackdrop';
 import { useAppState } from './src/hooks';
 import { FabActionConfig, FabActionProvider, useFabAction } from './src/contexts/FabActionContext';
 import {
@@ -870,7 +870,7 @@ function AppContent() {
   if (isAuthLoading || isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#F48D4D" />
+        <AthleteLoadingScreen />
         <StatusBar style="light" />
       </View>
     );
@@ -879,7 +879,7 @@ function AppContent() {
   if (isAuthenticated && !bootstrapComplete) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#F48D4D" />
+        <AthleteLoadingScreen message="Restoring your training…" />
         <StatusBar style="light" />
       </View>
     );
@@ -912,8 +912,7 @@ function AppContent() {
   if (isCreatingPlan) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#F48D4D" />
-        <Text style={styles.loadingText}>Matching your program…</Text>
+        <AthleteLoadingScreen message="Building your training plan…" />
         <StatusBar style="light" />
       </View>
     );
@@ -1185,15 +1184,7 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     backgroundColor: '#090B0F',
-  },
-  loadingText: {
-    marginTop: 16,
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
   },
   container: {
     flex: 1,

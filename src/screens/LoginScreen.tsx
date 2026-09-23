@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   Alert,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { CompilerGlyphs, Scanlines } from '../components/AuthRuntimeVisual';
+import { AthleteBackdrop } from '../components/AthleteBackdrop';
 import { SocialAuthButtons } from '../components/SocialAuthButtons';
 import { resendVerificationEmail, signIn } from '../services/authService';
 import { monoFace, useMonoFonts } from './runtime/fonts';
@@ -97,14 +97,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   return (
     <View style={styles.root}>
-      <Image
-        accessibilityIgnoresInvertColors
-        accessible={false}
-        fadeDuration={0}
-        resizeMode="contain"
-        source={require('../../assets/images/login-athlete.png')}
-        style={[styles.athleteBackground, compact && styles.athleteBackgroundCompact]}
-      />
+      <AthleteBackdrop />
       <Scanlines />
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
@@ -216,7 +209,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#050606',
+    backgroundColor: colors.ground,
   },
   safeArea: {
     flex: 1,
@@ -238,17 +231,6 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 430,
     alignSelf: 'center',
-  },
-  athleteBackground: {
-    ...StyleSheet.absoluteFillObject,
-    width: '100%',
-    height: '100%',
-    opacity: 0.11,
-    transform: [{ scale: 1.035 }],
-  },
-  athleteBackgroundCompact: {
-    opacity: 0.085,
-    transform: [{ scale: 1.01 }],
   },
   heroSpacer: {
     flex: 1,

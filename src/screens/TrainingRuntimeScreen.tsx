@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User, WorkoutSessionEntry } from '../types/domain';
@@ -19,6 +19,7 @@ import { TodaySurface } from './runtime/TodaySurface';
 import type { WorkoutDockState } from './runtime/SetLogger';
 import { WeekSurface } from './runtime/WeekSurface';
 import { useMonoFonts } from './runtime/fonts';
+import { AthleteLoadingScreen } from '../components/AthleteBackdrop';
 
 type Props = {
   user: User;
@@ -239,12 +240,7 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onL
 
   // ── Loading and load failure ──
   if (loading) {
-    return (
-      <View style={[styles.center, { paddingTop: insets.top }]} accessibilityLabel="Loading runtime state" accessible>
-        <ActivityIndicator color={colors.accent} size="large" />
-        <Txt variant="code" tone="secondary" style={styles.centerText}>loading runtime state…</Txt>
-      </View>
-    );
+    return <AthleteLoadingScreen message="Restoring your training…" />;
   }
   if (loadError) {
     return (
@@ -258,19 +254,11 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onL
 
   // ── First launch: no runtime yet ──
   if (!state.source || !state.block) {
+    if (!autoCompileError) return <AthleteLoadingScreen message="Building your training block…" />;
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]} accessibilityLabel="Compiling your training block" accessible>
-        {autoCompileError ? (
-          <>
-            <Banner tone="error" title="Could not compile your block" message={autoCompileError} />
-            <Button label="Sign out" variant="secondary" onPress={() => void onLogout()} />
-          </>
-        ) : (
-          <>
-            <ActivityIndicator color={colors.accent} size="large" />
-            <Txt variant="code" tone="secondary" style={styles.centerText}>compiling your block…</Txt>
-          </>
-        )}
+      <View style={[styles.center, { paddingTop: insets.top }]}>
+        <Banner tone="error" title="Could not compile your block" message={autoCompileError} />
+        <Button label="Sign out" variant="secondary" onPress={() => void onLogout()} />
       </View>
     );
   }
@@ -451,7 +439,6 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   root: { flex: 1, backgroundColor: colors.ground },
   center: { flex: 1, alignItems: 'stretch', justifyContent: 'center', gap: space.lg, padding: space.xl, backgroundColor: colors.ground },
-  centerText: { textAlign: 'center' },
   surfaceStage: { flex: 1, position: 'relative', overflow: 'hidden' },
   surfaceLayer: { ...StyleSheet.absoluteFillObject },
   surfaceActive: { zIndex: 1 },
