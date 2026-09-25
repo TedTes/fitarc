@@ -10,4 +10,3 @@ export * from './status';
 export * from './runtimeStore';
 export * from './runtimeService';
 export * from './id';
-export * from './migrateLegacy';

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { User, WorkoutSessionEntry } from '../types/domain';
-import { compileNextRuntimeBlock, compileTrainingBlock, createRuntimeId, deriveLegacySeeds, getRuntimeWeekView } from '../runtime';
+import type { User } from '../types/domain';
+import { compileNextRuntimeBlock, compileTrainingBlock, createRuntimeId, getRuntimeWeekView } from '../runtime';
 import type { TrainingSource } from '../runtime';
 import { colors, space } from './runtime/theme';
 import { Banner, Button, ChromeContext, Txt } from './runtime/ui';
@@ -23,7 +23,6 @@ import { AthleteLoadingScreen } from '../components/AthleteBackdrop';
 
 type Props = {
   user: User;
-  legacySessions: WorkoutSessionEntry[];
   onSaveProfile: (profile: User) => void | Promise<void>;
   onLogout: () => void | Promise<void>;
   onDeleteAccount: () => void | Promise<void>;
@@ -38,7 +37,7 @@ const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typ
 const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, account: 3 };
 const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
+export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const insets = useSafeAreaInsets();
   const fontsReady = useMonoFonts();
   const { state, loading: stateLoading, loadError, reload, sync, apply, retrySync } = useRuntimeController(user.id);
@@ -66,7 +65,6 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onL
   const eventId = useRef(0);
   const restoredNotice = useRef(false);
   const autoCompileAttempted = useRef(false);
-  const suggestedSeeds = useMemo(() => deriveLegacySeeds(legacySessions), [legacySessions]);
   const onboardingSource = useMemo<TrainingSource>(() => {
     const preferences = user.planPreferences;
     const preferredDays = preferences?.daysPerWeek;
@@ -84,10 +82,10 @@ export const TrainingRuntimeScreen = ({ user, legacySessions, onSaveProfile, onL
       equipment,
       excludedExerciseIds: [],
       limitations: preferences?.injuries ?? [],
-      seedWorkingSets: suggestedSeeds,
+      seedWorkingSets: [],
       createdAt: new Date().toISOString(),
     };
-  }, [suggestedSeeds, user.experienceLevel, user.id, user.planPreferences]);
+  }, [user.experienceLevel, user.id, user.planPreferences, user.trainingSplit]);
 
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardOpen(true));
