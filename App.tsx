@@ -11,13 +11,16 @@ import { fetchUserProfile, saveUserProfile, getSignedAvatarUrl } from './src/ser
 import { completeAuthRedirect } from './src/services/authService';
 import { deleteAccount } from './src/services/accountService';
 import { hasRequiredPlanInputs } from './src/utils/planReadiness';
+import { describeProfileLoadError, type ProfileLoadError } from './src/utils/profileLoadError';
+import { SUPABASE_PROJECT_HOST } from './src/lib/supabaseClient';
+import { TRAINING_SCHEMA } from './src/runtime/dataModel';
 import type { User } from './src/types/domain';
 
 function AppContent() {
   const { user: account, isAuthenticated, isLoading, signOut } = useAuth();
   const [profile, setProfile] = useState<User | null>(null);
   const [restoring, setRestoring] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<ProfileLoadError | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const complete = (url: string | null) => {
@@ -30,12 +33,12 @@ function AppContent() {
   useEffect(() => {
     let cancelled = false;
     setProfile(null);
-    setError(false);
+    setError(null);
     if (!isAuthenticated || !account) { setRestoring(false); return; }
     setRestoring(true);
     void fetchUserProfile(account.id)
       .then((value) => { if (!cancelled) setProfile(value); })
-      .catch(() => { if (!cancelled) setError(true); })
+      .catch((problem: unknown) => { if (!cancelled) setError(describeProfileLoadError(problem)); })
       .finally(() => { if (!cancelled) setRestoring(false); });
     return () => { cancelled = true; };
   }, [account?.id, isAuthenticated, attempt]);
@@ -70,6 +73,10 @@ function AppContent() {
   if (!isAuthenticated) return <AuthNavigator />;
   if (error) return <View style={{ flex: 1, justifyContent: 'center', padding: 32, gap: 24 }}>
     <Text style={{ color: 'white' }}>Your profile could not be loaded.</Text>
+    <Text style={{ color: '#B8BEC8', lineHeight: 22 }}>{error.message}</Text>
+    {__DEV__ ? <Text selectable style={{ color: '#B8BEC8', fontSize: 13, lineHeight: 20 }}>
+      {`Error: ${error.code}\nProject: ${SUPABASE_PROJECT_HOST}\nSchema: ${TRAINING_SCHEMA}`}
+    </Text> : null}
     <Pressable accessibilityRole="button" onPress={() => setAttempt((value) => value + 1)}><Text style={{ color: '#00F5A0' }}>Try again</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => void signOut()}><Text style={{ color: 'white' }}>Sign out</Text></Pressable>
   </View>;
