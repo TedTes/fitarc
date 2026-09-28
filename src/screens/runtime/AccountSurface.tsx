@@ -182,7 +182,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
             <Fact label="schedule" value={`${source.daysPerWeek} days · ${source.sessionMinutes} min`} />
             <Fact label="equipment" value={source.equipment.includes('barbell') ? 'full gym' : 'dumbbells + bench'} />
             <Fact label="limits" value={source.limitations.length ? source.limitations.map(limitationLabel).join(', ') : 'none'} />
-            <Button label="Edit training source" variant="secondary" icon="options-outline" onPress={onEditSource} />
+            <Button label="Training preferences" variant="secondary" icon="options-outline" onPress={onEditSource} />
           </Card>
         </View>
 

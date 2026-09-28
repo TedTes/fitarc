@@ -111,14 +111,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           >
             <View style={styles.shell}>
               <View style={[styles.terminal, compact && styles.terminalCompact]}>
-                <Text style={[styles.runtimeBrand, { fontFamily: monoSemiBold }]}>training.runtime</Text>
+                <Text style={[styles.runtimeBrand, { fontFamily: monoSemiBold }]}>Your training</Text>
                 <Text style={[styles.command, { fontFamily: monoRegular }]}>
-                  <Text style={styles.commandPrompt}>$ </Text>auth --login
+                  Welcome back
                 </Text>
                 <View style={styles.compilerRow}>
-                  <Text style={[styles.compilerText, { fontFamily: monoRegular }]}>compiling block</Text>
+                  <Text style={[styles.compilerText, { fontFamily: monoRegular }]}>{isLoading ? 'Signing in' : 'Ready when you are'}</Text>
                   <CompilerGlyphs active={isLoading} />
-                  <Text style={[styles.compilerText, { fontFamily: monoRegular }]}>athlete.mesh</Text>
+                  <Text style={[styles.compilerText, { fontFamily: monoRegular }]}>FitArc</Text>
                 </View>
               </View>
 
@@ -126,9 +126,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
               <View style={styles.authPanel}>
                 <Text style={[styles.title, compact && styles.titleCompact]}>
-                  {'Compile your\nnext block.'}
+                  {'Build your\nnext plan.'}
                 </Text>
-                <Text style={styles.subtitle}>Sign in once. The runtime handles the rest.</Text>
+                <Text style={styles.subtitle}>Sign in to your plan, workouts and progress.</Text>
 
                 {emailMode ? (
                   <View style={styles.emailForm}>

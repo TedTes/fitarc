@@ -1,9 +1,10 @@
+import { committedSlotIds } from './selectors';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { commitRuntimeSession, discardRuntimeSession, getRuntimeSessionDiff, getRuntimeWeekView } from '../../runtime';
 import type { ExerciseDiff, RuntimeState } from '../../runtime';
 import { colors, radius, space } from './theme';
 import { ScreenBrand, ScreenTitle, Txt } from './ui';
-import { describeRuntimeError, muscleLabel, setsWord } from './copy';
+import { describeRuntimeError, muscleLabel, setsWord, slotPlain } from './copy';
 import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
 
@@ -70,6 +71,10 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
   const headline = base === items.length ? { text: 'baseline', color: colors.violet } : up > 0 ? { text: `+${up} progressed`, color: colors.diffGreen } : down > 0 ? { text: `${down} stalled`, color: colors.diffRed } : { text: 'held', color: colors.orange };
   const muscles = (slot?.targetMuscles ?? []).slice(0, 2).map((muscle) => muscleLabel(muscle).toLowerCase()).join(' / ');
 
+  const completedSlots = block ? committedSlotIds(state, block) : new Set<string>();
+  const upcoming = block && block.remainingWeek?.week === block.currentWeek ? block.remainingWeek.windows.find((item) => item.date > session.context.date && !completedSlots.has(item.slotId)) : undefined;
+  const nextSlot = upcoming ? block?.slots.find((item) => item.id === upcoming.slotId) : block?.slots.find((item) => item.id !== session.slotId && !completedSlots.has(item.id));
+  const nextMessage = upcoming ? `${upcoming.date}: ${slotPlain(nextSlot)} · about ${upcoming.workout.estimatedMinutes} minutes.` : block?.remainingWeek?.week === block?.currentWeek ? 'No more days selected this week. Change your remaining week in Progress if your availability changes.' : nextSlot ? `${slotPlain(nextSlot)} is a remaining workout. Check Today before starting; recommendations account for your completed work.` : 'Your planned workouts are finished. Check Progress for your weekly totals.';
   const commit = () => {
     const outcome = apply(commitRuntimeSession);
     if (!outcome.ok) {
@@ -79,9 +84,9 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
     const week = getRuntimeWeekView(outcome.state);
     notify({
       tone: 'success',
-      title: `committed ${slot?.label ?? 'session'}${week ? ` · ${week.status.sessionsLogged}/${week.status.totalSessions} slots this week` : ''}`,
-      message: 'Now in history and shaping future prescriptions. The block was not recompiled.',
-      action: { label: 'week', run: onOpenWeek },
+      title: `Workout finished${week ? ` · ${week.status.sessionsLogged}/${week.status.totalSessions} workouts this week` : ''}`,
+      message: nextMessage,
+      action: { label: 'Progress', run: onOpenWeek },
     });
     onOpenWeek();
   };
@@ -105,16 +110,16 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
   return (
     <View style={styles.flex}>
       <ScrollView contentContainerStyle={styles.page}>
-        <ScreenBrand name="overload" sub={`${muscles}${slot ? ` · ${slot.label}` : ''}`} />
+        <ScreenBrand name="Workout summary" sub={`${muscles}${slot ? ` · ${slotPlain(slot)}` : ''}`} />
 
-        <ScreenTitle title="Session diff" text="Today against your last results. Green beat it. A flat line at the same effort is a hold, not a win." />
+        <ScreenTitle title="Workout summary" text="Your completed work compared with your previous workout." />
 
         {empty ? (
-          <Txt variant="code" tone="warning">⚠ nothing logged, nothing to commit</Txt>
+          <Txt variant="code" tone="warning">⚠ Log a set before finishing this workout.</Txt>
         ) : (
           <View style={styles.card}>
             <View style={styles.cardHead}>
-              <Txt variant="mono" tone="muted" style={styles.flex}>@@ {slot?.label ?? 'session'} · {items.length} {items.length === 1 ? 'lift' : 'lifts'} @@</Txt>
+              <Txt variant="mono" tone="muted" style={styles.flex}>{items.length} {items.length === 1 ? 'exercise' : 'exercises'} completed</Txt>
               <Txt variant="code" style={{ color: headline.color }}>{headline.text}</Txt>
             </View>
 
@@ -131,7 +136,7 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
                     key={item.exerciseId} style={styles.lift} accessible
                     accessibilityLabel={`${item.exerciseName}. ${tag.kind === 'baseline' ? 'Baseline, no prior result' : tag.kind}. ${previous ? `Before ${previous}. ` : ''}Now ${current}. ${item.change}`}
                   >
-                    <Txt variant="code" style={styles.liftName}>{item.exerciseId}</Txt>
+                    <Txt variant="code" style={styles.liftName}>{item.exerciseName}</Txt>
                     {tag.kind === 'held' ? (
                       <DiffRow sign=" " look={LOOK.hold} text={current} tag="held" tagColor={colors.orange} />
                     ) : tag.kind === 'baseline' ? (
@@ -156,8 +161,10 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
           </View>
         )}
 
+        <Txt variant="heading">Next workout</Txt>
+        <Txt variant="caption">{nextMessage}</Txt>
         <Txt variant="caption" tone="muted" style={styles.caption}>
-          A commit counts as progress only when load, reps, or effort beat last time. Matching last time at the same RIR is a hold.
+          A workout shows progress only when load, reps, or effort beat last time. Matching last time at the same RIR is a hold.
         </Txt>
       </ScrollView>
 
@@ -166,12 +173,12 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
           <Txt variant="code" style={{ color: colors.diffRed }}>discard</Txt>
         </Pressable>
         <Pressable
-          accessibilityRole="button" accessibilityLabel="Commit session" accessibilityState={{ disabled: empty }}
+          accessibilityRole="button" accessibilityLabel="Finish workout" accessibilityState={{ disabled: empty }}
           accessibilityHint={empty ? 'Nothing was logged' : undefined}
           disabled={empty} onPress={commit}
           style={({ pressed }) => [styles.commit, empty && styles.commitOff, pressed && styles.pressed]}
         >
-          <Txt variant="code" style={[styles.commitText, empty && styles.commitTextOff]}>commit session  →</Txt>
+          <Txt variant="code" style={[styles.commitText, empty && styles.commitTextOff]}>Finish workout  →</Txt>
         </Pressable>
       </View>
     </View>

@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ExerciseDetailsSheet } from './ExerciseMuscles';
 import { colors, space } from './theme';
 import { Button, Divider, ScreenBrand, Txt } from './ui';
-import { exerciseName, muscleList, PHASE_COPY } from './copy';
+import { exerciseName, muscleList, slotPlain, PHASE_COPY } from './copy';
 import { committedSlotIds, phaseOfWeek } from './selectors';
 
 type Props = {
@@ -17,9 +17,9 @@ type Props = {
 };
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
-const PHASE_SHORT = { accumulate: 'acc', intensify: 'int', peak: 'peak', deload: 'deload' } as const;
+const PHASE_SHORT = { accumulate: 'Build', intensify: 'Load', peak: 'Challenge', deload: 'Recover' } as const;
 
-/** build.block: the compiled artifact. Inspectable, versioned, never edited by hand. */
+/** My plan: the compiled artifact. Inspectable, versioned, never edited by hand. */
 export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props) => {
   const { height: windowHeight } = useWindowDimensions();
   const slotReel = useRef<ScrollView>(null);
@@ -35,7 +35,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
     ?? block.slots[0]?.id;
   const [selectedSlotId, setSelectedSlotId] = useState(focusSlotId);
   const [inspectedExerciseId, setInspectedExerciseId] = useState<string | null>(null);
-  const inspectedExercise = RUNTIME_EXERCISES.find((item) => item.id === inspectedExerciseId) ?? null;
+  const inspectedExercise = (block.catalog ?? RUNTIME_EXERCISES).find((item) => item.id === inspectedExerciseId) ?? null;
   const selectedIndex = Math.max(0, block.slots.findIndex((slot) => slot.id === selectedSlotId));
   const selectedSlot = block.slots[selectedIndex] ?? block.slots[0];
   const reelRows = Math.min(3, block.slots.length);
@@ -59,16 +59,17 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
   }, [reelOffset, selectedSlotId]);
 
   const confirmNextBlock = () => Alert.alert(
-    'Compile the next block?',
-    'Your current working weights become the new baseline. The pipeline restarts at accumulate, week 1. Committed history is kept.',
-    [{ text: 'Not yet', style: 'cancel' }, { text: 'Compile next block', onPress: onNextBlock }]
+    'Start the next training plan?',
+    'Your current working weights become the starting point. A new training cycle begins at week 1. Completed workouts stay in your history.',
+    [{ text: 'Not yet', style: 'cancel' }, { text: 'Start next training plan', onPress: onNextBlock }]
   );
 
   if (!selectedSlot) return null;
 
   return (
     <View style={styles.page}>
-      <ScreenBrand name="build.block" />
+      <ScreenBrand name="My plan" />
+      {block.remainingWeek?.week === block.currentWeek ? <Txt variant="caption" tone="secondary">Your usual weekly schedule is shown here. See Progress for the changes you accepted for this week.</Txt> : null}
 
       <View style={styles.phaseStrip}>
         {block.phases.map((phase) => {
@@ -86,7 +87,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
       <View style={styles.workspace}>
         <View style={styles.sessionsSection}>
           <View style={styles.reelMeta}>
-            <Txt variant="label" tone="muted">SLOTS</Txt>
+            <Txt variant="label" tone="muted">WORKOUTS</Txt>
             <Txt variant="mono" tone="secondary">{selectedIndex + 1} / {block.slots.length}</Txt>
           </View>
           <ScrollView
@@ -110,14 +111,14 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
                 <Pressable
                   key={slot.id}
                   accessibilityRole="button"
-                  accessibilityLabel={`${slot.label}, ${done ? 'completed' : active ? 'active' : 'planned'}`}
+                  accessibilityLabel={`${slotPlain(slot)}, ${done ? 'completed' : active ? 'active' : 'planned'}`}
                   accessibilityState={{ selected }}
                   onPress={() => setSelectedSlotId(slot.id)}
                   style={({ pressed }) => [styles.slotRow, { height: rowHeight }, selected && styles.slotRowSelected, pressed && styles.pressed]}
                 >
                   <Txt variant="label" tone={stateTone} style={styles.slotState}>{stateLabel}</Txt>
                   <View style={styles.slotName}>
-                    <Txt variant="code" numberOfLines={1}>{slot.label}</Txt>
+                    <Txt variant="code" numberOfLines={1}>{slotPlain(slot)}</Txt>
                     <Txt variant="caption" tone="muted" numberOfLines={1}>{muscleList(visibleMuscles)}{hiddenMuscles > 0 ? ` +${hiddenMuscles}` : ''}</Txt>
                   </View>
                   {selected && done ? <Txt variant="label" tone="success" accessibilityLabel="Completed">✓</Txt> : null}
@@ -143,11 +144,11 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
             </View>
             {selectedSlot.plannedExercises.map((plan, index) => (
               <Pressable key={`${plan.exerciseId}:${index}`} onPress={() => setInspectedExerciseId(plan.exerciseId)}
-                accessibilityRole="button" accessibilityLabel={`Inspect ${exerciseName(plan.exerciseId)}, muscle targets and exercise details`}
+                accessibilityRole="button" accessibilityLabel={`Inspect ${exerciseName(plan.exerciseId, block.catalog)}, muscle targets and exercise details`}
                 style={({ pressed }) => [styles.exerciseRow, { minHeight: exerciseRowHeight }, pressed && styles.pressed]}>
                 <Txt variant="mono" tone="muted" style={styles.exerciseNumber}>{index + 1}</Txt>
                 <View style={styles.exerciseIdentity}>
-                  <Txt variant="caption">{exerciseName(plan.exerciseId)}</Txt>
+                  <Txt variant="caption">{exerciseName(plan.exerciseId, block.catalog)}</Txt>
                   <Txt variant="mono" tone="muted">{plan.sets} × {current.minReps}–{current.maxReps} · RIR {current.targetRir}</Txt>
                 </View>
                 {plan.selection.substituted ? <Txt variant="heading" tone="warning" accessible accessibilityLabel="Substituted exercise">↔</Txt> : null}
@@ -156,10 +157,10 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
             ))}
             {atEnd ? (
               <Button
-                label="Compile next block"
+                label="Start next training plan"
                 onPress={confirmNextBlock}
                 disabled={sessionActive}
-                hint={sessionActive ? 'Commit or discard the active session first' : undefined}
+                hint={sessionActive ? 'Finish or discard the active session first' : undefined}
                 style={styles.nextBlockButton}
               />
             ) : null}

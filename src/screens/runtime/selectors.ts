@@ -1,3 +1,5 @@
+import { localDate } from '../../runtime/planDates';
+import { belongsToPlan } from '../../runtime/planDates';
 import type { BlockPhase, RuntimeState, TrainingBlock } from '../../runtime';
 
 export const phaseOfWeek = (block: TrainingBlock, week: number): BlockPhase =>
@@ -12,7 +14,7 @@ export const committedSlotIds = (state: RuntimeState, block: TrainingBlock): Set
   to.setDate(from.getDate() + 7);
   return new Set(state.sessions.filter((session) => {
     const date = new Date(`${session.context.date}T12:00:00`);
-    return session.blockId === block.id && session.blockVersion === block.version
+    return belongsToPlan(session, block)
       && session.status === 'committed' && date >= from && date < to;
   }).map((session) => session.slotId));
 };
@@ -48,4 +50,4 @@ export const pendingSetForExercise = (state: RuntimeState, exerciseId: string) =
   return set ? { entry, set, exerciseIndex, exerciseCount: session.exercises.length } : null;
 };
 
-export const todayISO = () => new Date().toISOString().slice(0, 10);
+export const todayISO = () => localDate();

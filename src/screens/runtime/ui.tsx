@@ -64,15 +64,15 @@ const RuntimeChip = ({ override }: { override?: string }) => {
   const { chip: contextChip, sync, onSyncPress } = useContext(ChromeContext);
   const chip = override ?? contextChip;
   if (!chip) return null;
-  const trouble = sync === 'device' || sync === 'failed';
-  const spoken = sync === 'device' ? 'Saved on this device only. Tap to retry sync' : sync === 'failed' ? 'Not saved. Tap to retry' : sync === 'saving' ? 'Saving' : 'Synced';
+  const trouble = sync === 'device' || sync === 'failed' || sync === 'conflict';
+  const spoken = sync === 'conflict' ? 'Training changed on another device. Tap to resolve' : sync === 'device' ? 'Saved on this device only. Tap to retry sync' : sync === 'failed' ? 'Not saved. Tap to retry' : sync === 'saving' ? 'Saving' : 'Synced';
   return (
     <Pressable
       accessibilityRole={trouble ? 'button' : 'text'} accessibilityLabel={`${chip}. ${spoken}`}
       disabled={!trouble} onPress={onSyncPress}
       style={styles.chip}
     >
-      <Ionicons name="git-branch" size={14} color={colors.violet} />
+      <Ionicons name="calendar-outline" size={14} color={colors.violet} />
       <Txt variant="mono" tone="secondary" numberOfLines={1}>{chip}</Txt>
       {sync === 'saving' ? <Ionicons name="sync" size={13} color={colors.textMuted} /> : null}
       {trouble ? <View style={[styles.syncDot, { backgroundColor: sync === 'failed' ? colors.danger : colors.warning }]} /> : null}
@@ -84,7 +84,7 @@ const RuntimeChip = ({ override }: { override?: string }) => {
 export const ScreenBrand = ({ name, sub, chip }: { name: string; sub?: string; chip?: string }) => (
   <View style={styles.brandRow}>
     <View style={styles.flex}>
-      <Txt variant="label" style={styles.brandName} accessibilityRole="header">{name}<Txt variant="label" style={styles.brandDot}>.</Txt></Txt>
+      <Txt variant="label" style={styles.brandName} accessibilityRole="header">{name}</Txt>
       {sub ? <Txt variant="mono" tone="muted" numberOfLines={2}>{sub}</Txt> : null}
     </View>
     <RuntimeChip override={chip} />
@@ -108,7 +108,7 @@ export const Card = ({ children, tone, style }: { children: ReactNode; tone?: 'a
 export const Section = ({ title, hint, children }: { title: string; hint?: ReactNode; children: ReactNode }) => (
   <View style={styles.section}>
     <View style={styles.sectionHead}>
-      <Txt variant="mono" tone="muted" header>@@ {title} @@</Txt>
+      <Txt variant="mono" tone="muted" header>{title}</Txt>
       {hint}
     </View>
     {children}
@@ -132,8 +132,8 @@ const stateLook: Record<RuntimeStateName, { symbol: string; tone: Tone }> = {
 export const StateTag = ({ state, label }: { state: RuntimeStateName; label?: string }) => {
   const look = stateLook[state];
   return (
-    <View accessible accessibilityLabel={`state: ${label ?? state}`} style={[styles.stateTag, { borderColor: toneColor[look.tone] }]}>
-      <Txt variant="label" tone={look.tone}>{look.symbol} {label ?? state}</Txt>
+    <View accessible accessibilityLabel={`state: ${label ?? ({ committed: 'Completed', recompiled: 'Updated', proposed: 'Planned', blocked: 'Unavailable', active: 'In progress', logged: 'Recorded', discarded: 'Discarded' }[state])}`} style={[styles.stateTag, { borderColor: toneColor[look.tone] }]}>
+      <Txt variant="label" tone={look.tone}>{look.symbol} {label ?? ({ committed: 'Completed', recompiled: 'Updated', proposed: 'Planned', blocked: 'Unavailable', active: 'In progress', logged: 'Recorded', discarded: 'Discarded' }[state])}</Txt>
     </View>
   );
 };
@@ -150,7 +150,7 @@ export const Button = ({
 }) => {
   const inactive = Boolean(disabled || loading);
   const textTone: Tone = inactive ? 'muted' : variant === 'primary' ? 'onAccent' : variant === 'danger' ? 'danger' : variant === 'ghost' ? 'accent' : 'primary';
-  const text = `${label.toLowerCase()}${loading ? '…' : variant === 'primary' && !inactive && !label.includes('→') ? '  →' : ''}`;
+  const text = `${label}${loading ? '…' : variant === 'primary' && !inactive && !label.includes('→') ? '  →' : ''}`;
   return (
     <Pressable
       accessibilityRole="button"

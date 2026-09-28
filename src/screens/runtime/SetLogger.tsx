@@ -8,7 +8,7 @@ import {
 import type { ExerciseDefinition, RuntimeState, SessionPrescription } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
 import { Button, Divider, IconButton, Sheet, Txt } from './ui';
-import { describeRuntimeError, formatKg, muscleList, setsWord } from './copy';
+import { describeRuntimeError, formatKg, muscleList, setsWord, slotPlain } from './copy';
 import { ExerciseMuscleDetails, ExerciseTargetPreview } from './ExerciseMuscles';
 import { nextPendingSet, pendingSetForExercise, sessionProgress } from './selectors';
 import type { ApplyResult } from './useRuntimeController';
@@ -68,15 +68,15 @@ const SolverHeader = ({ state, session, now }: { state: RuntimeState; session: S
   const startedAt = new Date(session.createdAt).getTime();
   const elapsedMinutes = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 60000)) : 0;
   const minutesLeft = Math.max(0, session.context.minutesAvailable - elapsedMinutes);
-  const recovery = session.context.recovery === 'yes' ? 'recovered' : session.context.recovery === 'meh' ? 'tired' : 'wrecked';
+  const recovery = session.context.recovery === 'yes' ? 'recovered' : session.context.recovery === 'meh' ? 'tired' : 'very tired';
   const target = slot?.targetMuscles[0] ?? session.exercises[0]?.exercise.primaryMuscles[0] ?? 'training';
   return (
     <View style={styles.solverHead}>
       <View style={styles.solverHeadRow}>
-        <Txt variant="label" style={styles.solverBrand}>solver()<Txt variant="label" tone="accent">.</Txt></Txt>
-        <Txt variant="mono" tone="secondary" numberOfLines={1}>{slot?.label ?? 'session'} · {minutesLeft}m left · {recovery}</Txt>
+        <Txt variant="label" style={styles.solverBrand}>Today<Txt variant="label" tone="accent">.</Txt></Txt>
+        <Txt variant="mono" tone="secondary" numberOfLines={1}>{slotPlain(slot)} · {minutesLeft}m left · {recovery}</Txt>
       </View>
-      <Txt variant="code" tone="accent">maximize {target}_{state.block?.goal ?? state.source?.goal ?? 'training'}</Txt>
+      <Txt variant="code" tone="accent">Focus: {target} · {state.block?.goal === 'strength' ? 'strength' : 'building muscle'}</Txt>
     </View>
   );
 };
@@ -88,6 +88,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const visibleStackRows = windowHeight < 620 ? 1 : windowHeight < 740 ? 2 : 3;
   const frameLabelStyle = [styles.frameLabel, windowWidth < 360 && styles.frameLabelCompact];
   const [reps, setReps] = useState('');
+  const [load, setLoad] = useState('');
   const [rir, setRir] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [sheet, setSheet] = useState<null | 'menu' | 'swap' | 'details' | 'swapDetails'>(null);
@@ -105,13 +106,14 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const progress = sessionProgress(state);
   const setId = pending?.set.id;
   const maxReps = pending?.set.maxReps;
+  const targetLoad = pending?.set.loadKg;
 
   useEffect(() => {
     if (maxReps !== undefined) {
-      setReps(`${maxReps}`); setRir(3); setSubmitting(false); setSetStartedAt(null);
+      setLoad(`${targetLoad ?? 0}`); setReps(`${maxReps}`); setRir(3); setSubmitting(false); setSetStartedAt(null);
       frameScroll.current?.scrollTo({ y: 0, animated: true });
     }
-  }, [setId, maxReps]);
+  }, [setId, maxReps, targetLoad]);
 
   useEffect(() => {
     const timer = setInterval(() => setClockNow(Date.now()), 1000);
@@ -155,6 +157,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const canUndo = Boolean(lastOfExercise && lastResult?.setId === lastOfExercise.setId);
   const remainingHere = entry.sets.filter((item) => item.status === 'pending').length;
   const repsValue = reps.trim() === '' ? null : Number.parseInt(reps, 10);
+  const loadValue = Number(load);
+  const loadValid = load.trim() !== '' && Number.isFinite(loadValue) && loadValue >= 0;
   const repsValid = repsValue !== null && Number.isFinite(repsValue) && repsValue >= 0 && repsValue <= 99;
 
   // What to beat: the most recent result for this lift from an earlier session, the same reference the diff uses.
@@ -162,7 +166,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
 
   const candidateResult = () => ({
     prescriptionId: session.id, setId: set.id, exerciseId: exercise.id,
-    prescribedLoadKg: set.loadKg, prescribedMinReps: set.minReps, prescribedMaxReps: set.maxReps,
+    actualLoadKg: loadValue, prescribedLoadKg: set.loadKg, prescribedMinReps: set.minReps, prescribedMaxReps: set.maxReps,
     targetRir: set.targetRir, completedReps: repsValue ?? 0, reportedRir: rir ?? 0, completedAt: new Date().toISOString(),
   });
   const report = (outcome: ApplyResult, onSuccess: () => void) => {
@@ -188,11 +192,11 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       if (!latest) throw new Error('nothing_to_undo');
       return undoLastRuntimeSet(current);
     });
-    report(outcome, () => notify({ tone: 'info', title: 'undo → last set pending again', message: 'Its decision and working weight are rolled back.' }));
+    report(outcome, () => notify({ tone: 'info', title: 'Last set undone', message: 'Its decision and working weight are rolled back.' }));
   };
 
   const submit = () => {
-    if (submitting || rir === null || !repsValid) return;
+    if (submitting || rir === null || !repsValid || !loadValid) return;
     setSubmitting(true);
     const result = candidateResult();
     const outcome = apply((current) => recordRuntimeSet(current, result));
@@ -201,6 +205,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       setSetStartedAt(null);
       const decision = outcome.state.decisions[outcome.state.decisions.length - 1];
       const next = pendingSetForExercise(outcome.state, exercise.id) ?? nextPendingSet(outcome.state);
+      notify({ tone: 'info', title: next ? `Next: ${next.entry.exercise.name}` : 'Workout ready to finish', message: next ? `${formatKg(next.set.loadKg)} · ${next.set.minReps}–${next.set.maxReps} reps after your rest.` : 'Review your completed work and finish the workout.' });
       if (next && decision) {
         const duration = restSecondsFor(outcome.state.source?.goal ?? 'hypertrophy', exercise.compound);
         setOrdering(false);
@@ -229,13 +234,13 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
 
   const reportPain = () => Alert.alert(
     `Report pain on ${exercise.name}?`,
-    `Skips the remaining ${setsWord(remainingHere)} and adds ${exercise.name} to source as excluded. solver() stops prescribing it. Recompile the block after this session to get a replacement, or allow it again in source. If pain is sharp or lasting, stop training and get it checked.`,
+    `Skips the remaining ${setsWord(remainingHere)} and adds ${exercise.name} to your excluded exercises. Today stops prescribing it. Update your plan after this workout to get a replacement, or allow it again in training preferences. If pain is sharp or lasting, stop training and get it checked.`,
     [{ text: 'Cancel', style: 'cancel' }, {
       text: 'Exclude it', style: 'destructive', onPress: () => {
         setSheet(null);
         report(apply((current) => skipRuntimeExercise(current, exercise.id, true)), () => notify({
-          tone: 'warning', title: `pain → ${exercise.name} excluded in source`,
-          message: 'solver() will not prescribe it. Recompile once this session is committed to get a replacement.', sticky: true,
+          tone: 'warning', title: `pain → ${exercise.name} excluded from future workouts`,
+          message: 'Today will not prescribe it. Update your plan after finishing this workout to get a replacement.', sticky: true,
         }));
       },
     }]
@@ -256,7 +261,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
 
   const finishEarly = () => Alert.alert(
     'Finish now and review?',
-    `Skips the ${setsWord(progress.pending)} still pending and opens the session diff. Nothing is committed to history until you commit.`,
+    `Skips the ${setsWord(progress.pending)} still pending and opens the workout summary. Finish the workout to include it in your completed workout history.`,
     [{ text: 'Keep training', style: 'cancel' }, {
       text: 'Finish and review', onPress: () => {
         setSheet(null);
@@ -280,7 +285,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const closeSheet = () => setSheet(sheet === 'swapDetails' ? 'swap' : sheet === 'swap' ? 'menu' : null);
   const sheetTitle = sheet === 'swap' ? `Swap ${exercise.name}` : sheet === 'swapDetails' && swapPreview ? swapPreview.name : exercise.name;
   const priorDose = lastOfExercise ?? beat;
-  const loadChange = priorDose ? Number((set.loadKg - priorDose.prescribedLoadKg).toFixed(2)) : 0;
+  const loadChange = priorDose ? Number((set.loadKg - (priorDose.actualLoadKg ?? priorDose.prescribedLoadKg)).toFixed(2)) : 0;
   const frameRule = priorDose
     ? `${priorDose.completedReps >= priorDose.prescribedMinReps ? 'last reps hit' : 'last reps missed'} + RIR${priorDose.reportedRir} → ${loadChange > 0 ? `+${formatKg(loadChange)}` : loadChange < 0 ? `−${formatKg(Math.abs(loadChange))}` : 'hold'}`
     : 'no prior signal → establish baseline';
@@ -311,7 +316,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       <DockBridge
         phase={dockPhase}
         seconds={resting ? secondsLeft : setSeconds}
-        primaryDisabled={dockPhase === 'set' && (rir === null || !repsValid || submitting)}
+        primaryDisabled={dockPhase === 'set' && (rir === null || !repsValid || !loadValid || submitting)}
         onPrimary={runDockPrimary}
         onReset={resetDockTimer}
         onChange={onDockChange}
@@ -322,7 +327,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
         <View style={styles.workspace}>
           <View style={styles.runtimeSection}>
           <View style={styles.sectionHeader}>
-            <Txt variant="label" tone="muted">STACK</Txt>
+            <Txt variant="label" tone="muted">EXERCISES</Txt>
             <View style={styles.stackHeaderActions}>
               <Txt variant="mono" tone="secondary">{exerciseIndex + 1} / {exerciseCount} lifts</Txt>
               <Pressable
@@ -397,9 +402,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
 
           <View style={[styles.runtimeSection, styles.frameSection]}>
           <View style={styles.sectionHeader}>
-            <Txt variant="label" tone={resting ? 'accent' : 'muted'}>{resting ? 'NEXT FRAME' : 'FRAME'}</Txt>
+            <Txt variant="label" tone={resting ? 'accent' : 'muted'}>{resting ? 'NEXT SET' : 'CURRENT SET'}</Txt>
             <View style={styles.frameIdentity}>
-              <Txt variant="mono" tone="secondary" numberOfLines={1}>{exercise.id}</Txt>
+              <Txt variant="mono" tone="secondary" numberOfLines={1}>{exercise.name}</Txt>
               <IconButton icon="ellipsis-horizontal" label="Menu: swap, skip, pain, finish, discard" onPress={() => setSheet('menu')} />
             </View>
           </View>
@@ -415,6 +420,12 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
           >
           <ExerciseTargetPreview exercise={exercise} compact={windowHeight < 740} label={resting ? 'Next lift · muscles' : 'Muscles worked'} onPress={() => setSheet('details')} />
           <View style={styles.frameFacts}>
+            <View style={styles.frameRow}>
+              <Txt variant="label" tone="muted" style={frameLabelStyle}>Weight used</Txt>
+              <TextInput style={[styles.inlineRepsInput, { width: 80 }]} value={load} onChangeText={setLoad}
+                inputMode="decimal" keyboardType="decimal-pad" accessibilityLabel="Actual weight in kilograms" selectTextOnFocus />
+              <Txt variant="caption">kg</Txt>
+            </View>
             <View style={styles.frameRow}>
               <Txt variant="label" tone="muted" style={frameLabelStyle}>this set</Txt>
               <Txt variant="code" style={styles.frameValue}>{formatKg(set.loadKg)} × {set.maxReps} @ RIR{set.targetRir}</Txt>
@@ -464,9 +475,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
               </View>
             </View>
             <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={frameLabelStyle}>{lastOfExercise ? 'last committed' : 'last session'}</Txt>
+              <Txt variant="label" tone="muted" style={frameLabelStyle}>{lastOfExercise ? 'last recorded' : 'last session'}</Txt>
               <Txt variant="code" tone={priorDose ? 'secondary' : 'muted'} style={styles.frameValue}>
-                {priorDose ? `${formatKg(priorDose.prescribedLoadKg)} × ${priorDose.completedReps} @ RIR${priorDose.reportedRir}` : 'none · establishes baseline'}
+                {priorDose ? `${formatKg((priorDose.actualLoadKg ?? priorDose.prescribedLoadKg))} × ${priorDose.completedReps} @ RIR${priorDose.reportedRir}` : 'none · establishes baseline'}
               </Txt>
             </View>
             <View style={styles.frameRow}>
@@ -476,9 +487,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
           </View>
 
           {canUndo ? (
-            <Pressable accessibilityRole="button" accessibilityLabel="Undo last committed set" onPress={undoSet} style={styles.undoInline}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Undo last recorded set" onPress={undoSet} style={styles.undoInline}>
               <Ionicons name="arrow-undo" size={16} color={colors.textMuted} />
-              <Txt variant="mono" tone="muted">undo last commit</Txt>
+              <Txt variant="mono" tone="muted">undo last recorded set</Txt>
             </Pressable>
           ) : null}
             </ScrollView>

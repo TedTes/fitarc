@@ -1,3 +1,4 @@
+import type { ExerciseDefinition } from '../../runtime/types';
 import { RUNTIME_EXERCISES } from '../../runtime';
 import { MUSCLE_MASKS } from './muscleMasks';
 
@@ -40,10 +41,10 @@ export const partLabel = (part: string): string | null => {
 export type PartLift = { name: string; role: 'primary' | 'assist' };
 
 /** The lifts in this block that train a part, direct work first. */
-export const liftsForPart = (part: string, plannedExerciseIds: Set<string>): PartLift[] => {
+export const liftsForPart = (part: string, plannedExerciseIds: Set<string>, catalog: ExerciseDefinition[] = RUNTIME_EXERCISES): PartLift[] => {
   const spec = PART_LIFTS[part];
   if (!spec) return [];
-  const named = (id: string) => RUNTIME_EXERCISES.find((exercise) => exercise.id === id)?.name;
+  const named = (id: string) => catalog.find((exercise) => exercise.id === id)?.name;
   const pick = (ids: string[], role: PartLift['role']): PartLift[] => ids
     .filter((id) => plannedExerciseIds.has(id))
     .flatMap((id) => { const name = named(id); return name ? [{ name, role }] : []; });

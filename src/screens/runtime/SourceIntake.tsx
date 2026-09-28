@@ -28,7 +28,7 @@ const parseWeight = (raw: string | undefined): { value: number | null; error: st
   return { value, error: null };
 };
 
-export const SourceIntake = ({ user, initial, blockVersion, sessionActive, onSubmit, onCancel }: Props) => {
+export const SourceIntake = ({ user, initial, sessionActive, onSubmit, onCancel }: Props) => {
   const [goal, setGoal] = useState<RuntimeGoal>(initial.goal);
   const [days, setDays] = useState<3 | 4 | 5>(initial.daysPerWeek);
   const [minutes, setMinutes] = useState<30 | 45 | 60 | 75>(initial.sessionMinutes);
@@ -83,24 +83,23 @@ export const SourceIntake = ({ user, initial, blockVersion, sessionActive, onSub
     setAttempted(true);
     if (invalidCount > 0) return;
     Alert.alert(
-      'Recompile block?',
-      'Keeps: committed history and working weights.\n\nRebuilds: exercises, weekly volume and session slots as a new block version, starting at week 1 today. Sessions committed under the old block stay in history but no longer count toward the new block\'s weeks.',
-      [{ text: 'Not yet', style: 'cancel' }, { text: 'Recompile block', onPress: build }]
+      'Update your plan?',
+      'Updates your planned exercises and targets. Your completed workouts, working weights and current training week are preserved.',
+      [{ text: 'Not yet', style: 'cancel' }, { text: 'Update my plan', onPress: build }]
     );
   };
 
   const nothingChanged = changes.length === 0;
   const blockedReason = sessionActive
-    ? 'A session is active. Commit or discard it before recompiling.'
-    : nothingChanged ? 'No source values changed, so there is nothing to recompile.' : null;
+    ? 'A session is active. Finish or discard it before updating your plan.'
+    : nothingChanged ? 'Your training preferences have not changed.' : null;
   const experience = user.experienceLevel === 'advanced' ? 'advanced' : 'intermediate';
-  const nextSource = initial.version + 1;
 
   return (
     <View style={styles.flex}>
       <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-        <ScreenBrand name="source" sub="edit" />
-        <ScreenTitle title="Edit source" />
+        <ScreenBrand name="Training preferences" />
+        <ScreenTitle title="Training preferences" />
 
         <Section title="goal" hint={<Txt variant="caption" tone="muted">required · choose one</Txt>}>
           <Choice label="hypertrophy" code description="build muscle" selected={goal === 'hypertrophy'} onPress={() => setGoal('hypertrophy')} />
@@ -139,7 +138,7 @@ export const SourceIntake = ({ user, initial, blockVersion, sessionActive, onSub
 
         <Section title="seed working weights" hint={<Txt variant="caption" tone="muted">optional</Txt>}>
           {preset === 'dumbbells' ? (
-            <Txt variant="caption" tone="secondary">These are barbell lifts, which a dumbbell source doesn't use.</Txt>
+            <Txt variant="caption" tone="secondary">These are barbell lifts, which a dumbbell plan doesn't use.</Txt>
           ) : (
             <>
               <Txt variant="caption" tone="secondary">
@@ -172,17 +171,17 @@ export const SourceIntake = ({ user, initial, blockVersion, sessionActive, onSub
         </Section>
 
         <Card>
-          <Txt variant="mono" tone="muted">@@ from your profile @@</Txt>
+          <Txt variant="mono" tone="muted">From your profile</Txt>
           <Txt variant="code">experience: {experience}</Txt>
         </Card>
 
         <Card tone={changes.length ? 'accent' : undefined}>
           <View style={styles.versionRow}>
-            <Txt variant="mono" tone="muted">@@ recompile preview @@</Txt>
+            <Txt variant="mono" tone="muted">Planned changes</Txt>
             <StateTag state={changes.length ? 'recompiled' : 'blocked'} label={changes.length ? 'pending' : 'no changes'} />
           </View>
-          <Txt variant="code">source v{nextSource} (was v{initial.version}) → block v{blockVersion + 1}</Txt>
-          {changes.length ? changes.map((line) => <Txt key={line} variant="caption">• {line}</Txt>) : <Txt variant="caption" tone="secondary">Change a value above to see the diff.</Txt>}
+          <Txt variant="caption">Your updated preferences will apply to future workouts. Completed workouts stay in your history.</Txt>
+          {changes.length ? changes.map((line) => <Txt key={line} variant="caption">• {line}</Txt>) : <Txt variant="caption" tone="secondary">Change a value above to see the changes.</Txt>}
         </Card>
 
         {attempted && invalidCount > 0 ? <Banner tone="error" title={`Fix ${invalidCount} seed ${invalidCount === 1 ? 'weight' : 'weights'} to continue`} message="Each must be a number in kg, or blank." /> : null}
@@ -190,11 +189,11 @@ export const SourceIntake = ({ user, initial, blockVersion, sessionActive, onSub
         <View style={styles.actions}>
           {blockedReason ? <Txt variant="caption" tone="warning" accessibilityLiveRegion="polite">⊘ {blockedReason}</Txt> : null}
           <Button
-            label="Recompile block"
+            label="Update my plan"
             icon="refresh"
             onPress={submit}
             disabled={Boolean(blockedReason)}
-            hint="Rebuilds the block after you confirm"
+            hint="Updates your plan after you confirm"
           />
           <Button label="Cancel" variant="secondary" onPress={onCancel} hint="Discards your edits" />
         </View>

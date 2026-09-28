@@ -1,6 +1,6 @@
 import { RUNTIME_EXERCISES } from '../../runtime';
 import type {
-  BlockPhase, BlockPhaseKind, ExerciseDiff, ExerciseSelectionTrace, Muscle, PrescribedExercise,
+  ExerciseDefinition, BlockPhase, BlockPhaseKind, ExerciseDiff, ExerciseSelectionTrace, Muscle, PrescribedExercise,
   RecoveryState, SessionContext, SlotChoiceReason, TrainingSlot, WeeklyMuscleStatus,
 } from '../../runtime';
 
@@ -19,8 +19,8 @@ const EQUIPMENT_LABEL: Record<string, string> = {
 };
 export const equipmentLabel = (item: string) => EQUIPMENT_LABEL[item] ?? item.replace(/_/g, ' ');
 
-export const exerciseName = (exerciseId: string) =>
-  RUNTIME_EXERCISES.find((exercise) => exercise.id === exerciseId)?.name ?? exerciseId.replace(/_/g, ' ');
+export const exerciseName = (exerciseId: string, catalog: ExerciseDefinition[] = RUNTIME_EXERCISES) =>
+  catalog.find((exercise) => exercise.id === exerciseId)?.name ?? exerciseId.replace(/_/g, ' ');
 
 const SLOT_PLAIN: Record<string, string> = {
   'full.a': 'Full body A', 'full.b': 'Full body B', 'full.c': 'Full body C',
@@ -36,11 +36,11 @@ export const limitationLabel = (item: string) => item.charAt(0).toUpperCase() + 
 export const goalLabel = (goal: 'hypertrophy' | 'strength') => goal === 'strength' ? 'strength' : 'hypertrophy';
 export const goalPlain = (goal: 'hypertrophy' | 'strength') => goal === 'strength' ? 'get stronger' : 'build muscle';
 
-export const PHASE_COPY: Record<BlockPhaseKind, { name: BlockPhaseKind; plain: string; purpose: string }> = {
-  accumulate: { name: 'accumulate', plain: 'build volume', purpose: 'Build volume at a comfortable effort.' },
-  intensify: { name: 'intensify', plain: 'raise load', purpose: 'Loads climb and sets get harder.' },
-  peak: { name: 'peak', plain: 'test the top', purpose: 'The hardest week, closest to failure. Where new bests happen.' },
-  deload: { name: 'deload', plain: 'recover', purpose: 'About half the sets at lighter loads. Clears fatigue before the next block.' },
+export const PHASE_COPY: Record<BlockPhaseKind, { name: string; plain: string; purpose: string }> = {
+  accumulate: { name: 'Build', plain: 'build volume', purpose: 'Build volume at a comfortable effort.' },
+  intensify: { name: 'Load', plain: 'raise load', purpose: 'Loads climb and sets get harder.' },
+  peak: { name: 'Challenge', plain: 'test the top', purpose: 'The hardest week, closest to failure. Where new bests happen.' },
+  deload: { name: 'Recover', plain: 'recover', purpose: 'Fewer sets, with load increases paused before your next plan.' },
 };
 
 export const phaseEffort = (phase: Pick<BlockPhase, 'minReps' | 'maxReps' | 'targetRir'>) =>
@@ -67,7 +67,7 @@ const REASON_CODE_COPY: Record<string, string> = {
   recovery_meh: 'Sets ×0.7 (rounded up): recovery is "tired".',
   recovery_no: 'Capped at 2 sets: recovery is "wrecked".',
   deload_override: 'Deload week: sets halved.',
-  weekly_volume_cap: 'Fewer sets to stay under this muscle\'s weekly MRV.',
+  weekly_volume_cap: 'Fewer sets to stay under this muscle\'s weekly weekly maximum.',
   pain_constraint: 'Removed to protect a limitation.',
   exercise_unavailable: 'Marked unavailable today.',
 };
@@ -95,7 +95,7 @@ export const describeSwap = (selection: ExerciseSelectionTrace): { category: Swa
     return { category: 'limit', label: `required · protects ${areas}`, detail: `${selection.originalExerciseName} loads your ${areas}.` };
   }
   if (selection.reasons.some((reason) => reason.startsWith('fits available equipment'))) {
-    return { category: 'equipment', label: 'required · equipment', detail: `${selection.originalExerciseName} needs gear your source doesn't include.` };
+    return { category: 'equipment', label: 'required · equipment', detail: `${selection.originalExerciseName} needs equipment not in your training preferences.` };
   }
   if (selection.reasons.includes('replaces an excluded lift')) {
     return { category: 'excluded', label: 'required · flagged for pain', detail: `You flagged ${selection.originalExerciseName} for pain.` };
@@ -106,10 +106,10 @@ export const describeSwap = (selection: ExerciseSelectionTrace): { category: Swa
 export const describeSlotChoice = (choice: SlotChoiceReason): string => {
   const behind = choice.muscles.slice(0, 2);
   switch (choice.kind) {
-    case 'only_remaining': return 'only slot not yet committed this week';
-    case 'repeat': return 'all slots committed; repeats the one with the most volume owed';
-    case 'next_in_order': return 'next in the block, nothing behind MEV';
-    default: return `${muscleList(behind)} furthest below MEV`;
+    case 'only_remaining': return 'the only workout remaining this week';
+    case 'repeat': return 'a repeat after finishing this week’s planned workouts';
+    case 'next_in_order': return 'next in your plan';
+    default: return `${muscleList(behind)} furthest below weekly minimum`;
   }
 };
 
@@ -117,19 +117,19 @@ export type FitChange = { exerciseName: string; kind: 'kept' | 'reduced' | 'remo
 
 /** Compares today's solve with the planned slot: what stayed, shrank or dropped, and why. */
 export const describeFit = (
-  slot: TrainingSlot | null, exercises: PrescribedExercise[], context: SessionContext, painIds: string[]
+  slot: TrainingSlot | null, exercises: PrescribedExercise[], context: SessionContext, painIds: string[], catalog: ExerciseDefinition[] = RUNTIME_EXERCISES
 ): FitChange[] => {
   if (!slot) return [];
   const unavailableEquipment = new Set(context.unavailableEquipment);
   const pain = new Set(painIds);
   const skipped = new Set(context.unavailableExerciseIds);
   return slot.plannedExercises.map((plan) => {
-    const definition = RUNTIME_EXERCISES.find((item) => item.id === plan.exerciseId);
-    const name = definition?.name ?? exerciseName(plan.exerciseId);
+    const definition = catalog.find((item) => item.id === plan.exerciseId);
+    const name = definition?.name ?? exerciseName(plan.exerciseId, catalog);
     const today = exercises.find((entry) => entry.exercise.id === plan.exerciseId);
     if (!today) {
       const blocked = definition?.equipment.filter((item) => unavailableEquipment.has(item)) ?? [];
-      if (pain.has(plan.exerciseId)) return { exerciseName: name, kind: 'removed', note: 'Flagged for pain. Recompile the block to get a replacement.' };
+      if (pain.has(plan.exerciseId)) return { exerciseName: name, kind: 'removed', note: 'Flagged for pain. Update your plan to get a replacement.' };
       if (skipped.has(plan.exerciseId)) return { exerciseName: name, kind: 'removed', note: 'Marked unavailable today.' };
       if (blocked.length) return { exerciseName: name, kind: 'removed', note: `Needs ${blocked.map(equipmentLabel).join(' + ').toLowerCase()}, unavailable today.` };
       return { exerciseName: name, kind: 'removed', note: `Dropped to fit the ${context.minutesAvailable}-minute cap.` };
@@ -139,7 +139,7 @@ export const describeFit = (
       const why = code === 'within_constraints' ? `Trimmed to fit ${context.minutesAvailable} min.` : REASON_CODE_COPY[code] ?? 'Trimmed to fit today.';
       return { exerciseName: name, kind: 'reduced', note: `${plan.sets} → ${today.sets.length} sets. ${why}` };
     }
-    return { exerciseName: name, kind: 'kept', note: `${today.sets.length} sets, as compiled.` };
+    return { exerciseName: name, kind: 'kept', note: `${today.sets.length} sets, as planned.` };
   });
 };
 
@@ -166,14 +166,14 @@ export const OUTCOME_COPY: Record<ExerciseDiff['outcome'], { symbol: string; mea
 
 export const muscleStateCopy = (item: WeeklyMuscleStatus, weekComplete: boolean): { label: string; tone: 'ok' | 'info' | 'warn' } => {
   if (weekComplete) {
-    if (item.state === 'under') return { label: 'under MEV', tone: 'warn' };
-    if (item.state === 'over') return { label: 'over MRV', tone: 'warn' };
+    if (item.state === 'under') return { label: 'under weekly minimum', tone: 'warn' };
+    if (item.state === 'over') return { label: 'over weekly maximum', tone: 'warn' };
     return { label: 'in range', tone: 'ok' };
   }
   const projected = item.projectedSets ?? item.completedSets;
   if (item.state === 'on_track') return { label: 'projected in range', tone: 'ok' };
   if (item.state === 'scheduled') return { label: 'nothing scheduled', tone: 'info' };
-  return { label: projected > item.max ? 'projected over MRV' : 'projected under MEV', tone: 'info' };
+  return { label: projected > item.max ? 'projected over weekly maximum' : 'projected under weekly minimum', tone: 'info' };
 };
 
 // ───────────────────────── Errors ─────────────────────────
@@ -184,11 +184,11 @@ export const describeRuntimeError = (error: unknown): { title: string; message: 
   switch (code) {
     case 'finish_active_session_before_recompile':
     case 'finish_active_session_first':
-      return { title: 'A session is active', message: 'Commit or discard it in solver() first, then try again.' };
+      return { title: 'A session is active', message: 'Finish or discard it in Today first, then try again.' };
     case 'set_already_recorded':
       return { title: 'Set already logged', message: 'That set was already recorded. Nothing changed.' };
     case 'active_session_required':
-      return { title: 'No active session', message: 'That session is no longer active. Start a new one in solver().' };
+      return { title: 'No active session', message: 'That session is no longer active. Start a new workout in Today.' };
     case 'replacement_not_compatible':
       return { title: 'Cannot swap to that exercise', message: 'It no longer fits your constraints. Pick another, or skip the exercise.' };
     case 'undo_stale':
@@ -196,7 +196,7 @@ export const describeRuntimeError = (error: unknown): { title: string; message: 
     case 'nothing_to_undo':
       return { title: 'Nothing to undo', message: 'No sets are logged in this session yet.' };
     case 'runtime_not_compiled':
-      return { title: 'No block yet', message: 'Compile a block from your source first.' };
+      return { title: 'No training plan yet', message: 'Create your training plan first.' };
     default:
       return { title: 'That did not apply', message: code && !code.includes('_') ? code : 'Nothing was changed. Try again.' };
   }

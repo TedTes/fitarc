@@ -31,7 +31,7 @@ type StepKey = 'identity' | 'goal' | 'schedule' | 'context' | 'baseline' | 'limi
 const STEPS: Array<{ key: StepKey; label: string }> = [
   { key: 'identity', label: 'identity' }, { key: 'goal', label: 'objective' },
   { key: 'schedule', label: 'schedule' }, { key: 'context', label: 'context' },
-  { key: 'baseline', label: 'baseline' }, { key: 'limits', label: 'constraints' },
+  { key: 'baseline', label: 'baseline' }, { key: 'limits', label: 'preferences' },
 ];
 const GOALS: Array<{ label: string; detail: string; value: PrimaryGoal }> = [
   { label: 'build muscle', detail: 'hypertrophy and size', value: 'build_muscle' },
@@ -151,7 +151,7 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
   const renderStep = () => {
     switch (activeStep.key) {
       case 'identity': return <>
-        <StepHeading eyebrow="ATHLETE" title="What should we call you?" detail="Used on your training block and session log." />
+        <StepHeading eyebrow="ATHLETE" title="What should we call you?" detail="Used on your training plan and workout log." />
         <TextInput autoFocus={!initialName} autoCapitalize="words" maxLength={40} placeholder="your name"
           placeholderTextColor={colors.textMuted} selectionColor={colors.accent}
           style={[styles.nameInput, nameError && styles.nameInputError]} value={name}
@@ -167,7 +167,7 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
         </View>
       </>;
       case 'goal': return <>
-        <StepHeading eyebrow="OBJECTIVE" title="What are we optimizing?" detail="This sets the block's progression rules." />
+        <StepHeading eyebrow="OBJECTIVE" title="What is your goal?" detail="This guides your training plan." />
         <View style={styles.choiceList}>{GOALS.map((item) =>
           <Choice key={item.value} {...item} selected={primaryGoal === item.value} onPress={() => setPrimaryGoal(item.value)} />)}</View>
       </>;
@@ -186,8 +186,8 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
             <Text style={[styles.timeText, sessionMinutes === minutes && styles.timeTextSelected]}>{minutes}m</Text>
           </TouchableOpacity>)}</View>
         <View style={styles.runtimeNote}>
-          <Text style={styles.runtimePrompt}>solver()</Text>
-          <Text style={styles.runtimeNoteText}>will compile a {splitForDays(daysPerWeek).replaceAll('_', ' ')} rotation</Text>
+          <Text style={styles.runtimePrompt}>Your plan</Text>
+          <Text style={styles.runtimeNoteText}>uses a {splitForDays(daysPerWeek).replaceAll('_', ' ')} rotation</Text>
         </View>
       </>;
       case 'context': return <>
@@ -219,7 +219,7 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
           </TouchableOpacity>;
         })}</View>
         <View style={styles.compileCard}>
-          <View><Text style={styles.compileEyebrow}>READY TO COMPILE</Text><Text style={styles.compileName}>{name.trim()}</Text></View>
+          <View><Text style={styles.compileEyebrow}>READY TO TRAIN</Text><Text style={styles.compileName}>{name.trim()}</Text></View>
           <Text style={styles.compileSummary}>{summary}</Text>
         </View>
       </>;
@@ -248,7 +248,7 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
           <Ionicons name="arrow-back" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
         <TouchableOpacity activeOpacity={0.82} disabled={animating} style={styles.continueButton} onPress={continueFlow}>
-          <Text style={styles.continueText}>{isLast ? 'compile profile' : 'continue'}</Text>
+          <Text style={styles.continueText}>{isLast ? 'Create my plan' : 'continue'}</Text>
           <Ionicons name={isLast ? 'flash' : 'arrow-forward'} size={18} color={colors.accentText} />
         </TouchableOpacity>
       </View>

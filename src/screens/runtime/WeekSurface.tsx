@@ -1,3 +1,7 @@
+import { belongsToPlan, datePlusDays } from '../../runtime/planDates';
+import { RemainingWeekEditor } from './RemainingWeekEditor';
+import type { ApplyResult } from './useRuntimeController';
+import type { Notify } from './constants';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -5,7 +9,7 @@ import { computeWeeklyStatus, RUNTIME_EXERCISES } from '../../runtime';
 import type { ExerciseDefinition, Muscle, RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
 import { Card, Divider, Meter, ScreenBrand, Txt } from './ui';
-import { formatSets, goalLabel, muscleLabel, PHASE_COPY } from './copy';
+import { formatSets, goalLabel, slotPlain, muscleLabel, PHASE_COPY } from './copy';
 import { phaseOfWeek } from './selectors';
 import { MuscleMap, type MuscleMapTone } from './MuscleMap';
 import { liftsForPart, partLabel } from './muscleParts';
@@ -16,6 +20,8 @@ type Props = {
   state: RuntimeState;
   block: TrainingBlock;
   status: WeeklyStatus;
+  apply: (transform: (state: RuntimeState) => RuntimeState) => ApplyResult;
+  notify: Notify;
 };
 
 const DELOAD_CHECK = 80;
@@ -28,8 +34,8 @@ const rowStatus = (item: WeeklyMuscleStatus, value: number) => {
   return { label: 'in range', tone: 'success' as const, icon: 'checkmark-circle-outline' as const };
 };
 
-/** status/week: a selectable block-week ledger of committed evidence and projected dose. */
-export const WeekSurface = ({ state, block, status }: Props) => {
+/** Progress: a selectable block-week ledger of committed evidence and projected dose. */
+export const WeekSurface = ({ state, block, status, apply, notify }: Props) => {
   const scroll = useRef<ScrollView>(null);
   const mapOffset = useRef(0);
   const [selectedWeek, setSelectedWeek] = useState(block.currentWeek);
@@ -64,29 +70,29 @@ export const WeekSurface = ({ state, block, status }: Props) => {
     result[item.muscle] = rowStatus(item, value).tone;
     return result;
   }, {}), [closed, muscles]);
-  const plannedExerciseIds = useMemo(
-    () => new Set(block.slots.flatMap((slot) => slot.plannedExercises.map((item) => item.exerciseId))),
-    [block]
-  );
+  const weekStart = datePlusDays(block.startedOn, (selectedWeek - 1) * 7);
+  const completedSlots = new Set(state.sessions.filter((item) => belongsToPlan(item, block) && item.status === 'committed' && item.context.date >= weekStart && item.context.date < datePlusDays(weekStart, 7)).map((item) => item.slotId));
+  const remainingWindows = block.remainingWeek?.week === selectedWeek ? block.remainingWeek.windows.filter((item) => !completedSlots.has(item.slotId)) : undefined;
+  const plannedExerciseIds = new Set(remainingWindows ? remainingWindows.flatMap((window) => window.workout.exercises.map((entry) => entry.exercise.id)) : block.slots.filter((slot) => !completedSlots.has(slot.id)).flatMap((slot) => slot.plannedExercises.map((item) => item.exerciseId)));
   const selectedPartName = selectedPart ? partLabel(selectedPart) : null;
   const selectedExercises = useMemo(() => {
     if (!selectedMuscle) return [];
     if (selectedPart && selectedPartName) {
-      return liftsForPart(selectedPart, plannedExerciseIds).flatMap((lift) => {
-        const exercise = RUNTIME_EXERCISES.find((item) => item.name === lift.name);
+      return liftsForPart(selectedPart, plannedExerciseIds, block.catalog).flatMap((lift) => {
+        const exercise = (block.catalog ?? RUNTIME_EXERCISES).find((item) => item.name === lift.name);
         return exercise ? [{ exercise, assist: lift.role === 'assist' }] : [];
       });
     }
-    return RUNTIME_EXERCISES.filter((exercise) => plannedExerciseIds.has(exercise.id)
+    return (block.catalog ?? RUNTIME_EXERCISES).filter((exercise) => plannedExerciseIds.has(exercise.id)
       && (exercise.primaryMuscles.includes(selectedMuscle) || exercise.secondaryMuscles.includes(selectedMuscle)))
       .map((exercise) => ({ exercise, assist: !exercise.primaryMuscles.includes(selectedMuscle) }));
-  }, [plannedExerciseIds, selectedMuscle, selectedPart, selectedPartName]);
+  }, [block.catalog, plannedExerciseIds, selectedMuscle, selectedPart, selectedPartName]);
   const selectedDose = muscles.find((item) => item.muscle === selectedMuscle);
 
   return (
     <ScrollView ref={scroll} contentContainerStyle={styles.page}>
       <ScreenBrand
-        name="status/week"
+        name="Progress"
         sub={`${PHASE_COPY[phase.kind].name} · week ${displayState}`}
         chip={`${goalLabel(block.goal)} · wk ${selectedWeek}/${block.durationWeeks}`}
       />
@@ -96,7 +102,7 @@ export const WeekSurface = ({ state, block, status }: Props) => {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.weekPicker}
         accessibilityRole="radiogroup"
-        accessibilityLabel="Select block week"
+        accessibilityLabel="Select training week"
       >
         {Array.from({ length: block.durationWeeks }, (_, index) => index + 1).map((week) => {
           const selected = week === selectedWeek;
@@ -120,13 +126,14 @@ export const WeekSurface = ({ state, block, status }: Props) => {
       <Card style={styles.sessionSummary}>
         <Ionicons name={sessionIcon} size={25} color={sessionTone} />
         <Txt variant="heading" style={styles.flex}>
-          {selectedStatus.sessionsLogged} of {selectedStatus.totalSessions} sessions logged
+          {selectedStatus.sessionsLogged} of {selectedStatus.totalSessions} workouts finished
         </Txt>
         <Txt variant="label" tone={closed ? 'success' : displayState === 'live' ? 'accent' : 'muted'}>
           {displayState === 'closed' ? 'week closed' : displayState === 'live' ? 'week live' : 'upcoming'}
         </Txt>
       </Card>
 
+      {selectedWeek === block.currentWeek ? <RemainingWeekEditor state={state} apply={apply} notify={notify} /> : null}
       <View onLayout={(event) => { mapOffset.current = event.nativeEvent.layout.y; }}>
       <Card style={styles.mapCard}>
         <View style={styles.mapHeader}>
@@ -173,15 +180,18 @@ export const WeekSurface = ({ state, block, status }: Props) => {
           </Pressable> : null}
           </View>
           {selectedDose ? <Txt variant="caption" tone="secondary">
-            {formatSets(selectedDose.completedSets)} logged{closed ? '' : ` · ${formatSets(selectedDose.projectedSets ?? selectedDose.completedSets)} projected`} · range {selectedDose.min}–{selectedDose.max} set credits
+            {formatSets(selectedDose.completedSets)} logged{closed ? '' : ` · ${formatSets(selectedDose.scheduledSets ?? 0)} remaining planned`} · range {selectedDose.min}–{selectedDose.max} set credits
           </Txt> : null}
           <Txt variant="caption" tone="secondary" numberOfLines={3}>
             {selectedMuscle
               ? selectedExercises.length
-                ? 'Lifts in your block · tap to inspect'
-                : selectedPartName ? 'No compiled lift targets this muscle directly.' : 'No compiled lift targets this muscle.'
-              : 'See the lifts in this block that train each region.'}
+                ? 'Exercises in your plan · tap to inspect'
+                : selectedPartName ? 'No planned exercise targets this muscle directly.' : 'No planned exercise targets this muscle.'
+              : 'See the exercises in this plan that train each region.'}
           </Txt>
+          <Txt variant="caption" tone="muted">Set credits estimate training volume, not muscle growth or measured recovery.</Txt>
+          {selectedMuscle && remainingWindows ? remainingWindows.filter((window) => window.workout.exercises.some((entry) => entry.exercise.primaryMuscles.includes(selectedMuscle) || entry.exercise.secondaryMuscles.includes(selectedMuscle))).map((window) => <Txt key={window.date} variant="caption" tone="secondary">{window.date}: {window.workout.exercises.filter((entry) => entry.exercise.primaryMuscles.includes(selectedMuscle) || entry.exercise.secondaryMuscles.includes(selectedMuscle)).map((entry) => `${entry.exercise.name} (${entry.sets.length} sets)`).join(', ')}</Txt>) : null}
+          {selectedMuscle && !remainingWindows ? block.slots.filter((slot) => !completedSlots.has(slot.id) && slot.plannedExercises.some((item) => selectedExercises.some((entry) => entry.exercise.id === item.exerciseId))).map((slot) => <Txt key={slot.id} variant="caption" tone="secondary">{slotPlain(slot)}: {slot.plannedExercises.filter((item) => selectedExercises.some((entry) => entry.exercise.id === item.exerciseId)).map((item) => `${(block.catalog ?? RUNTIME_EXERCISES).find((exercise) => exercise.id === item.exerciseId)?.name} (${item.sets} sets)`).join(', ')}</Txt>) : null}
           {selectedExercises.map(({ exercise, assist }) => (
             <Pressable key={exercise.id} accessibilityRole="button" accessibilityLabel={`Inspect ${exercise.name}${assist ? ', assisting lift' : ''}`}
               onPress={() => setInspectedExercise(exercise)} style={({ pressed }) => [styles.relatedLift, pressed && styles.pressed]}>
@@ -245,7 +255,7 @@ export const WeekSurface = ({ state, block, status }: Props) => {
         <View style={styles.fatigueCopy}>
           <View style={styles.fatigueTitle}>
             <Txt variant="display" tone={highFatigue ? 'warning' : 'accent'}>{selectedStatus.fatiguePercent}%</Txt>
-            <Txt variant="label" tone={highFatigue ? 'warning' : 'secondary'}>fatigue</Txt>
+            <Txt variant="label" tone={highFatigue ? 'warning' : 'secondary'}>workload estimate</Txt>
           </View>
           <Txt variant="caption" tone="secondary">
             {phase.kind === 'deload'
@@ -253,7 +263,7 @@ export const WeekSurface = ({ state, block, status }: Props) => {
               : selectedStatus.deloadRecommended
                 ? 'Recovery threshold reached · deload rules apply next.'
                 : displayState === 'upcoming'
-                  ? 'No fatigue recorded for this week yet.'
+                  ? 'No training workload recorded for this week yet.'
               : `${selectedStatus.headroomSessions} session${selectedStatus.headroomSessions === 1 ? '' : 's'} of headroom before this week closes.`}
           </Txt>
           <Meter

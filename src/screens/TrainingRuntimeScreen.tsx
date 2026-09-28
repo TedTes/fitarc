@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User } from '../types/domain';
@@ -29,10 +29,10 @@ type Props = {
 };
 
 const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typeof Ionicons.glyphMap; iconOn: keyof typeof Ionicons.glyphMap; hint: string }> = [
-  { key: 'solver', label: 'solver()', spoken: 'solver, today\'s workout', icon: 'barbell-outline', iconOn: 'barbell', hint: "Today's workout, fitted to current conditions" },
-  { key: 'block', label: 'block', spoken: 'block, your compiled plan', icon: 'layers-outline', iconOn: 'layers', hint: 'The compiled six-week plan' },
-  { key: 'week', label: 'week', spoken: 'week, status', icon: 'stats-chart-outline', iconOn: 'stats-chart', hint: "This week's dose and fatigue" },
-  { key: 'account', label: 'account', spoken: 'account settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Profile, training source, and account controls' },
+  { key: 'solver', label: 'Today', spoken: 'Today’s workout', icon: 'barbell-outline', iconOn: 'barbell', hint: "Today's workout, fitted to current conditions" },
+  { key: 'block', label: 'My plan', spoken: 'My training plan', icon: 'layers-outline', iconOn: 'layers', hint: 'The six-week training plan' },
+  { key: 'week', label: 'Progress', spoken: 'Training progress', icon: 'stats-chart-outline', iconOn: 'stats-chart', hint: "This week's dose and fatigue" },
+  { key: 'account', label: 'Profile', spoken: 'Profile settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Profile, training preferences, and account controls' },
 ];
 const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, account: 3 };
 const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -40,7 +40,7 @@ const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(s
 export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const insets = useSafeAreaInsets();
   const fontsReady = useMonoFonts();
-  const { state, loading: stateLoading, loadError, reload, sync, apply, retrySync } = useRuntimeController(user.id);
+  const { state, loading: stateLoading, loadError, reload, sync, apply, retrySync, restoreCloud } = useRuntimeController(user.id);
   const loading = stateLoading || !fontsReady;
   const [surface, setSurface] = useState<Surface>('solver');
   const [editingSource, setEditingSource] = useState(false);
@@ -66,6 +66,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const restoredNotice = useRef(false);
   const autoCompileAttempted = useRef(false);
   const onboardingSource = useMemo<TrainingSource>(() => {
+    if (user.trainingPreferences) return user.trainingPreferences;
     const preferences = user.planPreferences;
     const preferredDays = preferences?.daysPerWeek;
     const fallbackDays = user.trainingSplit === 'upper_lower' ? 4 : user.trainingSplit === 'push_pull_legs' || user.trainingSplit === 'bro_split' ? 5 : 3;
@@ -85,7 +86,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
       seedWorkingSets: [],
       createdAt: new Date().toISOString(),
     };
-  }, [user.experienceLevel, user.id, user.planPreferences, user.trainingSplit]);
+  }, [user.experienceLevel, user.id, user.planPreferences, user.trainingPreferences, user.trainingSplit]);
 
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardOpen(true));
@@ -164,10 +165,10 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   useEffect(() => {
     if (loading || restoredNotice.current) return;
     restoredNotice.current = true;
-    if (progress?.pending === 0) notify({ tone: 'info', title: 'session restored · logged · awaiting commit', message: 'The app was closed before you committed. Commit or discard it.' });
+    if (progress?.pending === 0) notify({ tone: 'info', title: 'Workout restored · ready to finish', message: 'The app was closed before you finished your workout. Finish or discard it.' });
   }, [loading, notify, progress]);
 
-  // A session lives in solver(): landing there when it starts or is restored. Leaving mid-session is allowed.
+  // A session lives in Today: landing there when it starts or is restored. Leaving mid-session is allowed.
   useEffect(() => { if (inSession) setSurface('solver'); }, [inSession]);
 
   const weekView = useMemo(() => (loading ? null : getRuntimeWeekView(state)), [loading, state]);
@@ -181,16 +182,16 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     const outcome = apply((current) => compileTrainingBlock(current, source));
     if (!outcome.ok) {
       const problem = describeRuntimeError(outcome.error);
-      notify({ tone: 'error', title: first ? `compile failed · ${problem.message}` : `recompile failed · ${problem.message}`, sticky: true });
+      notify({ tone: 'error', title: first ? `Plan update failed · ${problem.message}` : `Plan update failed · ${problem.message}`, sticky: true });
       return false;
     }
     setEditingSource(false);
     setSurface('block');
     notify({
       tone: 'success',
-      title: first ? `compiled block v${outcome.state.block?.version}` : `recompiled → block v${outcome.state.block?.version}`,
+      title: first ? 'Your training plan is ready' : 'Your training plan was updated',
       message: first ? 'Your first six weeks are ready.' : outcome.state.lastBlockDiff.join(' · '),
-      action: { label: 'solver()', run: () => setSurface('solver') },
+      action: { label: 'Today', run: () => setSurface('solver') },
     });
     return true;
   }, [apply, notify, state.source]);
@@ -209,17 +210,25 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     const outcome = apply(compileNextRuntimeBlock);
     if (!outcome.ok) {
       const problem = describeRuntimeError(outcome.error);
-      notify({ tone: 'error', title: `compile failed · ${problem.message}`, sticky: true });
+      notify({ tone: 'error', title: `Plan update failed · ${problem.message}`, sticky: true });
       return;
     }
     notify({
-      tone: 'success', title: `compiled block v${outcome.state.block?.version}`,
+      tone: 'success', title: 'Your training plan is ready',
       message: 'Working weights carried over. The pipeline restarted at accumulate, week 1.',
-      action: { label: 'solver()', run: () => setSurface('solver') },
+      action: { label: 'Today', run: () => setSurface('solver') },
     });
   }, [apply, notify]);
 
   const onSyncPress = () => {
+    if (sync === 'conflict') {
+      Alert.alert('Training changed on another device',
+        'This device has unsynced changes. Loading the cloud version keeps a recovery copy of this device’s training locally.',
+        [{ text: 'Keep training here', style: 'cancel' }, { text: 'Load cloud version', onPress: () => {
+          void restoreCloud().catch(() => notify({ tone: 'error', title: 'Could not load cloud data. Your device copy is preserved.' }));
+        } }]);
+      return;
+    }
     if (sync === 'device' || sync === 'failed') {
       retrySync();
       notify({ tone: 'info', title: 'retrying save', message: 'Your changes stay on this device in the meantime.' });
@@ -243,7 +252,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   if (loadError) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <Banner tone="error" title="Could not load runtime state" message={`${loadError} Nothing was changed or deleted.`} />
+        <Banner tone="error" title="Could not load your training" message={`${loadError} Nothing was changed or deleted.`} />
         <Button label="Try again" onPress={reload} icon="refresh" />
         <Button label="Sign out" variant="secondary" onPress={() => void onLogout()} />
       </View>
@@ -252,10 +261,10 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
 
   // ── First launch: no runtime yet ──
   if (!state.source || !state.block) {
-    if (!autoCompileError) return <AthleteLoadingScreen message="Building your training block…" />;
+    if (!autoCompileError) return <AthleteLoadingScreen message="Creating your training plan…" />;
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <Banner tone="error" title="Could not compile your block" message={autoCompileError} />
+        <Banner tone="error" title="Could not create your plan" message={autoCompileError} />
         <Button label="Sign out" variant="secondary" onPress={() => void onLogout()} />
       </View>
     );
@@ -263,7 +272,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
 
   const block = weekView?.block ?? state.block;
   const status = weekView?.status;
-  const chip = `${goalLabel(state.source.goal)} · wk ${block.currentWeek}/${block.durationWeeks}`;
+  const chip = `${goalLabel(state.source.goal)} · Week ${block.currentWeek} of ${block.durationWeeks}`;
 
   return (
     <ChromeContext.Provider value={{ chip, sync, onSyncPress }}>
@@ -280,7 +289,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           <TodaySurface
             state={state} apply={apply} notify={notify} active={surface === 'solver'}
             onDockChange={setWorkoutDock}
-            onOpenSource={() => go('account')} onOpenWeek={() => go('week')}
+            onOpenSource={() => { setEditingSource(true); go('account'); }} onOpenWeek={() => go('week')}
           />
         </Animated.View>
         <Animated.View
@@ -297,7 +306,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'week' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'week' && styles.surfaceActive, { opacity: surfaceOpacity.week, transform: [{ translateX: surfaceOffset.week }] }]}
         >
-          {status ? <WeekSurface state={state} block={block} status={status} /> : null}
+          {status ? <WeekSurface state={state} block={block} status={status} apply={apply} notify={notify} /> : null}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'account' ? 'auto' : 'none'}
