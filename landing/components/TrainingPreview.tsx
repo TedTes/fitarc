@@ -65,7 +65,7 @@ const MAX_REPS = 12
 const TARGET_RIR = 3
 const REST_SECONDS = 120 // prescribed by the runtime for a compound lift in a hypertrophy block
 
-type PreviewTab = 'solver()' | 'block' | 'week'
+type PreviewTab = 'Today' | 'block' | 'week'
 type Detail = { exercise: PreviewExercise; replacement?: boolean }
 type Frame = { load: number; last: { load: number; reps: number; rir: number; inSession: boolean } | null }
 type LoggedSet = { exerciseId: string; credit: number }
@@ -83,11 +83,11 @@ const BLOCK_DAYS = {
 } as const
 const WEEK_LIFT: Record<string, string> = { chest: 'machine_chest_press', triceps: 'triceps_pressdown', quads: 'back_squat', hamstrings: 'romanian_deadlift' }
 const WEEK_ROWS = ['chest', 'triceps', 'quads', 'hamstrings']
-const PHASES = [{ weeks: 'W1–2', name: 'acc' }, { weeks: 'W3–4', name: 'int' }, { weeks: 'W5', name: 'peak' }, { weeks: 'W6', name: 'deload' }]
+const PHASES = [{ weeks: 'W1–2', name: 'build' }, { weeks: 'W3–4', name: 'load' }, { weeks: 'W5', name: 'challenge' }, { weeks: 'W6', name: 'recover' }]
 
 export function TrainingPreview() {
   const scroll = useRef<HTMLDivElement>(null)
-  const [tab, setTab] = useState<PreviewTab>('solver()')
+  const [tab, setTab] = useState<PreviewTab>('Today')
   const [exercise, setExercise] = useState(() => previewExercise('machine_chest_press'))
   const [detail, setDetail] = useState<Detail | null>(null)
   const [swapping, setSwapping] = useState(false)
@@ -106,7 +106,7 @@ export function TrainingPreview() {
   const changeTab = (next: PreviewTab) => { setTab(next); setDetail(null); setSwapping(false); setNotice('') }
   const replacements = ['bench_press', 'neutral_grip_floor_press', 'machine_chest_press'].map(previewExercise).filter(lift => lift.id !== exercise.id)
   const restartSession = () => { setPhase('ready'); setSets([]); setFrame(openingFrame('machine_chest_press')); setExercise(previewExercise('machine_chest_press')); setReps(MAX_REPS); setRir(TARGET_RIR); setNotice('') }
-  const reset = () => { changeTab('solver()'); restartSession() }
+  const reset = () => { changeTab('Today'); restartSession() }
 
   const finishSet = () => {
     const next = nextLoad({ load: frame.load, reps, rir, minReps: MIN_REPS, maxReps: MAX_REPS, incrementKg: exercise.incrementKg })
@@ -142,7 +142,7 @@ export function TrainingPreview() {
   const tour = (step: TourStep) => {
     setNotice('')
     if (step === 'week') return changeTab('week')
-    setTab('solver()')
+    setTab('Today')
     if (step === 'inspect') { setSwapping(false); setDetail({ exercise }) }
     else { if (complete) restartSession(); else if (phase === 'active') setPhase('ready'); setDetail(null); setSwapping(true) }
   }
@@ -178,42 +178,42 @@ export function TrainingPreview() {
           <ExerciseDetails key={detail.exercise.id} exercise={detail.exercise} />
           {detail.replacement && <button className="preview-primary" type="button" onClick={() => replaceLift(detail.exercise)}>Use {detail.exercise.name}</button>}
         </> : swapping ? <>
-          <button className="preview-text-button preview-back" type="button" autoFocus onClick={() => setSwapping(false)}>← Back to solver()</button>
+          <button className="preview-text-button preview-back" type="button" autoFocus onClick={() => setSwapping(false)}>← Back to Today</button>
           <p className="preview-title">Compare before you swap.</p>
           <p className="preview-muted">Current: {exercise.name}. Inspect a replacement’s targets and equipment. Logged sets stay; the remaining sets move to the new lift.</p>
           {replacements.map(lift => <button className="preview-lift" type="button" key={lift.id} onClick={() => setDetail({ exercise: lift, replacement: true })}><span><strong>{lift.name}</strong><small>{lift.equipment.join(' · ')} · {lift.primaryMuscles.map(muscleName).join(', ')}</small></span><span aria-hidden="true">↗</span></button>)}
           <p className="preview-footnote">In the app, replacements reflect your equipment and limitations.</p>
-        </> : tab === 'solver()' ? <>
-          <div className="phone-header"><strong>solver()<i>.</i></strong><span>upper.a · set {currentSet} of {TOTAL_SETS}</span></div>
-          <p className="runtime-goal">maximize chest_hypertrophy</p>
-          <div className="section-line"><b>STACK</b><span>{sets.length} of {TOTAL_SETS} sets logged</span></div>
+        </> : tab === 'Today' ? <>
+          <div className="phone-header"><strong>Today<i>.</i></strong><span>Upper body A · set {currentSet} of {TOTAL_SETS}</span></div>
+          <p className="runtime-goal">Focus: chest · building muscle</p>
+          <div className="section-line"><b>EXERCISES</b><span>{sets.length} of {TOTAL_SETS} sets logged</span></div>
           <div className="preview-current"><span>▶ now</span><strong>{exercise.name}</strong><button type="button" onClick={() => setSwapping(true)} disabled={phase !== 'ready' || complete}>Swap</button></div>
           <div className="frame-panel">
-            <div className="section-line"><b>FRAME</b><span>{phaseLabel}</span></div>
+            <div className="section-line"><b>CURRENT SET</b><span>{phaseLabel}</span></div>
             <TargetButton exercise={exercise} label={phase === 'rest' ? 'NEXT SET · MUSCLES' : 'MUSCLES WORKED'} onClick={() => setDetail({ exercise })} />
             <div className="frame-facts">
               <div className="frame-row"><span>this set</span><code>{formatKg(frame.load)} × {MAX_REPS} @ RIR{TARGET_RIR}</code></div>
               <div className="frame-row"><span>rule</span><code className="frame-rule">{frameRule(frame.last, frame.load, MIN_REPS)}</code></div>
               <div className={`frame-row frame-adjust${inputsLocked ? ' locked' : ''}`}><label htmlFor="preview-reps">reps done</label><input id="preview-reps" type="number" inputMode="numeric" min="1" max="99" value={reps} onChange={event => setReps(Math.max(1, Math.min(99, Math.trunc(Number(event.target.value)) || 1)))} disabled={inputsLocked} /><em>/ {MIN_REPS}–{MAX_REPS}</em></div>
               <div className={`frame-row frame-adjust${inputsLocked ? ' locked' : ''}`}><label htmlFor="preview-rir">RIR</label><select id="preview-rir" value={rir} onChange={event => setRir(Number(event.target.value))} disabled={inputsLocked}>{[0, 1, 2, 3, 4].map(value => <option value={value} key={value}>{rirText(value)}</option>)}</select><em>/ target {TARGET_RIR}</em></div>
-              <div className="frame-row"><span>{frame.last?.inSession ? 'last committed' : 'last session'}</span><code>{frame.last ? `${formatKg(frame.last.load)} × ${frame.last.reps} @ RIR${frame.last.rir}` : 'none · establishes baseline'}</code></div>
+              <div className="frame-row"><span>{frame.last?.inSession ? 'last logged' : 'last session'}</span><code>{frame.last ? `${formatKg(frame.last.load)} × ${frame.last.reps} @ RIR${frame.last.rir}` : 'none · establishes baseline'}</code></div>
             </div>
             <p className="preview-muted">Reps are the main signal; RIR fine-tunes the next load. A set counts toward weekly volume when RIR is at or under target.</p>
           </div>
         </> : tab === 'block' ? <>
-          <div className="phone-header"><strong>build.block<i>.</i></strong></div>
+          <div className="phone-header"><strong>My plan<i>.</i></strong></div>
           <p className="preview-muted">Week 1 of 6 · accumulate</p>
-          <div className="phase-strip" role="group" aria-label="Six-week block phases">{PHASES.map((item, index) => <span key={item.weeks} className={index === 0 ? 'current' : undefined}>{index === 0 && <i />}{item.weeks} {item.name}</span>)}</div>
+          <div className="phase-strip" role="group" aria-label="Six-week training phases">{PHASES.map((item, index) => <span key={item.weeks} className={index === 0 ? 'current' : undefined}>{index === 0 && <i />}{item.weeks} {item.name}</span>)}</div>
           <div className="preview-segments" role="group" aria-label="Sample training day">{(Object.keys(BLOCK_DAYS) as Array<keyof typeof BLOCK_DAYS>).map(item => <button key={item} type="button" aria-pressed={day === item} onClick={() => setDay(item)}>{item}</button>)}</div>
           <p className="preview-title">See the purpose of every lift.</p>
           <p className="preview-muted">Open an exercise to inspect its equipment and primary and assisting muscles.</p>
           {BLOCK_DAYS[day].map(id => { const lift = previewExercise(id); return <button className="preview-lift" type="button" key={id} onClick={() => setDetail({ exercise: lift })}><span><strong>{lift.name}</strong><small>3 × 8–12 · RIR 3</small></span><span aria-hidden="true">↗</span></button> })}
-          <div className="preview-block-note"><span>THE SIX-WEEK ARC</span><p>Accumulate → intensify → peak → deload</p></div>
+          <div className="preview-block-note"><span>YOUR SIX-WEEK PLAN</span><p>Build → load → challenge → recover</p></div>
         </> : <>
-          <div className="phone-header"><strong>status/week<i>.</i></strong></div>
+          <div className="phone-header"><strong>Progress<i>.</i></strong></div>
           <p className="preview-muted">Week 1 · example set credits</p>
           <p className="preview-title">What you did.<br />What’s still planned.</p>
-          <p className="preview-muted">{sets.length ? `Includes your ${sets.length} sample ${sets.length === 1 ? 'set' : 'sets'}: ${fmt(earned)} earned credit. Assisting muscles earn half.` : 'Log a sample set in solver() and watch this update. Assisting muscles earn half credit.'}</p>
+          <p className="preview-muted">{sets.length ? `Includes your ${sets.length} sample ${sets.length === 1 ? 'set' : 'sets'}: ${fmt(earned)} earned credit. Assisting muscles earn half.` : 'Log a sample set in Today and watch this update. Assisting muscles earn half credit.'}</p>
           <div className="week-mini" role="group" aria-label="Example weekly muscle volume">
             <div className="week-mini-head" aria-hidden="true"><span>MUSCLE</span><span>DOSE / PLAN</span><span>RANGE</span><span>STATE</span></div>
             {WEEK_ROWS.map(muscle => {
@@ -233,11 +233,11 @@ export function TrainingPreview() {
           <p className="preview-footnote">Tap a row to inspect a lift for that muscle. The full weekly map below connects every region to its lifts.</p>
         </>}
       </div>
-      {!detail && !swapping && tab === 'solver()' && <div className="preview-dock">
-        <button className="preview-primary" type="button" onClick={primary}>{complete ? 'See volume in week ↗' : phase === 'ready' ? '▶ Start set' : phase === 'active' ? 'Finish set & start rest' : 'Skip rest'}</button>
+      {!detail && !swapping && tab === 'Today' && <div className="preview-dock">
+        <button className="preview-primary" type="button" onClick={primary}>{complete ? 'See Progress ↗' : phase === 'ready' ? '▶ Start set' : phase === 'active' ? 'Finish set & start rest' : 'Skip rest'}</button>
         <div className="preview-dock-row"><p className="preview-notice" role="status">{notice || 'Sample workout · try the controls'}</p>{sets.length > 0 && !complete && <button className="preview-text-button" type="button" onClick={() => changeTab('week')}>See volume ↗</button>}</div>
       </div>}
-      <nav className="phone-tabs preview-tabs" aria-label="App preview screens">{(['solver()', 'block', 'week'] as const).map(item => <button key={item} type="button" aria-current={tab === item ? 'page' : undefined} onClick={() => changeTab(item)}>{item}</button>)}</nav>
+      <nav className="phone-tabs preview-tabs" aria-label="App preview screens">{(['Today', 'block', 'week'] as const).map(item => <button key={item} type="button" aria-current={tab === item ? 'page' : undefined} onClick={() => changeTab(item)}>{{ Today: 'Today', block: 'My plan', week: 'Progress' }[item]}</button>)}</nav>
     </section>
   </div>
 }
@@ -248,8 +248,8 @@ export function WelcomePreview() {
     <div><p className="eyebrow">04 / READY WHEN YOU ARE</p><h2 id="welcome-title">A familiar start.<br />A clear next step.</h2><p>Open FitArc, restore your training, and get back to your next session. The same athlete artwork greets you at sign-in and while your training loads.</p><div className="preview-segments" role="group" aria-label="Welcome screen preview"><button type="button" aria-pressed={!loading} onClick={() => setLoading(false)}>Sign-in screen</button><button type="button" aria-pressed={loading} onClick={() => setLoading(true)}>Loading screen</button></div></div>
     <div className="welcome-preview" role="img" aria-label={loading ? 'Loading screen preview with athlete artwork and restoring your training message' : 'Sign-in screen preview with athlete artwork'}>
       <img src="/images/muscle-map/athlete-front-v2.png" alt="" width="512" height="768" loading="lazy" decoding="async" />
-      {!loading && <div className="welcome-terminal">training.runtime<br /><span>$ auth --login</span></div>}
-      <div className="welcome-copy">{loading ? <><span className="wordmark">fitarc<span>.</span></span><span className="welcome-spinner" /><p>Restoring your training…</p></> : <><h3>Compile your<br />next block.</h3><p>Sign in once. The runtime handles the rest.</p><span className="welcome-button">Continue with Apple</span><span className="welcome-email">or sign in with email</span></>}</div>
+      {!loading && <div className="welcome-terminal">Your training<br /><span>Welcome back</span></div>}
+      <div className="welcome-copy">{loading ? <><span className="wordmark">fitarc<span>.</span></span><span className="welcome-spinner" /><p>Restoring your training…</p></> : <><h3>Build your<br />next plan.</h3><p>Sign in to your plan, workouts and progress.</p><span className="welcome-button">Continue with Apple</span><span className="welcome-email">or sign in with email</span></>}</div>
       <span className="welcome-label">APP SCREEN PREVIEW</span>
     </div>
   </section>

@@ -15,7 +15,7 @@ export default function PrivacyPolicy() {
             <p className="policy-updated">Last updated: September 21, 2026</p>
 
             <p>
-              FitArc compiles training blocks, adapts workouts to your constraints,
+              FitArc creates training plans, adapts workouts to your constraints,
               and tracks training progress over time. This policy explains what
               data we collect, how we use it, and the choices you have.
             </p>

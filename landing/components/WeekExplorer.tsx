@@ -59,7 +59,7 @@ export function WeekExplorer() {
       <h2>Your body becomes<br />the training dashboard.</h2>
       <p>See your weekly volume at a glance, then select a region to inspect the lifts that train it. Open a lift to compare primary and assisting muscles.</p>
       <Legend />
-      <p className="preview-footnote">Example week · set credits, projected against each muscle’s productive range</p>
+      <p className="preview-footnote">Example week · set credits estimate training volume, not muscle growth or measured recovery</p>
       <table className="week-table">
         <caption className="sr-only">Example week: projected set credits per muscle. Select a muscle to highlight it on the body map.</caption>
         <thead><tr><th scope="col">MUSCLE</th><th scope="col">DOSE / PLAN</th><th scope="col">RANGE</th><th scope="col">STATE</th></tr></thead>
