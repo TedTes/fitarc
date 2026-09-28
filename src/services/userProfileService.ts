@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { TRAINING_TABLES } from '../runtime/dataModel';
 import { supabase } from '../lib/supabaseClient';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
@@ -7,7 +9,8 @@ import {
   TrackingPreferences,
 } from '../types/domain';
 
-const PROFILE_TABLE = process.env.EXPO_PUBLIC_PROFILE_TABLE || 'fitarc_user_profiles';
+const PROFILE_TABLE = TRAINING_TABLES.profiles;
+const profileKey = (id: string) => `fitarc:profile:v2:${id}`;
 
 export type RemoteProfileRow = {
   user_id: string;
@@ -22,6 +25,8 @@ export type RemoteProfileRow = {
   current_physique_level?: number | null;
   avatar_url?: string | null;
   tracking_preferences?: TrackingPreferences | null;
+  plan_preferences?: User['planPreferences'] | null;
+  training_preferences?: User['trainingPreferences'] | null;
   created_at: string;
 };
 
@@ -64,6 +69,8 @@ const mapRowToUser = (row: RemoteProfileRow): User => {
     avatarUrl: isUrl ? storedAvatar : undefined,
     avatarPath: isUrl ? undefined : storedAvatar,
     trackingPreferences: row.tracking_preferences ?? undefined,
+    planPreferences: row.plan_preferences ?? undefined,
+    trainingPreferences: row.training_preferences ?? undefined,
     createdAt: row.created_at,
   };
 };
@@ -87,12 +94,16 @@ export const fetchUserProfile = async (userId: string): Promise<User | null> => 
     .maybeSingle();
 
   if (error) {
+    const cached = await AsyncStorage.getItem(profileKey(userId));
+    if (cached) return mapRowToUser(JSON.parse(cached) as RemoteProfileRow);
     throw error;
   }
 
   if (!data) {
+    await AsyncStorage.removeItem(profileKey(userId));
     return null;
   }
+  await AsyncStorage.setItem(profileKey(userId), JSON.stringify(data));
   
   const user = mapRowToUser(data as RemoteProfileRow);
   if (user.avatarPath) {
@@ -104,6 +115,7 @@ export const fetchUserProfile = async (userId: string): Promise<User | null> => 
 export const saveUserProfile = async (user: User): Promise<void> => {
   const payload: RemoteProfileRow = {
     user_id: user.id,
+    plan_preferences: user.planPreferences ?? null,
     name: user.name ?? null,
     gender: user.sex,
     birth_date: convertAgeToBirthDate(user.age),
@@ -126,6 +138,7 @@ export const saveUserProfile = async (user: User): Promise<void> => {
   if (error) {
     throw error;
   }
+  await AsyncStorage.setItem(profileKey(user.id), JSON.stringify(payload));
 };
 
 export const updateTrackingPreferences = async (

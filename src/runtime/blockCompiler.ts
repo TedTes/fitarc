@@ -1,3 +1,4 @@
+import { localDate } from './planDates';
 import { phasesFor, RULE_VERSION, weeklyTargetsFor } from './trainingPolicy';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
 import { selectExercisesWithReasons } from './exerciseSelector';
@@ -28,7 +29,8 @@ const SLOT_BLUEPRINTS: Record<3 | 4 | 5, Array<{ label: string; muscles: Muscle[
 export const compileBlock = (
   source: TrainingSource,
   previous?: TrainingBlock | null,
-  workingSets: Record<string, WorkingSetState> = {}
+  workingSets: Record<string, WorkingSetState> = {},
+  catalog: ExerciseDefinition[] = RUNTIME_EXERCISES
 ): TrainingBlock => {
   const blueprint = SLOT_BLUEPRINTS[source.daysPerWeek];
   const setsPerSlot = source.sessionMinutes <= 30 ? 10 : source.sessionMinutes <= 45 ? 14 : source.sessionMinutes <= 60 ? 18 : 22;
@@ -39,7 +41,7 @@ export const compileBlock = (
   };
   const slots: TrainingSlot[] = blueprint.map((slot, index) => {
     const selected = selectExercisesWithReasons({
-      catalog: RUNTIME_EXERCISES, source, targetMuscles: slot.muscles,
+      catalog, source, targetMuscles: slot.muscles,
       movementPatterns: slot.patterns, workingSets, limit: exerciseLimit,
     });
     const plannedSets = Math.max(2, Math.min(4, Math.floor(setsPerSlot / Math.max(1, selected.length))));
@@ -49,7 +51,7 @@ export const compileBlock = (
     const muscleSetBudget: Partial<Record<Muscle, number>> = {};
     selected.forEach(({ exercise }) => creditSets(muscleSetBudget, exercise, plannedSets));
     return {
-      id: createRuntimeId(), dayIndex: index,
+      id: previous?.slots.find((entry) => entry.label === slot.label)?.id ?? createRuntimeId(), dayIndex: index,
       label: slot.label, targetMuscles: slot.muscles,
       movementPatterns: slot.patterns, muscleSetBudget, plannedExercises,
     };
@@ -61,10 +63,12 @@ export const compileBlock = (
     ])
   ) as Record<Muscle, number>;
   return {
-    id: previous?.id ?? createRuntimeId(), userId: source.userId,
+    id: createRuntimeId(), groupId: previous?.groupId ?? previous?.id ?? createRuntimeId(),
+    preferences: JSON.parse(JSON.stringify(source)) as TrainingSource, userId: source.userId,
     version: (previous?.version ?? 0) + 1, sourceVersion: source.version,
+    sourceId: source.id, catalog: JSON.parse(JSON.stringify(catalog)) as ExerciseDefinition[],
     ruleVersion: RULE_VERSION, goal: source.goal,
-    startedOn: new Date().toISOString().slice(0, 10), durationWeeks: 6,
+    startedOn: previous?.startedOn ?? localDate(), durationWeeks: 6,
     currentWeek: previous?.currentWeek ?? 1,
     phases: phasesFor(source.goal), slots, weeklySetBudget,
     weeklyTargets: weeklyTargetsFor(source.goal, source.experience),
@@ -74,10 +78,10 @@ export const compileBlock = (
 
 export const validateBlock = (block: TrainingBlock): string[] => {
   const errors: string[] = [];
-  if (block.slots.length < 3 || block.slots.length > 5) errors.push('Block must contain 3–5 weekly slots.');
-  if (!block.phases.some((phase) => phase.kind === 'deload')) errors.push('Block must contain a deload phase.');
-  if (block.phases[block.phases.length - 1]?.endWeek !== block.durationWeeks) errors.push('Phase pipeline must cover the full block.');
-  if (block.slots.some((slot) => Object.values(slot.muscleSetBudget).every((sets) => !sets || sets <= 0))) errors.push('Every slot needs a positive per-muscle set budget.');
-  if (block.slots.some((slot) => !slot.plannedExercises?.length)) errors.push('Every slot needs constraint-resolved exercises.');
+  if (block.slots.length < 3 || block.slots.length > 5) errors.push('Your plan needs 3–5 weekly workouts.');
+  if (!block.phases.some((phase) => phase.kind === 'deload')) errors.push('Your plan needs a recovery phase.');
+  if (block.phases[block.phases.length - 1]?.endWeek !== block.durationWeeks) errors.push('Training phases must cover the full plan.');
+  if (block.slots.some((slot) => Object.values(slot.muscleSetBudget).every((sets) => !sets || sets <= 0))) errors.push('Each planned workout needs a muscle training target.');
+  if (block.slots.some((slot) => !slot.plannedExercises?.length)) errors.push('No compatible exercises are available for a planned workout. Check your equipment and limitations.');
   return errors;
 };

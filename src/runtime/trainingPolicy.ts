@@ -1,6 +1,6 @@
 import type { BlockPhase, Muscle, RuntimeExperience, RuntimeGoal } from './types';
 
-export const RULE_VERSION = 'runtime-v1.1.1';
+export const RULE_VERSION = 'runtime-v1.2.0';
 
 export const MUSCLES: Muscle[] = [
   'chest', 'back', 'quads', 'hamstrings', 'glutes',

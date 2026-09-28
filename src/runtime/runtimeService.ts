@@ -1,3 +1,6 @@
+import { localDate, planWeek } from './planDates';
+import { belongsToPlan } from './planDates';
+import { projectTrainingState } from './trainingState';
 import { compileBlock, validateBlock } from './blockCompiler';
 import { computeSessionDiff, computeWeeklyStatus } from './status';
 import { solveSession as solveSessionEngine } from './sessionSolver';
@@ -9,7 +12,7 @@ import type { ExerciseDefinition, Muscle, RuntimeState, SessionContext, SetResul
 
 export const compileTrainingBlock = (state: RuntimeState, source: TrainingSource): RuntimeState => {
   if (state.activeSession) throw new Error('finish_active_session_before_recompile');
-  const block = compileBlock(source, state.block, state.workingSets);
+  const block = compileBlock(source, state.block, state.workingSets, state.catalog);
   const errors = validateBlock(block);
   if (errors.length) throw new Error(errors.join(' '));
   const previous = state.source;
@@ -20,7 +23,7 @@ export const compileTrainingBlock = (state: RuntimeState, source: TrainingSource
     ...(previous.equipment.join('|') !== source.equipment.join('|') ? ['equipment availability changed'] : []),
     ...(previous.limitations.join('|') !== source.limitations.join('|') ? ['pain and limitation rules changed'] : []),
   ];
-  return { ...state, source, block, activeSession: null, lastBlockDiff: diff.length ? diff : ['No constraint values changed; the block was refreshed.'] };
+  return { ...state, source, block, activeSession: null, lastBlockDiff: diff.length ? diff : ['Your plan was refreshed with your current preferences.'] };
 };
 
 export const solveTrainingSession = (
@@ -36,22 +39,18 @@ export const solveTrainingSession = (
   };
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDate();
 
 /**
- * The block's week is derived from the calendar, and jumps to the deload week when the
- * runtime recommends one. It is never advanced by hand.
+ * Calendar boundaries stay stable even when a recovery prescription is recommended.
  */
 const resolveWeek = (state: RuntimeState, date: string) => {
   if (!state.source || !state.block) throw new Error('runtime_not_compiled');
   const start = new Date(`${state.block.startedOn}T12:00:00`);
-  const sessionDate = new Date(`${date}T12:00:00`);
-  const elapsedDays = Math.max(0, Math.floor((sessionDate.getTime() - start.getTime()) / 86400000));
-  const calendarWeek = Math.min(state.block.durationWeeks, Math.floor(elapsedDays / 7) + 1);
-  let block: TrainingBlock = { ...state.block, currentWeek: calendarWeek };
+  const calendarWeek = planWeek(state.block, date);
+  const block: TrainingBlock = { ...state.block, currentWeek: calendarWeek };
   const weekStatus = computeWeeklyStatus(block, state.sessions, state.setResults);
   const deloadTriggered = weekStatus.deloadRecommended && block.currentWeek < block.durationWeeks;
-  if (deloadTriggered) block = { ...block, currentWeek: block.durationWeeks };
   return { block, weekStatus, deloadTriggered, start };
 };
 
@@ -67,14 +66,18 @@ const resolveTrainingSession = (
 ) => {
   if (!state.source || !state.block) throw new Error('runtime_not_compiled');
   if (state.activeSession) throw new Error('finish_active_session_first');
+  if (!Number.isInteger(context.minutesAvailable) || context.minutesAvailable < 10 || context.minutesAvailable > 180) throw new Error('Choose 10–180 minutes for your workout.');
   const { block: resolvedBlock, weekStatus, deloadTriggered, start } = resolveWeek(state, context.date);
+  const remaining = resolvedBlock.remainingWeek?.week === resolvedBlock.currentWeek ? resolvedBlock.remainingWeek : undefined;
+  const window = remaining?.windows.find((item) => item.date === context.date);
+  if (remaining && !window) throw new Error('No workout planned for today. Change your remaining week in Progress.');
   const weekStart = new Date(start);
   weekStart.setDate(start.getDate() + (resolvedBlock.currentWeek - 1) * 7);
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekStart.getDate() + 7);
   const performedSlots = new Set(state.sessions.filter((session) => {
     const date = new Date(`${session.context.date}T12:00:00`);
-    return session.blockId === resolvedBlock.id && session.blockVersion === resolvedBlock.version
+    return belongsToPlan(session, resolvedBlock)
       && session.status === 'committed' && date >= weekStart && date < weekEnd;
   }).map((session) => session.slotId));
   const availableSlots = resolvedBlock.slots.filter((slot) => !performedSlots.has(slot.id));
@@ -84,7 +87,8 @@ const resolveTrainingSession = (
     return { muscle, deficit: Math.max(0, (status?.min ?? 0) - (status?.completedSets ?? 0)) };
   });
   const totalDeficit = (slot: (typeof candidates)[number]) => deficitOf(slot).reduce((sum, item) => sum + item.deficit, 0);
-  const nextSlot = [...candidates].sort((a, b) => totalDeficit(b) - totalDeficit(a) || a.dayIndex - b.dayIndex)[0];
+  const nextSlot = (window ? candidates.find((item) => item.id === window.slotId) : undefined) ?? [...candidates].sort((a, b) => totalDeficit(b) - totalDeficit(a) || a.dayIndex - b.dayIndex)[0];
+  if (window && performedSlots.has(window.slotId)) throw new Error('Today’s planned workout is already finished.');
   const behind = deficitOf(nextSlot).filter((item) => item.deficit > 0).sort((a, b) => b.deficit - a.deficit).map((item) => item.muscle);
   const slotChoice: SlotChoiceReason = {
     kind: !availableSlots.length ? 'repeat' : candidates.length === 1 ? 'only_remaining' : behind.length ? 'largest_deficit' : 'next_in_order',
@@ -93,8 +97,11 @@ const resolveTrainingSession = (
   const prescription = solveSessionEngine({
     source: state.source, block: resolvedBlock, context,
     workingSets: state.workingSets, weeklyStatus: weekStatus,
-    slotIndex: nextSlot?.dayIndex ?? 0,
+    slotIndex: resolvedBlock.slots.indexOf(nextSlot),
+    phaseOverride: deloadTriggered ? resolvedBlock.phases.find((phase) => phase.kind === 'deload') : undefined,
+    setCeilings: window ? Object.fromEntries((resolvedBlock.catalog ?? RUNTIME_EXERCISES).map((item) => [item.id, window.workout.exercises.find((entry) => entry.exercise.id === item.id)?.sets.length ?? 0])) : undefined,
   });
+  if (!prescription.exercises.length) throw new Error('No work fits the current equipment, time and weekly limits. Change your remaining week in Progress.');
   return { block: resolvedBlock, prescription, slotChoice, deloadTriggered };
 };
 
@@ -125,8 +132,16 @@ export const recordRuntimeSet = (
   result: SetResult
 ): RuntimeState => {
   if (!state.activeSession) throw new Error('active_session_required');
+  const prescribed = state.activeSession.exercises.find((entry) => entry.exercise.id === result.exerciseId)?.sets.find((set) => set.id === result.setId);
+  if (result.prescriptionId !== state.activeSession.id || !prescribed || prescribed.status === 'skipped') throw new Error('Invalid set reference.');
+  if (!Number.isInteger(result.completedReps) || result.completedReps < 0 || result.reportedRir < 0 || result.reportedRir > 5
+    || !Number.isFinite(result.reportedRir) || !Number.isFinite(result.actualLoadKg ?? result.prescribedLoadKg) || (result.actualLoadKg ?? result.prescribedLoadKg) < 0) throw new Error('Check weight, repetitions and effort.');
+  result = { ...result, recordedOrder: Math.max(0, ...state.setResults.map((item) => item.recordedOrder ?? 0)) + 1, prescribedLoadKg: prescribed.loadKg, prescribedMinReps: prescribed.minReps, prescribedMaxReps: prescribed.maxReps, targetRir: prescribed.targetRir };
   if (state.setResults.some((item) => item.setId === result.setId)) throw new Error('set_already_recorded');
   const applied = applySetResult({ state, session: state.activeSession, result });
+  const recordedEntry = state.activeSession.exercises.find((entry) => entry.exercise.id === result.exerciseId)!;
+  const following = recordedEntry.sets[recordedEntry.sets.findIndex((set) => set.id === result.setId) + 1];
+  if (following?.status === 'pending') applied.decision.previousNextSet = { id: following.id, loadKg: following.loadKg, minReps: following.minReps, maxReps: following.maxReps };
   const updatedSession = {
     ...state.activeSession,
     exercises: state.activeSession.exercises.map((entry) => {
@@ -134,7 +149,7 @@ export const recordRuntimeSet = (
       return {
         ...entry,
         sets: entry.sets.map((set, index, allSets) => {
-          if (set.id === result.setId) return { ...set, status: 'completed' as const };
+          if (set.id === result.setId) return { ...set, status: 'completed' as const, result: { ...result, actualLoadKg: result.actualLoadKg ?? result.prescribedLoadKg }, decision: applied.decision };
           const resultIndex = allSets.findIndex((candidate) => candidate.id === result.setId);
           if (index === resultIndex + 1 && set.status === 'pending') {
             return {
@@ -149,11 +164,11 @@ export const recordRuntimeSet = (
       };
     }),
   };
-  return {
+  return projectTrainingState({
     ...applied.state,
     activeSession: updatedSession,
     sessions: applied.state.sessions.map((session) => session.id === updatedSession.id ? updatedSession : session),
-  };
+  });
 };
 
 /** Reorders the active session without changing its prescribed work. */
@@ -214,7 +229,7 @@ export const getRuntimeSessionDiff = (state: RuntimeState) => {
     if (!latest) return [];
     return [[entry.exercise.id, {
       exerciseId: entry.exercise.id,
-      loadKg: latest.prescribedLoadKg,
+      loadKg: latest.actualLoadKg ?? latest.prescribedLoadKg,
       reps: latest.completedReps,
       rir: latest.reportedRir,
       rirConfidence: state.workingSets[entry.exercise.id]?.rirConfidence ?? 0.35,
@@ -239,11 +254,13 @@ export const compileNextRuntimeBlock = (state: RuntimeState): RuntimeState => {
     })),
     createdAt: new Date().toISOString(),
   };
-  const previous = { ...state.block, id: createRuntimeId(), currentWeek: 1 };
-  const block = compileBlock(source, previous, state.workingSets);
+  const previous = { ...state.block, id: createRuntimeId(), groupId: createRuntimeId(), currentWeek: 1, startedOn: today() };
+  const block = compileBlock(source, previous, state.workingSets, state.catalog);
+  const errors = validateBlock(block);
+  if (errors.length) throw new Error(errors.join(' '));
   return {
     ...state, source, block,
-    lastBlockDiff: ['Previous working sets became the new block baseline.', 'Phase pipeline restarted at accumulate.'],
+    lastBlockDiff: ['Your latest working weights are the starting point for this plan.', 'A new six-week training cycle has started.'],
   };
 };
 
@@ -252,34 +269,21 @@ export const undoLastRuntimeSet = (state: RuntimeState): RuntimeState => {
   const index = [...state.setResults].map((item) => item.prescriptionId).lastIndexOf(state.activeSession.id);
   if (index < 0) return state;
   const removed = state.setResults[index];
-  const remaining = state.setResults.filter((_, resultIndex) => resultIndex !== index);
-  const previous = [...remaining].reverse().find((item) => item.exerciseId === removed.exerciseId);
-  const nextWorking = { ...state.workingSets };
-  if (previous) {
-    nextWorking[removed.exerciseId] = {
-      exerciseId: removed.exerciseId, loadKg: previous.prescribedLoadKg,
-      reps: previous.completedReps, rir: previous.reportedRir,
-      rirConfidence: nextWorking[removed.exerciseId]?.rirConfidence ?? 0.35,
-      updatedAt: previous.completedAt,
-    };
-  } else {
-    delete nextWorking[removed.exerciseId];
-  }
+  const previousNext = state.activeSession.exercises.flatMap((entry) => entry.sets).find((set) => set.id === removed.setId)?.decision?.previousNextSet;
   const session = {
     ...state.activeSession,
     exercises: state.activeSession.exercises.map((entry) => entry.exercise.id !== removed.exerciseId ? entry : ({
       ...entry,
       sets: entry.sets.map((set) => set.id === removed.setId ? ({
-        ...set, status: 'pending' as const, loadKg: removed.prescribedLoadKg,
+        ...set, result: undefined, decision: undefined, status: 'pending' as const, loadKg: removed.prescribedLoadKg,
         minReps: removed.prescribedMinReps, maxReps: removed.prescribedMaxReps,
-      }) : set),
+      }) : previousNext?.id === set.id && set.status === 'pending' ? { ...set, ...previousNext } : set),
     })),
   };
-  return {
-    ...state, activeSession: session, setResults: remaining,
-    workingSets: nextWorking, decisions: state.decisions.slice(0, -1),
+  return projectTrainingState({
+    ...state, activeSession: session,
     sessions: state.sessions.map((item) => item.id === session.id ? session : item),
-  };
+  });
 };
 
 export const skipRuntimeExercise = (
@@ -296,7 +300,7 @@ export const skipRuntimeExercise = (
     })),
   };
   const source = painful && state.source
-    ? { ...state.source, excludedExerciseIds: [...new Set([...state.source.excludedExerciseIds, exerciseId])] }
+    ? { ...state.source, version: state.source.version + 1, excludedExerciseIds: [...new Set([...state.source.excludedExerciseIds, exerciseId])] }
     : state.source;
   return {
     ...state, source, activeSession: session,
@@ -315,11 +319,13 @@ export const getSwapCandidates = (state: RuntimeState, exerciseId: string, limit
   const target = state.activeSession?.exercises.find((entry) => entry.exercise.id === exerciseId);
   if (!state.source || !target) return [];
   return selectExercises({
-    catalog: RUNTIME_EXERCISES,
+    catalog: state.block?.catalog ?? state.catalog ?? RUNTIME_EXERCISES,
     source: { ...state.source, excludedExerciseIds: swapExclusions(state, exerciseId) },
     targetMuscles: target.exercise.primaryMuscles,
     movementPatterns: [target.exercise.movementPattern],
     workingSets: state.workingSets,
+    unavailableEquipment: state.activeSession?.context.unavailableEquipment,
+    unavailableExerciseIds: state.activeSession?.context.unavailableExerciseIds,
     limit,
   });
 };

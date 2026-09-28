@@ -1,5 +1,5 @@
-import { solveNextSet, updateRirConfidence } from './setSolver';
-import type { RuntimeDecision, RuntimeState, SetResult, SessionPrescription, WorkingSetState } from './types';
+import { solveNextSet } from './setSolver';
+import type { RuntimeDecision, RuntimeState, SetResult, SessionPrescription } from './types';
 
 export const applySetResult = (input: {
   state: RuntimeState;
@@ -13,21 +13,5 @@ export const applySetResult = (input: {
     result: input.result, phase: input.session.phase,
     incrementKg: prescribedExercise.exercise.incrementKg, previous,
   });
-  const workingSet: WorkingSetState = {
-    exerciseId: input.result.exerciseId,
-    loadKg: decision.nextLoadKg,
-    reps: input.result.completedReps,
-    rir: input.result.reportedRir,
-    rirConfidence: updateRirConfidence(previous?.rirConfidence ?? 0.35, input.result),
-    updatedAt: input.result.completedAt,
-  };
-  return {
-    decision,
-    state: {
-      ...input.state,
-      setResults: [...input.state.setResults, input.result],
-      workingSets: { ...input.state.workingSets, [workingSet.exerciseId]: workingSet },
-      decisions: [...input.state.decisions, decision],
-    },
-  };
+  return { decision, state: input.state };
 };

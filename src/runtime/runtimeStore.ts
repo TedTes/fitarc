@@ -1,90 +1,58 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
-import { compileBlock } from './blockCompiler';
-import { RULE_VERSION } from './trainingPolicy';
+import { loadExerciseCatalog } from '../services/exerciseCatalogService';
+import { toStoredTraining, fromStoredTraining } from './trainingState';
+import { createRuntimeId } from './id';
+import { createRuntimePersistence } from './runtimePersistence';
+import type { DeviceSnapshot, RemoteSnapshot } from './runtimePersistence';
 import type { RuntimeState, TrainingBlock, TrainingSource } from './types';
 
+export { emptyRuntimeState } from './runtimePersistence';
 export { applySetResult } from './runtimeReducers';
-
-const STORAGE_KEY_PREFIX = 'fitarc:training-runtime:v1';
-
-export const emptyRuntimeState = (): RuntimeState => ({
-  updatedAt: new Date(0).toISOString(),
-  source: null, block: null, activeSession: null, sessions: [], setResults: [],
-  workingSets: {}, decisions: [], committedSessionIds: [], lastBlockDiff: [],
-});
-
-export const loadRuntimeState = async (userId: string): Promise<RuntimeState> => {
-  const raw = await AsyncStorage.getItem(`${STORAGE_KEY_PREFIX}:${userId}`);
-  let localState: RuntimeState | null = null;
-  if (raw) {
-    try {
-      localState = { ...emptyRuntimeState(), ...(JSON.parse(raw) as RuntimeState) };
-    } catch {
-      localState = null;
-    }
-  }
-  let remoteState: RuntimeState | null = null;
-  try {
-    const { data, error } = await supabase
-      .from('fitarc_runtime_state')
-      .select('state')
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (!error && data?.state) remoteState = data.state as RuntimeState;
-  } catch {
-    remoteState = null;
-  }
-  const resolvedRemote = remoteState ? { ...emptyRuntimeState(), ...remoteState } : null;
-  const resolved = resolvedRemote && (!localState || resolvedRemote.updatedAt >= localState.updatedAt)
-    ? resolvedRemote
-    : localState;
-  if (resolved) {
-    const needsBlockUpgrade = Boolean(
-      resolved.source && resolved.block
-      && (resolved.block.ruleVersion !== RULE_VERSION || !resolved.block.weeklySetBudget || resolved.block.slots.some((slot) => !slot.plannedExercises || !slot.muscleSetBudget))
-    );
-    const compatible = needsBlockUpgrade && resolved.source && resolved.block
-      ? {
-          ...resolved,
-          block: compileBlock(resolved.source, resolved.block, resolved.workingSets),
-          activeSession: null,
-          sessions: resolved.sessions.filter((session) => session.status === 'committed'),
-          lastBlockDiff: ['Runtime rules upgraded to unified weekly hard-set budgets.'],
-        }
-      : resolved;
-    await AsyncStorage.setItem(`${STORAGE_KEY_PREFIX}:${userId}`, JSON.stringify(compatible));
-    return compatible;
-  }
-  return emptyRuntimeState();
+const keyFor = (userId: string) => `fitarc:training-runtime:v3:${userId}`;
+const stores = new Map<string, ReturnType<typeof createRuntimePersistence>>();
+const persistence = (userId: string) => {
+  const existing = stores.get(userId);
+  if (existing) return existing;
+  const store = createRuntimePersistence({
+    createId: createRuntimeId,
+    readLocal: async () => {
+      const raw = await AsyncStorage.getItem(keyFor(userId));
+      if (!raw) return null;
+      const value = JSON.parse(raw) as DeviceSnapshot;
+      if (!value.state || !Number.isInteger(value.revision) || value.revision < 0
+        || !Array.isArray(value.state.sessions)) throw new Error('Invalid device training data.');
+      return { ...value, state: fromStoredTraining(value.state as unknown as import('./dataModel').StoredTrainingState), pendingState: value.pendingState ? fromStoredTraining(value.pendingState as unknown as import('./dataModel').StoredTrainingState) : undefined };
+    },
+    writeLocal: async (value) => AsyncStorage.setItem(keyFor(userId), JSON.stringify({ ...value, state: toStoredTraining(value.state), pendingState: value.pendingState ? toStoredTraining(value.pendingState) : undefined })),
+    backup: async (value) => AsyncStorage.setItem(`${keyFor(userId)}:conflict:${createRuntimeId()}`, JSON.stringify({ ...value, state: toStoredTraining(value.state), pendingState: value.pendingState ? toStoredTraining(value.pendingState) : undefined })),
+    readRemote: async () => {
+      const { data, error } = await supabase.rpc('fitarc_read_training');
+      if (error) throw error;
+      if (data?.userId !== userId) throw new Error('Signed-in account changed.');
+      return { ...data, state: data.state ? fromStoredTraining(data.state) : null } as RemoteSnapshot;
+    },
+    writeRemote: async (state, revision, mutationId) => {
+      const payload = toStoredTraining(state);
+      const { data, error } = await supabase.rpc('fitarc_save_training', {
+        p_state: payload, p_expected_revision: revision, p_mutation_id: mutationId,
+      });
+      if (error) throw error;
+      return data as { revision: number; conflict: boolean };
+    },
+  });
+  stores.set(userId, store);
+  return store;
 };
 
-export type SaveOutcome = {
-  /** The device copy is always written first; a failure there rejects instead of returning. */
-  cloud: 'synced' | 'unavailable';
-};
+export async function loadRuntimeState(userId: string) {
+  const [loaded, catalog] = await Promise.all([persistence(userId).load(), loadExerciseCatalog()]);
+  return { ...loaded, state: { ...loaded.state, catalog } };
+}
+export const saveRuntimeState = (userId: string, state: RuntimeState) => persistence(userId).save(state);
+export const useCloudRuntimeState = (userId: string) => persistence(userId).useCloud();
+export const withSourceAndBlock = (state: RuntimeState, source: TrainingSource, block: TrainingBlock): RuntimeState =>
+  ({ ...state, source, block, activeSession: null });
 
-export const saveRuntimeState = async (userId: string, state: RuntimeState): Promise<SaveOutcome> => {
-  await AsyncStorage.setItem(`${STORAGE_KEY_PREFIX}:${userId}`, JSON.stringify(state));
-  try {
-    const { error } = await supabase.from('fitarc_runtime_state').upsert({
-      user_id: userId,
-      state,
-      updated_at: new Date().toISOString(),
-    });
-    if (!error) return { cloud: 'synced' };
-    if (!['42P01', 'PGRST205'].includes((error as { code?: string }).code ?? '')) {
-      console.warn('Runtime cloud sync failed; local state is preserved.', error.message);
-    }
-    return { cloud: 'unavailable' };
-  } catch {
-    // Local persistence is authoritative while offline.
-    return { cloud: 'unavailable' };
-  }
-};
-
-export const withSourceAndBlock = (
-  state: RuntimeState,
-  source: TrainingSource,
-  block: TrainingBlock
-): RuntimeState => ({ ...state, source, block, activeSession: null });
+export const stageRuntimeState = (userId: string, state: RuntimeState) => persistence(userId).stage(state);
+export const flushRuntimeState = (userId: string) => persistence(userId).flush();

@@ -114,6 +114,7 @@ export type User = {
   avatarPath?: string;
   trackingPreferences?: TrackingPreferences;
   planPreferences?: PlanPreferences;
+  trainingPreferences?: import('../runtime/types').TrainingSource;
   createdAt: string;
 };
 

@@ -19,7 +19,7 @@ export const updateRirConfidence = (
 };
 
 export const solveNextSet = ({ result, phase, incrementKg, previous }: SetSolverInput): RuntimeDecision => {
-  const load = result.prescribedLoadKg;
+  const load = result.actualLoadKg ?? result.prescribedLoadKg;
   void previous;
   const missedBy = result.prescribedMinReps - result.completedReps;
   const deload = phase === 'deload';

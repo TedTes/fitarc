@@ -89,7 +89,14 @@ export type TrainingBlock = {
   id: string;
   userId: string;
   version: number;
+  /** Distinct plan revision ID above; groupId identifies the training cycle. */
+  groupId?: string;
+  preferences?: TrainingSource;
+  remainingWeek?: RemainingWeekPlan;
   sourceVersion: number;
+  sourceId?: string;
+  /** Frozen catalog used to compile this version, including substitution candidates. */
+  catalog?: ExerciseDefinition[];
   ruleVersion: string;
   goal: RuntimeGoal;
   startedOn: string;
@@ -128,10 +135,16 @@ export type WorkingSetState = {
 
 export type SessionContext = {
   date: string;
-  minutesAvailable: 30 | 45 | 60 | 75;
+  minutesAvailable: number;
   recovery: RecoveryState;
   unavailableExerciseIds: string[];
   unavailableEquipment: string[];
+};
+
+export type RemainingWeekPlan = {
+  week: number;
+  windows: Array<SessionContext & { slotId: string; workout: SessionPrescription }>;
+  explanation: string[];
 };
 
 export type SetPrescription = {
@@ -142,6 +155,8 @@ export type SetPrescription = {
   maxReps: number;
   targetRir: number;
   status: 'pending' | 'completed' | 'skipped';
+  result?: SetResult;
+  decision?: RuntimeDecision;
 };
 
 export type PrescribedExercise = {
@@ -154,7 +169,8 @@ export type PrescribedExercise = {
 
 export type SessionPrescription = {
   id: string;
-  blockId: string;
+  blockId: string | null;
+  planGroupId?: string;
   blockVersion: number;
   slotId: string;
   context: SessionContext;
@@ -171,17 +187,20 @@ export type SetResult = {
   setId: string;
   exerciseId: string;
   prescribedLoadKg: number;
+  actualLoadKg?: number;
   prescribedMinReps: number;
   prescribedMaxReps: number;
   targetRir: number;
   completedReps: number;
   reportedRir: number;
   completedAt: string;
+  recordedOrder?: number;
 };
 
 export type DecisionAction = 'increase' | 'hold' | 'decrease' | 'stop';
 
 export type RuntimeDecision = {
+  previousNextSet?: Pick<SetPrescription, 'id' | 'loadKg' | 'minReps' | 'maxReps'>;
   action: DecisionAction;
   nextLoadKg: number;
   nextMinReps: number;
@@ -228,6 +247,9 @@ export type WeeklyStatus = {
 };
 
 export type RuntimeState = {
+  /** Current approved catalog, refreshed at launch; blocks retain their own snapshot. */
+  catalog?: ExerciseDefinition[];
+  blockHistory?: TrainingBlock[];
   updatedAt: string;
   source: TrainingSource | null;
   block: TrainingBlock | null;

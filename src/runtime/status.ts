@@ -1,3 +1,4 @@
+import { belongsToPlan } from './planDates';
 import { hardSetCredit, MUSCLES, secondaryMuscleCredit } from './trainingPolicy';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
 import type { ExerciseDiff, SessionDiff, SessionPrescription, SetResult, TrainingBlock, WeeklyStatus, WorkingSetState } from './types';
@@ -11,21 +12,21 @@ export const computeSessionDiff = (
     const completed = results.filter((result) => result.exerciseId === prescribed.exercise.id);
     if (!completed.length) return [];
     const best = completed.reduce((current, candidate) => {
-      const currentScore = current.prescribedLoadKg * current.completedReps;
-      const candidateScore = candidate.prescribedLoadKg * candidate.completedReps;
+      const currentScore = (current.actualLoadKg ?? current.prescribedLoadKg) * current.completedReps;
+      const candidateScore = (candidate.actualLoadKg ?? candidate.prescribedLoadKg) * candidate.completedReps;
       return candidateScore > currentScore ? candidate : current;
     });
     const prior = previous[prescribed.exercise.id];
     let outcome: ExerciseDiff['outcome'] = 'held';
     let change = 'Same dose at comparable effort';
     if (prior) {
-      const loadProgress = best.prescribedLoadKg > prior.loadKg && best.completedReps >= prior.reps - 1;
-      const repProgress = best.prescribedLoadKg === prior.loadKg && best.completedReps > prior.reps;
-      const effortProgress = best.prescribedLoadKg === prior.loadKg && best.completedReps === prior.reps && best.reportedRir > prior.rir;
+      const loadProgress = (best.actualLoadKg ?? best.prescribedLoadKg) > prior.loadKg && best.completedReps >= prior.reps - 1;
+      const repProgress = (best.actualLoadKg ?? best.prescribedLoadKg) === prior.loadKg && best.completedReps > prior.reps;
+      const effortProgress = (best.actualLoadKg ?? best.prescribedLoadKg) === prior.loadKg && best.completedReps === prior.reps && best.reportedRir > prior.rir;
       const stalled = best.completedReps < best.prescribedMinReps;
       if (loadProgress || repProgress || effortProgress) {
         outcome = 'progressed';
-        change = loadProgress ? `+${best.prescribedLoadKg - prior.loadKg} kg` : repProgress ? `+${best.completedReps - prior.reps} reps` : 'More reps in reserve';
+        change = loadProgress ? `+${(best.actualLoadKg ?? best.prescribedLoadKg) - prior.loadKg} kg` : repProgress ? `+${best.completedReps - prior.reps} reps` : 'More reps in reserve';
       } else if (stalled) {
         outcome = 'stalled';
         change = `${best.prescribedMinReps - best.completedReps} reps below target`;
@@ -37,7 +38,7 @@ export const computeSessionDiff = (
     return [{
       exerciseId: prescribed.exercise.id, exerciseName: prescribed.exercise.name,
       previous: prior ? { loadKg: prior.loadKg, reps: prior.reps, rir: prior.rir } : undefined,
-      current: { loadKg: best.prescribedLoadKg, reps: best.completedReps, rir: best.reportedRir },
+      current: { loadKg: (best.actualLoadKg ?? best.prescribedLoadKg), reps: best.completedReps, rir: best.reportedRir },
       outcome, change,
     }];
   });
@@ -63,7 +64,7 @@ export const computeWeeklyStatus = (
   weekEnd.setDate(weekStart.getDate() + 7);
   const weekSessions = sessions.filter((session) => {
     const date = new Date(`${session.context.date}T12:00:00`);
-    return session.blockId === block.id && session.blockVersion === block.version
+    return belongsToPlan(session, block)
       && date >= weekStart && date < weekEnd;
   });
   const weekSessionIds = new Set(weekSessions.map((session) => session.id));
@@ -71,7 +72,8 @@ export const computeWeeklyStatus = (
   const committedSessions = weekSessions.filter((session) => session.status === 'committed');
   const committedSlotIds = new Set(committedSessions.map((session) => session.slotId));
   const sessionsLogged = committedSlotIds.size;
-  const totalSessions = block.slots.length;
+  const remaining = block.remainingWeek?.week === weekNumber ? block.remainingWeek : undefined;
+  const totalSessions = remaining ? new Set([...committedSlotIds, ...remaining.windows.map((item) => item.slotId)]).size : block.slots.length;
   const today = new Date();
   const weekState: WeeklyStatus['weekState'] = sessionsLogged >= totalSessions || today >= weekEnd ? 'complete' : 'in_progress';
   const completed = Object.fromEntries(MUSCLES.map((muscle) => [muscle, 0])) as Record<(typeof MUSCLES)[number], number>;
@@ -87,8 +89,8 @@ export const computeWeeklyStatus = (
     if (result.completedReps < result.prescribedMinReps) misses += 1;
   });
   const scheduled = Object.fromEntries(MUSCLES.map((muscle) => [muscle, 0])) as Record<(typeof MUSCLES)[number], number>;
-  block.slots.filter((slot) => !committedSlotIds.has(slot.id)).forEach((slot) => {
-    const prescribed = [...weekSessions].reverse().find((session) => session.slotId === slot.id && session.status !== 'committed');
+  block.slots.filter((slot) => !committedSlotIds.has(slot.id) && (!remaining || remaining.windows.some((item) => item.slotId === slot.id))).forEach((slot) => {
+    const prescribed = [...weekSessions].reverse().find((session) => session.slotId === slot.id && session.status !== 'committed') ?? remaining?.windows.find((item) => item.slotId === slot.id)?.workout;
     if (prescribed) {
       prescribed.exercises.forEach((entry) => {
         const remainingSets = entry.sets.filter((set) => set.status === 'pending').length;
@@ -113,7 +115,7 @@ export const computeWeeklyStatus = (
   });
   const phase = block.phases.find((item) => weekNumber >= item.startWeek && weekNumber <= item.endWeek) ?? block.phases[0];
   const weeklyFatigueCapacity = Math.max(1, block.slots.reduce((slotSum, slot) => slotSum + slot.plannedExercises.reduce((sum, plan) => {
-    const exercise = RUNTIME_EXERCISES.find((candidate) => candidate.id === plan.exerciseId);
+    const exercise = (block.catalog ?? RUNTIME_EXERCISES).find((candidate) => candidate.id === plan.exerciseId);
     return sum + plan.sets * (exercise?.fatigueCost ?? 1) * (6 - phase.targetRir);
   }, 0), 0));
   const fatiguePercent = Math.min(100, Math.round((fatiguePoints / weeklyFatigueCapacity) * 100));

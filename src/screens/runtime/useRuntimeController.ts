@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { emptyRuntimeState, loadRuntimeState, saveRuntimeState } from '../../runtime';
+import { emptyRuntimeState, loadRuntimeState, stageRuntimeState, flushRuntimeState, useCloudRuntimeState } from '../../runtime';
+import { retainTrainingHistory } from '../../runtime/runtimePersistence';
 import type { RuntimeState } from '../../runtime';
 
 /**
  * saving  – a write is in flight
  * synced  – saved on this device and in the cloud
  * device  – saved on this device only; the cloud copy is behind and catches up on the next save or retry
+ * conflict – another device advanced the cloud revision; local changes are preserved
  * failed  – the device write failed; changes exist only on screen
  */
-export type SyncStatus = 'saving' | 'synced' | 'device' | 'failed';
+export type SyncStatus = 'saving' | 'synced' | 'device' | 'failed' | 'conflict';
 export type ApplyResult = { ok: true; state: RuntimeState } | { ok: false; error: unknown };
 
 /**
@@ -24,12 +26,14 @@ export const useRuntimeController = (userId: string) => {
   const latest = useRef(state);
   const queue = useRef<Promise<void>>(Promise.resolve());
   const generation = useRef(0);
+  const restoringCloud = useRef(false);
+  const deviceQueue = useRef<Promise<void>>(Promise.resolve());
 
   const load = useCallback(() => {
     setLoading(true);
     setLoadError(null);
     loadRuntimeState(userId)
-      .then((loaded) => { latest.current = loaded; setState(loaded); })
+      .then((loaded) => { latest.current = loaded.state; setState(loaded.state); setSync(loaded.cloud === 'unavailable' ? 'device' : loaded.cloud); })
       .catch(() => setLoadError('Saved runtime state could not be read from this device.'))
       .finally(() => setLoading(false));
   }, [userId]);
@@ -39,16 +43,18 @@ export const useRuntimeController = (userId: string) => {
   const persist = useCallback((next: RuntimeState) => {
     const mine = ++generation.current;
     setSync('saving');
-    queue.current = queue.current
-      .catch(() => undefined)
-      .then(() => saveRuntimeState(userId, next))
-      .then((outcome) => { if (mine === generation.current) setSync(outcome.cloud === 'synced' ? 'synced' : 'device'); })
+    deviceQueue.current = deviceQueue.current.catch(() => undefined).then(() => stageRuntimeState(userId, next));
+    const staged = deviceQueue.current;
+    queue.current = staged
+      .then(() => flushRuntimeState(userId))
+      .then((outcome) => { if (mine === generation.current) setSync(outcome.cloud === 'unavailable' ? 'device' : outcome.cloud); })
       .catch(() => { if (mine === generation.current) setSync('failed'); });
   }, [userId]);
 
   const apply = useCallback((transform: (current: RuntimeState) => RuntimeState): ApplyResult => {
     try {
-      const next = { ...transform(latest.current), updatedAt: new Date().toISOString() };
+      if (restoringCloud.current) throw new Error('Wait until cloud restoration finishes.');
+      const next = retainTrainingHistory(latest.current, { ...transform(latest.current), updatedAt: new Date().toISOString() });
       latest.current = next;
       setState(next);
       persist(next);
@@ -61,5 +67,19 @@ export const useRuntimeController = (userId: string) => {
   /** Writes the current state again, e.g. after a failed or device-only save. */
   const retrySync = useCallback(() => persist(latest.current), [persist]);
 
-  return { state, loading, loadError, reload: load, sync, apply, retrySync };
+  const restoreCloud = useCallback(async () => {
+    restoringCloud.current = true;
+    setLoading(true);
+    try {
+      await deviceQueue.current;
+      await queue.current;
+      await useCloudRuntimeState(userId);
+      load();
+    } catch (error) {
+      setLoading(false);
+      throw error;
+    } finally { restoringCloud.current = false; }
+  }, [load, userId]);
+
+  return { restoreCloud, state, loading, loadError, reload: load, sync, apply, retrySync };
 };
