@@ -1,3 +1,4 @@
+import { nextRoutineSlot } from '../../runtime/sequence';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import type { RuntimeState, TrainingBlock } from '../../runtime';
@@ -30,6 +31,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
   const rowHeight = Math.round(clamp(windowHeight * 0.075, 52, 70));
   const exerciseRowHeight = Math.round(clamp(windowHeight * 0.09, 58, 82));
   const focusSlotId = state.activeSession?.slotId
+    ?? (block.scheduling ? nextRoutineSlot(block,state.sessions)?.id : undefined)
     ?? block.slots.find((slot) => !committed.has(slot.id))?.id
     ?? [...state.sessions].reverse().find((session) => session.blockId === block.id && session.status === 'committed')?.slotId
     ?? block.slots[0]?.id;
@@ -71,7 +73,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
       <ScreenBrand name="My plan" />
       {block.remainingWeek?.week === block.currentWeek ? <Txt variant="caption" tone="secondary">Your usual weekly schedule is shown here. See Progress for the changes you accepted for this week.</Txt> : null}
 
-      <View style={styles.phaseStrip}>
+      {block.scheduling ? <Txt variant="caption">Your workout sequence continues across weeks. Availability does not change its order.</Txt> : <View style={styles.phaseStrip}>
         {block.phases.map((phase) => {
           const isCurrent = block.currentWeek >= phase.startWeek && block.currentWeek <= phase.endWeek;
           const weeks = phase.startWeek === phase.endWeek ? `W${phase.startWeek}` : `W${phase.startWeek}–${phase.endWeek}`;
@@ -82,7 +84,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
             </View>
           );
         })}
-      </View>
+      </View>}
 
       <View style={styles.workspace}>
         <View style={styles.sessionsSection}>
@@ -102,7 +104,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
             {block.slots.map((slot) => {
               const selected = slot.id === selectedSlot.id;
               const active = state.activeSession?.slotId === slot.id;
-              const done = committed.has(slot.id);
+              const done = !block.scheduling && committed.has(slot.id);
               const stateLabel = active ? '▶ active' : selected ? '▶ view' : done ? '✓ done' : 'planned';
               const stateTone = active || selected ? 'accent' : done ? 'success' : 'secondary';
               const visibleMuscles = slot.targetMuscles.slice(0, 3);
@@ -149,7 +151,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
                 <Txt variant="mono" tone="muted" style={styles.exerciseNumber}>{index + 1}</Txt>
                 <View style={styles.exerciseIdentity}>
                   <Txt variant="caption">{exerciseName(plan.exerciseId, block.catalog)}</Txt>
-                  <Txt variant="mono" tone="muted">{plan.sets} × {current.minReps}–{current.maxReps} · RIR {current.targetRir}</Txt>
+                  <Txt variant="mono" tone="muted">{plan.sets} × {plan.prescription?.minReps ?? current.minReps}–{plan.prescription?.maxReps ?? current.maxReps} · RIR {plan.prescription?.targetRir ?? current.targetRir}</Txt>
                 </View>
                 {plan.selection.substituted ? <Txt variant="heading" tone="warning" accessible accessibilityLabel="Substituted exercise">↔</Txt> : null}
                 <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />

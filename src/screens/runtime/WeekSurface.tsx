@@ -1,3 +1,4 @@
+import { scheduledOccurrences } from '../../runtime/sequence';
 import { belongsToPlan, datePlusDays } from '../../runtime/planDates';
 import { RemainingWeekEditor } from './RemainingWeekEditor';
 import type { ApplyResult } from './useRuntimeController';
@@ -8,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { computeWeeklyStatus, RUNTIME_EXERCISES } from '../../runtime';
 import type { ExerciseDefinition, Muscle, RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
-import { Card, Divider, Meter, ScreenBrand, Txt } from './ui';
+import { Card, Choice, Divider, Meter, ScreenBrand, Txt } from './ui';
 import { formatSets, goalLabel, slotPlain, muscleLabel, PHASE_COPY } from './copy';
 import { phaseOfWeek } from './selectors';
 import { MuscleMap, type MuscleMapTone } from './MuscleMap';
@@ -38,6 +39,7 @@ const rowStatus = (item: WeeklyMuscleStatus, value: number) => {
 export const WeekSurface = ({ state, block, status, apply, notify }: Props) => {
   const scroll = useRef<ScrollView>(null);
   const mapOffset = useRef(0);
+  const [showForecast, setShowForecast] = useState(false);
   const [selectedWeek, setSelectedWeek] = useState(block.currentWeek);
   const [muscleView, setMuscleView] = useState<'front' | 'back'>('front');
   const [selectedMuscle, setSelectedMuscle] = useState<Muscle | null>(null);
@@ -61,40 +63,42 @@ export const WeekSurface = ({ state, block, status, apply, notify }: Props) => {
     : selectedWeek > block.currentWeek ? 'upcoming' : selectedStatus.weekState === 'complete' ? 'closed' : 'live';
   const closed = displayState === 'closed';
   const relevant = new Set(block.slots.flatMap((slot) => slot.targetMuscles));
-  const muscles = selectedStatus.muscles.filter((item) => relevant.has(item.muscle));
+  const muscles = selectedStatus.muscles.filter((item) => block.scheduling || relevant.has(item.muscle));
   const highFatigue = selectedStatus.fatiguePercent >= DELOAD_CHECK;
   const sessionTone = closed ? colors.success : displayState === 'live' ? colors.accent : colors.textMuted;
   const sessionIcon = closed ? 'checkmark-circle' : displayState === 'live' ? 'radio-button-on' : 'time-outline';
   const muscleTones = useMemo(() => muscles.reduce<Partial<Record<Muscle, MuscleMapTone>>>((result, item) => {
-    const value = closed ? item.completedSets : item.projectedSets ?? item.completedSets;
+    const value = closed || !showForecast ? item.completedSets : item.projectedSets ?? item.completedSets;
     result[item.muscle] = rowStatus(item, value).tone;
     return result;
-  }, {}), [closed, muscles]);
+  }, {}), [closed, muscles, showForecast]);
   const weekStart = datePlusDays(block.startedOn, (selectedWeek - 1) * 7);
   const completedSlots = new Set(state.sessions.filter((item) => belongsToPlan(item, block) && item.status === 'committed' && item.context.date >= weekStart && item.context.date < datePlusDays(weekStart, 7)).map((item) => item.slotId));
   const remainingWindows = block.remainingWeek?.week === selectedWeek ? block.remainingWeek.windows.filter((item) => !completedSlots.has(item.slotId)) : undefined;
-  const plannedExerciseIds = new Set(remainingWindows ? remainingWindows.flatMap((window) => window.workout.exercises.map((entry) => entry.exercise.id)) : block.slots.filter((slot) => !completedSlots.has(slot.id)).flatMap((slot) => slot.plannedExercises.map((item) => item.exerciseId)));
+  const plannedExerciseIds = new Set(block.scheduling ? scheduledOccurrences(block,state.sessions,selectedWeek).flatMap(({slot,workout})=>workout ? workout.exercises.map(x=>x.exercise.id) : slot.plannedExercises.map(x=>x.exerciseId)) : remainingWindows ? remainingWindows.flatMap((window) => window.workout.exercises.map((entry) => entry.exercise.id)) : block.slots.filter((slot) => !completedSlots.has(slot.id)).flatMap((slot) => slot.plannedExercises.map((item) => item.exerciseId)));
+  const recordedExerciseIds = new Set(state.sessions.filter(item=>belongsToPlan(item,block) && item.context.date>=weekStart && item.context.date<datePlusDays(weekStart,7)).flatMap(item=>item.exercises.filter(entry=>entry.sets.some(set=>set.status==='completed' && (set.result?.completedReps ?? 0)>0)).map(entry=>entry.exercise.id)));
+  const visibleExerciseIds = showForecast && !closed ? new Set([...recordedExerciseIds,...plannedExerciseIds]) : recordedExerciseIds;
   const selectedPartName = selectedPart ? partLabel(selectedPart) : null;
   const selectedExercises = useMemo(() => {
     if (!selectedMuscle) return [];
     if (selectedPart && selectedPartName) {
-      return liftsForPart(selectedPart, plannedExerciseIds, block.catalog).flatMap((lift) => {
+      return liftsForPart(selectedPart, visibleExerciseIds, block.catalog).flatMap((lift) => {
         const exercise = (block.catalog ?? RUNTIME_EXERCISES).find((item) => item.name === lift.name);
         return exercise ? [{ exercise, assist: lift.role === 'assist' }] : [];
       });
     }
-    return (block.catalog ?? RUNTIME_EXERCISES).filter((exercise) => plannedExerciseIds.has(exercise.id)
+    return (block.catalog ?? RUNTIME_EXERCISES).filter((exercise) => visibleExerciseIds.has(exercise.id)
       && (exercise.primaryMuscles.includes(selectedMuscle) || exercise.secondaryMuscles.includes(selectedMuscle)))
       .map((exercise) => ({ exercise, assist: !exercise.primaryMuscles.includes(selectedMuscle) }));
-  }, [block.catalog, plannedExerciseIds, selectedMuscle, selectedPart, selectedPartName]);
+  }, [block.catalog, visibleExerciseIds, selectedMuscle, selectedPart, selectedPartName]);
   const selectedDose = muscles.find((item) => item.muscle === selectedMuscle);
 
   return (
     <ScrollView ref={scroll} contentContainerStyle={styles.page}>
       <ScreenBrand
         name="Progress"
-        sub={`${PHASE_COPY[phase.kind].name} · week ${displayState}`}
-        chip={`${goalLabel(block.goal)} · wk ${selectedWeek}/${block.durationWeeks}`}
+        sub={block.scheduling ? `Routine · week ${displayState}` : `${PHASE_COPY[phase.kind].name} · week ${displayState}`}
+        chip={`${goalLabel(block.goal)} · week ${selectedWeek}`}
       />
 
       <ScrollView
@@ -104,7 +108,7 @@ export const WeekSurface = ({ state, block, status, apply, notify }: Props) => {
         accessibilityRole="radiogroup"
         accessibilityLabel="Select training week"
       >
-        {Array.from({ length: block.durationWeeks }, (_, index) => index + 1).map((week) => {
+        {Array.from({ length: block.scheduling ? Math.max(6,block.currentWeek+1) : block.durationWeeks }, (_, index) => index + 1).map((week) => {
           const selected = week === selectedWeek;
           const current = week === block.currentWeek;
           return (
@@ -134,12 +138,17 @@ export const WeekSurface = ({ state, block, status, apply, notify }: Props) => {
       </Card>
 
       {selectedWeek === block.currentWeek ? <RemainingWeekEditor state={state} apply={apply} notify={notify} /> : null}
+      {block.scheduling ? <Txt variant="caption" tone="secondary">Each recorded set with reps counts as 1 for primary muscles and 0.5 for secondary muscles. This shows training exposure, not measured recovery or growth. Weekly target ranges are estimates.</Txt> : null}
+      <View style={{flexDirection:'row',flexWrap:'wrap',gap:space.sm}}>
+        <Choice compact label="Completed" selected={!showForecast} onPress={()=>setShowForecast(false)} />
+        <Choice compact label="Completed + planned" selected={showForecast} onPress={()=>setShowForecast(true)} />
+      </View>
       <View onLayout={(event) => { mapOffset.current = event.nativeEvent.layout.y; }}>
       <Card style={styles.mapCard}>
         <View style={styles.mapHeader}>
           <View style={styles.flex}>
             <Txt variant="label" tone="muted">MUSCLE MAP</Txt>
-            <Txt variant="caption" tone="secondary">{closed ? 'logged volume' : 'projected week volume'} · tap a muscle</Txt>
+            <Txt variant="caption" tone="secondary">{closed || !showForecast ? 'recorded training' : 'recorded + planned training'} · tap a muscle</Txt>
           </View>
           <View style={styles.viewSwitch} accessibilityRole="radiogroup" accessibilityLabel="Muscle map view">
             {(['front', 'back'] as const).map((view) => (
@@ -185,13 +194,13 @@ export const WeekSurface = ({ state, block, status, apply, notify }: Props) => {
           <Txt variant="caption" tone="secondary" numberOfLines={3}>
             {selectedMuscle
               ? selectedExercises.length
-                ? 'Exercises in your plan · tap to inspect'
-                : selectedPartName ? 'No planned exercise targets this muscle directly.' : 'No planned exercise targets this muscle.'
-              : 'See the exercises in this plan that train each region.'}
+                ? 'Exercises in this view · tap to inspect'
+                : selectedPartName ? 'No exercise in this view targets this muscle directly.' : 'No exercise in this view targets this muscle.'
+              : 'See the recorded or planned exercises that train each region.'}
           </Txt>
           <Txt variant="caption" tone="muted">Set credits estimate training volume, not muscle growth or measured recovery.</Txt>
-          {selectedMuscle && remainingWindows ? remainingWindows.filter((window) => window.workout.exercises.some((entry) => entry.exercise.primaryMuscles.includes(selectedMuscle) || entry.exercise.secondaryMuscles.includes(selectedMuscle))).map((window) => <Txt key={window.date} variant="caption" tone="secondary">{window.date}: {window.workout.exercises.filter((entry) => entry.exercise.primaryMuscles.includes(selectedMuscle) || entry.exercise.secondaryMuscles.includes(selectedMuscle)).map((entry) => `${entry.exercise.name} (${entry.sets.length} sets)`).join(', ')}</Txt>) : null}
-          {selectedMuscle && !remainingWindows ? block.slots.filter((slot) => !completedSlots.has(slot.id) && slot.plannedExercises.some((item) => selectedExercises.some((entry) => entry.exercise.id === item.exerciseId))).map((slot) => <Txt key={slot.id} variant="caption" tone="secondary">{slotPlain(slot)}: {slot.plannedExercises.filter((item) => selectedExercises.some((entry) => entry.exercise.id === item.exerciseId)).map((item) => `${(block.catalog ?? RUNTIME_EXERCISES).find((exercise) => exercise.id === item.exerciseId)?.name} (${item.sets} sets)`).join(', ')}</Txt>) : null}
+          {showForecast && selectedMuscle && remainingWindows ? remainingWindows.filter((window) => window.workout.exercises.some((entry) => entry.exercise.primaryMuscles.includes(selectedMuscle) || entry.exercise.secondaryMuscles.includes(selectedMuscle))).map((window) => <Txt key={window.date} variant="caption" tone="secondary">{window.date}: {window.workout.exercises.filter((entry) => entry.exercise.primaryMuscles.includes(selectedMuscle) || entry.exercise.secondaryMuscles.includes(selectedMuscle)).map((entry) => `${entry.exercise.name} (${entry.sets.length} sets)`).join(', ')}</Txt>) : null}
+          {showForecast && selectedMuscle && !remainingWindows ? block.slots.filter((slot) => !completedSlots.has(slot.id) && slot.plannedExercises.some((item) => selectedExercises.some((entry) => entry.exercise.id === item.exerciseId))).map((slot) => <Txt key={slot.id} variant="caption" tone="secondary">{slotPlain(slot)}: {slot.plannedExercises.filter((item) => selectedExercises.some((entry) => entry.exercise.id === item.exerciseId)).map((item) => `${(block.catalog ?? RUNTIME_EXERCISES).find((exercise) => exercise.id === item.exerciseId)?.name} (${item.sets} sets)`).join(', ')}</Txt>) : null}
           {selectedExercises.map(({ exercise, assist }) => (
             <Pressable key={exercise.id} accessibilityRole="button" accessibilityLabel={`Inspect ${exercise.name}${assist ? ', assisting lift' : ''}`}
               onPress={() => setInspectedExercise(exercise)} style={({ pressed }) => [styles.relatedLift, pressed && styles.pressed]}>
@@ -216,7 +225,7 @@ export const WeekSurface = ({ state, block, status, apply, notify }: Props) => {
         <Divider />
         {muscles.map((item, index) => {
           const plan = block.weeklySetBudget[item.muscle] ?? 0;
-          const value = closed ? item.completedSets : item.projectedSets ?? item.completedSets;
+          const value = closed || !showForecast ? item.completedSets : item.projectedSets ?? item.completedSets;
           const stateCopy = rowStatus(item, value);
           const doseTone = value > item.max ? 'danger' : value < plan ? 'warning' : 'success';
           return (

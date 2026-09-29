@@ -1,9 +1,10 @@
+import { nextRoutineSlot } from '../../runtime/sequence';
 import { committedSlotIds } from './selectors';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { commitRuntimeSession, discardRuntimeSession, getRuntimeSessionDiff, getRuntimeWeekView } from '../../runtime';
+import { commitRuntimeSession, finishAndUpdateRoutine, discardRuntimeSession, getRuntimeSessionDiff, getRuntimeWeekView } from '../../runtime';
 import type { ExerciseDiff, RuntimeState } from '../../runtime';
 import { colors, radius, space } from './theme';
-import { ScreenBrand, ScreenTitle, Txt } from './ui';
+import { Button, ScreenBrand, ScreenTitle, Txt } from './ui';
 import { describeRuntimeError, muscleLabel, setsWord, slotPlain } from './copy';
 import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
@@ -72,11 +73,11 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
   const muscles = (slot?.targetMuscles ?? []).slice(0, 2).map((muscle) => muscleLabel(muscle).toLowerCase()).join(' / ');
 
   const completedSlots = block ? committedSlotIds(state, block) : new Set<string>();
-  const upcoming = block && block.remainingWeek?.week === block.currentWeek ? block.remainingWeek.windows.find((item) => item.date > session.context.date && !completedSlots.has(item.slotId)) : undefined;
-  const nextSlot = upcoming ? block?.slots.find((item) => item.id === upcoming.slotId) : block?.slots.find((item) => item.id !== session.slotId && !completedSlots.has(item.id));
+  const upcoming = block && block.remainingWeek?.week === block.currentWeek ? block.remainingWeek.windows.find((item) => item.date > session.context.date && (block.scheduling || !completedSlots.has(item.slotId))) : undefined;
+  const nextSlot = block?.scheduling ? nextRoutineSlot(block,[...state.sessions.filter(x=>x.id!==session.id),{...session,status:'committed'}]) : upcoming ? block?.slots.find((item) => item.id === upcoming.slotId) : block?.slots.find((item) => item.id !== session.slotId && !completedSlots.has(item.id));
   const nextMessage = upcoming ? `${upcoming.date}: ${slotPlain(nextSlot)} · about ${upcoming.workout.estimatedMinutes} minutes.` : block?.remainingWeek?.week === block?.currentWeek ? 'No more days selected this week. Change your remaining week in Progress if your availability changes.' : nextSlot ? `${slotPlain(nextSlot)} is a remaining workout. Check Today before starting; recommendations account for your completed work.` : 'Your planned workouts are finished. Check Progress for your weekly totals.';
-  const commit = () => {
-    const outcome = apply(commitRuntimeSession);
+  const commit = (updateRoutine = false) => {
+    const outcome = apply(updateRoutine ? finishAndUpdateRoutine : commitRuntimeSession);
     if (!outcome.ok) {
       notify({ tone: 'error', ...describeRuntimeError(outcome.error), sticky: true });
       return;
@@ -113,6 +114,7 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
         <ScreenBrand name="Workout summary" sub={`${muscles}${slot ? ` · ${slotPlain(slot)}` : ''}`} />
 
         <ScreenTitle title="Workout summary" text="Your completed work compared with your previous workout." />
+        {!empty ? <Button label="Finish and update my routine" variant="secondary" onPress={()=>Alert.alert('Update the usual workout too?', 'Replaces this workout’s usual exercise order, set counts and rep targets with today’s retained work. Skipped exercises are removed from it. Other workouts and recorded history stay unchanged.', [{text:'Cancel',style:'cancel'},{text:'Finish and update',onPress:()=>commit(true)}])} /> : null}
 
         {empty ? (
           <Txt variant="code" tone="warning">⚠ Log a set before finishing this workout.</Txt>
@@ -175,7 +177,7 @@ export const SessionReview = ({ state, apply, notify, onOpenWeek }: Props) => {
         <Pressable
           accessibilityRole="button" accessibilityLabel="Finish workout" accessibilityState={{ disabled: empty }}
           accessibilityHint={empty ? 'Nothing was logged' : undefined}
-          disabled={empty} onPress={commit}
+          disabled={empty} onPress={() => commit()}
           style={({ pressed }) => [styles.commit, empty && styles.commitOff, pressed && styles.pressed]}
         >
           <Txt variant="code" style={[styles.commitText, empty && styles.commitTextOff]}>Finish workout  →</Txt>

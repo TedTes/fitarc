@@ -1,8 +1,10 @@
+import { exerciseAlternatives } from '../../runtime/recommendations';
+import { suggestWorkoutLoad } from '../../runtime/progression';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  discardRuntimeSession, getSwapCandidates, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise,
+  addRuntimeExercise, discardRuntimeSession, getSwapCandidates, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise,
   restSecondsFor, substituteRuntimeExercise, undoLastRuntimeSet,
 } from '../../runtime';
 import type { ExerciseDefinition, RuntimeState, SessionPrescription } from '../../runtime';
@@ -58,10 +60,11 @@ const DockBridge = ({ phase, seconds, primaryDisabled, onPrimary, onReset, onCha
 };
 
 /** What the engine uses as a replacement's first load. Mirrors substituteRuntimeExercise. */
-const startingLoad = (state: RuntimeState, exercise: ExerciseDefinition) =>
-  state.workingSets[exercise.id]?.loadKg
-  ?? state.source?.seedWorkingSets.find((item) => item.exerciseId === exercise.id)?.loadKg
-  ?? (exercise.compound ? 20 : 10);
+const startingLoad = (state: RuntimeState, exercise: ExerciseDefinition, target: SessionPrescription['exercises'][number]) => {
+  const pending=target.sets.filter(s=>s.status==='pending'); const first=pending[0];
+  if(state.source?.routine && first) return suggestWorkoutLoad(exercise,{exerciseId:exercise.id,sets:pending.length,minReps:first.minReps,maxReps:first.maxReps,targetRir:first.targetRir},state.source,state.sessions,state.activeSession?.context.date).loadKg;
+  return state.workingSets[exercise.id]?.loadKg ?? state.source?.seedWorkingSets.find(item=>item.exerciseId===exercise.id)?.loadKg ?? (exercise.compound?20:10);
+};
 
 const SolverHeader = ({ state, session, now }: { state: RuntimeState; session: SessionPrescription; now: number }) => {
   const slot = state.block?.slots.find((candidate) => candidate.id === session.slotId);
@@ -87,11 +90,12 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const stackRowHeight = Math.round(Math.max(54, Math.min(76, windowHeight * 0.085)));
   const visibleStackRows = windowHeight < 620 ? 1 : windowHeight < 740 ? 2 : 3;
   const frameLabelStyle = [styles.frameLabel, windowWidth < 360 && styles.frameLabelCompact];
+  const [addQuery, setAddQuery] = useState('');
   const [reps, setReps] = useState('');
   const [load, setLoad] = useState('');
   const [rir, setRir] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [sheet, setSheet] = useState<null | 'menu' | 'swap' | 'details' | 'swapDetails'>(null);
+  const [sheet, setSheet] = useState<null | 'menu' | 'swap' | 'details' | 'swapDetails' | 'add'>(null);
   const [swapPreview, setSwapPreview] = useState<ExerciseDefinition | null>(null);
   const [rest, setRest] = useState<RestState | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -107,13 +111,14 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const setId = pending?.set.id;
   const maxReps = pending?.set.maxReps;
   const targetLoad = pending?.set.loadKg;
+  const needsBaseline = Boolean(pending?.entry.needsBaseline && !pending.entry.sets.some(set=>set.status==='completed'));
 
   useEffect(() => {
     if (maxReps !== undefined) {
-      setLoad(`${targetLoad ?? 0}`); setReps(`${maxReps}`); setRir(3); setSubmitting(false); setSetStartedAt(null);
+      setLoad(needsBaseline ? '' : `${targetLoad ?? 0}`); setReps(`${maxReps}`); setRir(3); setSubmitting(false); setSetStartedAt(null);
       frameScroll.current?.scrollTo({ y: 0, animated: true });
     }
-  }, [setId, maxReps, targetLoad]);
+  }, [setId, maxReps, targetLoad, needsBaseline]);
 
   useEffect(() => {
     const timer = setInterval(() => setClockNow(Date.now()), 1000);
@@ -248,7 +253,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
 
   const swapTo = (replacement: ExerciseDefinition) => Alert.alert(
     `Swap to ${replacement.name}?`,
-    `Replaces the remaining ${setsWord(remainingHere)} of ${exercise.name} with ${replacement.name}, starting at ${formatKg(startingLoad(state, replacement))}. Sets already logged stay. A swap can't be undone.`,
+    `Replaces the remaining ${setsWord(remainingHere)} of ${exercise.name} with ${replacement.name}, starting at ${formatKg(startingLoad(state, replacement, entry))}. Sets already logged stay. A swap can't be undone.`,
     [{ text: 'Cancel', style: 'cancel' }, {
       text: 'Swap', onPress: () => {
         setSheet(null);
@@ -419,6 +424,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
             keyboardDismissMode="on-drag"
           >
           <ExerciseTargetPreview exercise={exercise} compact={windowHeight < 740} label={resting ? 'Next lift · muscles' : 'Muscles worked'} onPress={() => setSheet('details')} />
+          {needsBaseline ? <Txt variant="caption" tone="warning">Enter your chosen starting weight. No recorded baseline exists for this exercise. Use 0 for no external load.</Txt> : null}
           <View style={styles.frameFacts}>
             <View style={styles.frameRow}>
               <Txt variant="label" tone="muted" style={frameLabelStyle}>Weight used</Txt>
@@ -509,8 +515,17 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
         <OptionRow icon="bandage" tone="danger" title="Report pain" onPress={reportPain} />
         <Divider />
         <Txt variant="label" tone="muted">session · {results.length} logged · {progress.pending} pending</Txt>
+        <OptionRow icon="add" title="Add exercise for today" onPress={()=>setSheet('add')} />
         <OptionRow icon="flag" title="Finish early and review" disabled={results.length === 0} onPress={finishEarly} />
         <OptionRow icon="trash" tone="danger" title="Discard session" onPress={discard} />
+        </> : null}
+        {sheet === 'add' ? <>
+          <Txt variant="heading">Add an exercise for today</Txt>
+          <Txt variant="caption">Adds 3 sets of 8–12 reps. This extends today’s workout; your usual routine stays unchanged. Edit the routine for different targets.</Txt>
+          <TextInput value={addQuery} onChangeText={setAddQuery} placeholder="Search exercises" placeholderTextColor={colors.textMuted} style={{color:colors.text,minHeight:44}} accessibilityLabel="Search exercises to add today" />
+          {(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && x.name.toLowerCase().includes(addQuery.toLowerCase())).map(x=><Button key={x.id} variant="ghost" label={x.name} onPress={()=>{
+            report(apply(current=>addRuntimeExercise(current,{exerciseId:x.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${x.name} added for today`});});
+          }} />)}
         </> : null}
         {sheet === 'details' ? <ExerciseMuscleDetails key={exercise.id} exercise={exercise} reason={entry.reason} /> : null}
         {sheet === 'swap' ? <>
@@ -533,8 +548,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
         {sheet === 'swapDetails' && swapPreview ? <>
           <Txt variant="caption" tone="secondary">Replacing {exercise.name} · primary: {muscleList(exercise.primaryMuscles)}</Txt>
           <ExerciseMuscleDetails key={swapPreview.id} exercise={swapPreview} />
-          <Txt variant="code" tone="secondary">Starts at {formatKg(startingLoad(state, swapPreview))} · {setsWord(remainingHere)} remaining</Txt>
-          <Button label={`Use ${swapPreview.name}`} onPress={() => swapTo(swapPreview)} />
+          <Txt variant="caption">{state.source ? exerciseAlternatives(exercise,state.block?.catalog ?? [],state.source,state.sessions,session.context).find(x=>x.exercise.id===swapPreview.id)?.explanation : ''}</Txt>
+          <Txt variant="code" tone="secondary">Starts at {formatKg(startingLoad(state, swapPreview, entry))} · {setsWord(remainingHere)} remaining</Txt>
+          <Button label={`Use ${swapPreview.name} today`} onPress={() => swapTo(swapPreview)} />
           <Button label="Compare other lifts" variant="ghost" onPress={() => setSheet('swap')} />
         </> : null}
       </Sheet>

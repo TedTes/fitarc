@@ -38,7 +38,7 @@ export const ExerciseTargetPreview = memo(({ exercise, onPress, label = 'Muscles
 ));
 
 /** Mount with exercise.id as its key so every inspected lift starts at its best view. */
-export const ExerciseMuscleDetails = memo(({ exercise, reason }: { exercise: ExerciseDefinition; reason?: string }) => {
+export const ExerciseMuscleDetails = memo(({ exercise, reason, showNotes = true }: { exercise: ExerciseDefinition; reason?: string; showNotes?: boolean }) => {
   const { height } = useWindowDimensions();
   const [view, setView] = useState<BodyView>(() => preferredTargetView(exercise));
   const [selection, setSelection] = useState<{ muscle: Muscle; part: string | null } | null>(null);
@@ -89,7 +89,7 @@ export const ExerciseMuscleDetails = memo(({ exercise, reason }: { exercise: Exe
       {exercise.secondaryMuscles.length ? (
         <TargetGroup label="Assisting" muscles={exercise.secondaryMuscles} selected={selection?.muscle} onSelect={chooseGroup} />
       ) : null}
-      <Txt variant="caption" tone="muted">Highlights show the exercise’s muscle groups. Effort and weekly volume are tracked separately.</Txt>
+      {showNotes ? <Txt variant="caption" tone="muted">Highlights show the exercise’s muscle groups. Effort and weekly volume are tracked separately.</Txt> : null}
       {reason ? <><Divider /><Txt variant="caption" tone="secondary">{reason}</Txt></> : null}
     </View>
   );

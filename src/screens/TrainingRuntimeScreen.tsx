@@ -94,7 +94,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  // Every notification is an entry in the runtime log. The latest one is always shown as a single line.
+  // Keep the event trail; routine success messages only occupy Today while fresh.
   const notify = useCallback<Notify>((next) => {
     eventId.current += 1;
     const id = eventId.current;
@@ -235,7 +235,9 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     }
   };
 
-  const line = (
+  const lastEvent = events[events.length - 1];
+  const showEventLine = Boolean(fresh || ((lastEvent?.tone === 'error' || lastEvent?.tone === 'warning') && dismissedId !== lastEvent.id));
+  const line = showEventLine ? (
     <EventLine
       events={events}
       fresh={Boolean(fresh && fresh.id === events[events.length - 1]?.id)}
@@ -243,7 +245,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
       dismissed={dismissedId === events[events.length - 1]?.id}
       onDismiss={() => setDismissedId(events[events.length - 1]?.id ?? null)}
     />
-  );
+  ) : null;
 
   // ── Loading and load failure ──
   if (loading) {
@@ -272,7 +274,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
 
   const block = weekView?.block ?? state.block;
   const status = weekView?.status;
-  const chip = `${goalLabel(state.source.goal)} · Week ${block.currentWeek} of ${block.durationWeeks}`;
+  const chip = `${goalLabel(state.source.goal)} · Week ${block.currentWeek}${block.scheduling ? "" : ` of ${block.durationWeeks}`}`;
 
   return (
     <ChromeContext.Provider value={{ chip, sync, onSyncPress }}>
