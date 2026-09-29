@@ -1,3 +1,5 @@
+import { exerciseAlternatives } from './recommendations';
+import { suggestWorkoutLoad } from './progression';
 import { MUSCLES, secondaryMuscleCredit } from './trainingPolicy';
 import { arbitratePrescription } from './arbitration';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
@@ -14,6 +16,7 @@ export const solveSession = (input: {
   block: TrainingBlock;
   context: SessionContext;
   workingSets: Record<string, WorkingSetState>;
+  sessions?: SessionPrescription[];
   weeklyStatus?: WeeklyStatus;
   slotIndex?: number;
   setCeilings?: Record<string, number>;
@@ -22,13 +25,17 @@ export const solveSession = (input: {
   const catalog = input.block.catalog ?? RUNTIME_EXERCISES;
   const slot = input.block.slots[(input.slotIndex ?? 0) % input.block.slots.length];
   const phase = input.phaseOverride ?? currentPhase(input.block);
-  const exerciseLimit = input.context.minutesAvailable <= 30 ? 3 : input.context.minutesAvailable <= 45 ? 4 : 5;
+  const custom = input.source.routine?.split === 'custom';
+  const exerciseLimit = custom ? slot.plannedExercises.length : input.context.minutesAvailable <= 30 ? 3 : input.context.minutesAvailable <= 45 ? 4 : 5;
   const unavailableExercises = new Set(input.context.unavailableExerciseIds);
   const unavailableEquipment = new Set(input.context.unavailableEquipment);
   const planned = (slot.plannedExercises ?? []).flatMap((plan) => {
-    const exercise = catalog.find((candidate) => candidate.id === plan.exerciseId);
+    const original = catalog.find(candidate=>candidate.id===plan.exerciseId);
+    const replacementId = input.context.exerciseReplacements?.[plan.exerciseId];
+    if (replacementId && (!original || !exerciseAlternatives(original,catalog,input.source,input.sessions ?? [],input.context).some(x=>x.exercise.id===replacementId))) throw Error('A selected replacement no longer fits today’s constraints.');
+    const exercise = catalog.find((candidate) => candidate.id === (replacementId ?? plan.exerciseId));
     if (!exercise || input.source.excludedExerciseIds.includes(exercise.id) || exercise.contraindications.some((item) => input.source.limitations.includes(item)) || exercise.equipment.some((item) => !input.source.equipment.includes(item)) || unavailableExercises.has(exercise.id) || exercise.equipment.some((item) => unavailableEquipment.has(item))) return [];
-    return [{ exercise, plannedSets: plan.sets, reason: plan.selection.reasons.join(' · ') }];
+    return [{ exercise, prescription: plan.prescription ? {...plan.prescription,exerciseId:exercise.id,startingLoadKg:replacementId?undefined:plan.prescription.startingLoadKg} : undefined, plannedSets: plan.sets, reason: replacementId ? `Your chosen replacement for ${original!.name}, today only` : plan.selection.reasons.join(' · ') }];
   }).slice(0, exerciseLimit);
   const fallback = selectExercises({
     catalog, source: input.source,
@@ -38,13 +45,14 @@ export const solveSession = (input: {
     unavailableEquipment: input.context.unavailableEquipment,
     limit: exerciseLimit,
   }).map((exercise) => ({
-    exercise,
+    exercise, prescription: undefined,
     plannedSets: Math.max(2, Math.min(4, Math.floor((slot.plannedExercises?.reduce((sum, plan) => sum + plan.sets, 0) ?? exerciseLimit * 3) / Math.max(1, exerciseLimit)))),
     reason: `${slot.label}: selected within current constraints`,
   }));
-  const selected = [...planned, ...fallback.filter((item) => !planned.some((plan) => plan.exercise.id === item.exercise.id))].slice(0, Math.min(exerciseLimit, slot.plannedExercises?.length || exerciseLimit));
+  const selected = [...planned, ...(input.source.routine ? [] : fallback).filter((item) => !planned.some((plan) => plan.exercise.id === item.exercise.id))].slice(0, Math.min(exerciseLimit, slot.plannedExercises?.length || exerciseLimit));
+  if (new Set(selected.map(x=>x.exercise.id)).size !== selected.length) throw Error('Choose different exercises for each position in today’s workout.');
   const reserved = Object.fromEntries(MUSCLES.map((muscle) => [muscle, input.weeklyStatus?.muscles.find((item) => item.muscle === muscle)?.completedSets ?? 0])) as Record<(typeof MUSCLES)[number], number>;
-  let exercises = selected.map(({ exercise, plannedSets, reason }, index) => {
+  let exercises = selected.map(({ exercise, prescription, plannedSets, reason }, index) => {
     const primary = exercise.primaryMuscles[0];
     const muscleStatus = input.weeklyStatus?.muscles.find((status) => status.muscle === primary);
     const arbitration = arbitratePrescription({
@@ -61,14 +69,18 @@ export const solveSession = (input: {
     credits.forEach(({muscle,credit}) => { reserved[muscle] += allowedSets * credit; });
     const seed = input.workingSets[exercise.id]
       ?? input.source.seedWorkingSets.find((item) => item.exerciseId === exercise.id);
-    const loadKg = seed?.loadKg ?? (exercise.compound ? 20 : 10);
+    const suggestion = input.source.routine ? suggestWorkoutLoad(exercise, prescription ?? {
+      exerciseId:exercise.id,sets:plannedSets,minReps:phase.minReps,maxReps:phase.maxReps,targetRir:phase.targetRir,
+    },input.source,input.sessions ?? [],input.context.date) : undefined;
+    const loadKg = suggestion?.loadKg ?? seed?.loadKg ?? prescription?.startingLoadKg ?? (exercise.compound ? 20 : 10);
     return {
       id: createRuntimeId(), exercise, priority: index + 1,
-      reason: `${reason} · ${arbitration.reasonCode}`,
+      ...(suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
+      reason: `${reason} · ${{within_constraints:'Fits your current preferences',recovery_meh:'Fewer sets for today’s recovery',recovery_no:'Reduced work for today’s recovery',deload_override:'Reduced work for recovery',weekly_volume_cap:'Adjusted for this week’s completed work'}[arbitration.reasonCode] ?? 'Adjusted for today'}${suggestion ? ` · ${suggestion.explanation}` : ''}`,
       sets: Array.from({ length: allowedSets }, (_, setIndex) => ({
         id: createRuntimeId(), setNumber: setIndex + 1, loadKg,
-        minReps: phase.minReps, maxReps: phase.maxReps,
-        targetRir: phase.targetRir, status: 'pending' as const,
+        minReps: prescription?.minReps ?? phase.minReps, maxReps: prescription?.maxReps ?? phase.maxReps,
+        targetRir: prescription?.targetRir ?? phase.targetRir, status: 'pending' as const,
       })),
     };
   }).filter((entry) => entry.sets.length > 0);

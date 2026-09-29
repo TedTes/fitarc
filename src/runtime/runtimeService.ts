@@ -1,3 +1,7 @@
+import { exerciseAlternatives } from './recommendations';
+import { suggestWorkoutLoad } from './progression';
+import { defaultProgression, editableRoutine, validateRoutineSource } from './routine';
+import { nextRoutineSlot } from './sequence';
 import { localDate, planWeek } from './planDates';
 import { belongsToPlan } from './planDates';
 import { projectTrainingState } from './trainingState';
@@ -12,7 +16,7 @@ import type { ExerciseDefinition, Muscle, RuntimeState, SessionContext, SetResul
 
 export const compileTrainingBlock = (state: RuntimeState, source: TrainingSource): RuntimeState => {
   if (state.activeSession) throw new Error('finish_active_session_before_recompile');
-  const block = compileBlock(source, state.block, state.workingSets, state.catalog);
+  const block = compileBlock(source, state.block, state.workingSets, [...new Map([...(state.block?.catalog ?? []), ...(state.catalog ?? RUNTIME_EXERCISES)].map(x => [x.id, x])).values()]);
   const errors = validateBlock(block);
   if (errors.length) throw new Error(errors.join(' '));
   const previous = state.source;
@@ -70,7 +74,7 @@ const resolveTrainingSession = (
   const { block: resolvedBlock, weekStatus, deloadTriggered, start } = resolveWeek(state, context.date);
   const remaining = resolvedBlock.remainingWeek?.week === resolvedBlock.currentWeek ? resolvedBlock.remainingWeek : undefined;
   const window = remaining?.windows.find((item) => item.date === context.date);
-  if (remaining && !window) throw new Error('No workout planned for today. Change your remaining week in Progress.');
+  if (remaining && !window && !context.extraWorkout) throw new Error('No workout planned for today. Change your remaining week in Progress.');
   const weekStart = new Date(start);
   weekStart.setDate(start.getDate() + (resolvedBlock.currentWeek - 1) * 7);
   const weekEnd = new Date(weekStart);
@@ -87,19 +91,21 @@ const resolveTrainingSession = (
     return { muscle, deficit: Math.max(0, (status?.min ?? 0) - (status?.completedSets ?? 0)) };
   });
   const totalDeficit = (slot: (typeof candidates)[number]) => deficitOf(slot).reduce((sum, item) => sum + item.deficit, 0);
-  const nextSlot = (window ? candidates.find((item) => item.id === window.slotId) : undefined) ?? [...candidates].sort((a, b) => totalDeficit(b) - totalDeficit(a) || a.dayIndex - b.dayIndex)[0];
-  if (window && performedSlots.has(window.slotId)) throw new Error('Today’s planned workout is already finished.');
+  const selectedSlot = context.workoutId ? resolvedBlock.slots.find(slot => slot.id === context.workoutId) : undefined;
+  if (context.workoutId && !selectedSlot) throw Error('That workout is no longer in your routine.');
+  const nextSlot = selectedSlot ?? (resolvedBlock.scheduling === 'sequence' ? nextRoutineSlot(resolvedBlock,state.sessions,context.date) : undefined) ?? (window ? candidates.find((item) => item.id === window.slotId) : undefined) ?? [...candidates].sort((a, b) => totalDeficit(b) - totalDeficit(a) || a.dayIndex - b.dayIndex)[0];
+  if (window && (resolvedBlock.scheduling === 'sequence' ? state.sessions.some(s => belongsToPlan(s,resolvedBlock) && s.status === 'committed' && s.context.date === context.date) && !context.extraWorkout : performedSlots.has(window.slotId))) throw new Error('Today’s planned workout is already finished.');
   const behind = deficitOf(nextSlot).filter((item) => item.deficit > 0).sort((a, b) => b.deficit - a.deficit).map((item) => item.muscle);
   const slotChoice: SlotChoiceReason = {
-    kind: !availableSlots.length ? 'repeat' : candidates.length === 1 ? 'only_remaining' : behind.length ? 'largest_deficit' : 'next_in_order',
+    kind: resolvedBlock.scheduling === 'sequence' ? 'next_in_order' : !availableSlots.length ? 'repeat' : candidates.length === 1 ? 'only_remaining' : behind.length ? 'largest_deficit' : 'next_in_order',
     muscles: behind,
   };
   const prescription = solveSessionEngine({
     source: state.source, block: resolvedBlock, context,
-    workingSets: state.workingSets, weeklyStatus: weekStatus,
+    workingSets: state.workingSets, sessions: state.sessions, weeklyStatus: weekStatus,
     slotIndex: resolvedBlock.slots.indexOf(nextSlot),
     phaseOverride: deloadTriggered ? resolvedBlock.phases.find((phase) => phase.kind === 'deload') : undefined,
-    setCeilings: window ? Object.fromEntries((resolvedBlock.catalog ?? RUNTIME_EXERCISES).map((item) => [item.id, window.workout.exercises.find((entry) => entry.exercise.id === item.id)?.sets.length ?? 0])) : undefined,
+    setCeilings: window && !Object.keys(context.exerciseReplacements ?? {}).length && !context.workoutId && !context.extraWorkout && window.slotId === nextSlot.id ? Object.fromEntries((resolvedBlock.catalog ?? RUNTIME_EXERCISES).map((item) => [item.id, window.workout.exercises.find((entry) => entry.exercise.id === item.id)?.sets.length ?? 0])) : undefined,
   });
   if (!prescription.exercises.length) throw new Error('No work fits the current equipment, time and weekly limits. Change your remaining week in Progress.');
   return { block: resolvedBlock, prescription, slotChoice, deloadTriggered };
@@ -318,6 +324,8 @@ const swapExclusions = (state: RuntimeState, exerciseId: string) => [
 export const getSwapCandidates = (state: RuntimeState, exerciseId: string, limit = 3): ExerciseDefinition[] => {
   const target = state.activeSession?.exercises.find((entry) => entry.exercise.id === exerciseId);
   if (!state.source || !target) return [];
+  if (state.source.routine) return exerciseAlternatives(target.exercise,state.block?.catalog ?? state.catalog ?? RUNTIME_EXERCISES,
+    state.source,state.sessions,state.activeSession!.context,swapExclusions(state,exerciseId)).slice(0,limit).map(x=>x.exercise);
   return selectExercises({
     catalog: state.block?.catalog ?? state.catalog ?? RUNTIME_EXERCISES,
     source: { ...state.source, excludedExerciseIds: swapExclusions(state, exerciseId) },
@@ -351,12 +359,16 @@ export const substituteRuntimeExercise = (
   const pending = target.sets.filter((set) => set.status === 'pending');
   const seed = state.workingSets[replacement.id]
     ?? state.source.seedWorkingSets.find((item) => item.exerciseId === replacement.id);
+  const first = pending[0];
+  if (!first) throw Error('No pending sets to replace.');
+  const suggestion = state.source.routine ? suggestWorkoutLoad(replacement,{exerciseId:replacement.id,sets:pending.length,minReps:first.minReps,maxReps:first.maxReps,targetRir:first.targetRir},state.source,state.sessions,state.activeSession.context.date) : undefined;
   const replacementEntry = {
     id: createRuntimeId(), exercise: replacement, priority: target.priority,
-    reason: `substituted for unavailable ${target.exercise.name}`,
+    ...(suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
+    reason: `Your replacement for ${target.exercise.name}, today only. ${suggestion?.explanation ?? ""}`,
     sets: pending.map((set, index) => ({
       ...set, id: createRuntimeId(), setNumber: index + 1,
-      loadKg: seed?.loadKg ?? (replacement.compound ? 20 : 10),
+      loadKg: suggestion?.loadKg ?? seed?.loadKg ?? (replacement.compound ? 20 : 10),
     })),
   };
   const exercises = state.activeSession.exercises.flatMap((entry) => {
@@ -369,4 +381,41 @@ export const substituteRuntimeExercise = (
     ...state, activeSession: session,
     sessions: state.sessions.map((item) => item.id === session.id ? session : item),
   };
+};
+
+/** Explicit one-session addition; it does not edit the routine or create completed evidence. */
+export const addRuntimeExercise = (state: RuntimeState, item: import('./types').RoutineExercise): RuntimeState => {
+  if (!state.activeSession || !state.source || !state.block) throw Error('Start a workout before adding an exercise.');
+  const catalog = state.block.catalog ?? state.catalog ?? RUNTIME_EXERCISES;
+  validateRoutineSource({ ...state.source, routine: { split: 'custom', workouts: [{ id: 'validation', name: 'Today', exercises: [item] }], progression: state.source.routine?.progression ?? defaultProgression() } },catalog);
+  const exercise = catalog.find(x=>x.id===item.exerciseId)!;
+  if (state.activeSession.exercises.some(x=>x.exercise.id===item.exerciseId)) throw Error('This exercise is already in today’s workout.');
+  if (state.source.excludedExerciseIds.includes(exercise.id) || exercise.contraindications.some(x=>state.source!.limitations.includes(x))
+    || state.activeSession.context.unavailableExerciseIds.includes(exercise.id)
+    || exercise.equipment.some(x=>!state.source!.equipment.includes(x) || state.activeSession!.context.unavailableEquipment.includes(x))) throw Error('This exercise does not fit today’s equipment or limitations.');
+  const suggestion = state.source.routine ? suggestWorkoutLoad(exercise,item,state.source,state.sessions,state.activeSession.context.date) : undefined;
+  const load = item.startingLoadKg ?? suggestion?.loadKg ?? state.workingSets[item.exerciseId]?.loadKg ?? 0;
+  const entry = { id: createRuntimeId(), exercise, priority: state.activeSession.exercises.length+1,
+    needsBaseline: item.startingLoadKg === undefined && !(suggestion?.baselineKnown ?? state.workingSets[item.exerciseId]),
+    reason: `Added by you for today only. ${suggestion?.explanation ?? 'Enter your actual weight.'}`,
+    sets: Array.from({length:item.sets},(_,i)=>({id:createRuntimeId(),setNumber:i+1,loadKg:load,minReps:item.minReps,maxReps:item.maxReps,targetRir:item.targetRir,status:'pending' as const})) };
+  const session = { ...state.activeSession, exercises: [...state.activeSession.exercises,entry], estimatedMinutes: Math.ceil(state.activeSession.estimatedMinutes+exercise.setupMinutes+item.sets*(exercise.compound?3.5:2.5)) };
+  return {...state,activeSession:session,sessions:state.sessions.map(x=>x.id===session.id?session:x)};
+};
+
+/** Explicit acceptance of today's exercise order and retained sets as the future routine. */
+export const finishAndUpdateRoutine = (state: RuntimeState): RuntimeState => {
+  if (!state.activeSession || !state.source || !state.block) throw Error('No workout to save.');
+  const session = state.activeSession;
+  const routine = editableRoutine(state.block);
+  const exercises = session.exercises.flatMap(entry => {
+    const sets = entry.sets.filter(set=>set.status!=='skipped');
+    if (!sets.length) return [];
+    return [{exerciseId:entry.exercise.id,sets:sets.length,minReps:sets[0].minReps,maxReps:sets[0].maxReps,targetRir:sets[0].targetRir}];
+  });
+  if (!exercises.length) throw Error('Keep at least one exercise before updating your routine.');
+  routine.workouts = routine.workouts.map(workout=>workout.id===session.slotId?{...workout,exercises}:workout);
+  const finished = commitRuntimeSession(state);
+  const updated = compileTrainingBlock(finished,{...state.source,version:state.source.version+1,routine});
+  return {...updated,blockHistory:[...(state.blockHistory??[]).filter(x=>x.id!==state.block!.id),state.block]};
 };

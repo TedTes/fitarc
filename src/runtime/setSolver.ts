@@ -1,11 +1,12 @@
 import { RULE_VERSION, roundLoad } from './trainingPolicy';
-import type { BlockPhaseKind, RuntimeDecision, SetResult, WorkingSetState } from './types';
+import type { BlockPhaseKind, ProgressionSettings, RuntimeDecision, SetResult, WorkingSetState } from './types';
 
 export type SetSolverInput = {
   result: SetResult;
   phase: BlockPhaseKind;
   incrementKg: number;
   previous?: WorkingSetState;
+  settings?: ProgressionSettings;
 };
 
 export const updateRirConfidence = (
@@ -18,9 +19,13 @@ export const updateRirConfidence = (
   return Math.min(1, Math.max(0.1, next));
 };
 
-export const solveNextSet = ({ result, phase, incrementKg, previous }: SetSolverInput): RuntimeDecision => {
+export const solveNextSet = ({ result, phase, incrementKg, previous, settings }: SetSolverInput): RuntimeDecision => {
   const load = result.actualLoadKg ?? result.prescribedLoadKg;
   void previous;
+  if (settings && (settings.mode === 'manual' || !settings.adjustDuringWorkout)) return {
+    action:'hold',nextLoadKg:load,nextMinReps:result.prescribedMinReps,nextMaxReps:result.prescribedMaxReps,
+    reasonCode:'routine_same_workout_hold',explanation:'Keep your chosen weight for this workout. Next-workout suggestions use completed session history.',ruleVersion:RULE_VERSION,
+  };
   const missedBy = result.prescribedMinReps - result.completedReps;
   const deload = phase === 'deload';
 
@@ -63,7 +68,7 @@ export const solveNextSet = ({ result, phase, incrementKg, previous }: SetSolver
       ruleVersion: RULE_VERSION,
     };
   }
-  if (result.completedReps >= result.prescribedMaxReps && result.reportedRir >= 2) {
+  if (result.completedReps >= result.prescribedMaxReps && result.reportedRir >= (settings ? Math.max(settings.minimumRir,result.targetRir) : 2)) {
     const nextLoad = roundLoad(load + incrementKg, incrementKg);
     return {
       action: 'increase', nextLoadKg: nextLoad,
@@ -71,7 +76,7 @@ export const solveNextSet = ({ result, phase, incrementKg, previous }: SetSolver
       reasonCode: result.reportedRir >= 3 ? 'reps_hit_easy_dampened_add' : 'reps_hit_target_effort_small_add',
       explanation: result.reportedRir >= 3
         ? `You hit every rep with ${result.reportedRir} left. RIR is dampened to one increment, so the next set is ${nextLoad} kg.`
-        : `You hit every rep at RIR 2, so the next set adds one small increment to ${nextLoad} kg.`,
+        : `You hit every rep at RIR ${result.reportedRir}, so the next set adds one small increment to ${nextLoad} kg.`,
       ruleVersion: RULE_VERSION,
     };
   }

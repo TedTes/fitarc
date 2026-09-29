@@ -10,6 +10,7 @@ const { compileTrainingBlock, solveTrainingSession, recordRuntimeSet, undoLastRu
 const { prepareCatalogImport } = require('../src/runtime/catalogImport.ts');
 const { validateCatalog } = require('../src/runtime/catalogValidation.ts');
 const { previewRemainingWeek, applyRemainingWeek } = require('../src/runtime/remainingWeek.ts');
+const { defaultRoutine } = require('../src/runtime/routine.ts');
 const { datePlusDays, localDate } = require('../src/runtime/planDates.ts');
 const { createRuntimeId } = require('../src/runtime/id.ts');
 const uid = '10000000-0000-4000-8000-000000000001';
@@ -147,6 +148,20 @@ async function main() {
   assert.deepEqual(roundTrip.block.remainingWeek,replanned.block.remainingWeek);
   assert.deepEqual(roundTrip.sessions,next.sessions);
   assert(roundTrip.blockHistory.some(x=>x.id===next.block.id));
+  const privateExercise={...RUNTIME_EXERCISES.find(x=>x.id==='biceps_curl'),id:'user_private_curl',name:'My cable-free curl'};
+  const ownSource={...replanned.source,version:replanned.source.version+1,routine:{...defaultRoutine(),split:'custom',customExercises:[privateExercise],workouts:[{
+    id:createRuntimeId(),name:'My routine',exercises:[{exerciseId:privateExercise.id,sets:2,minReps:8,maxReps:12,targetRir:2,startingLoadKg:7}]
+  }]}};
+  let owned=apply(replanned,s=>compileTrainingBlock(s,ownSource));
+  owned=apply(owned,s=>solveTrainingSession(s,{...ctx,date:datePlusDays(ctx.date,2)}));
+  owned=logSet(owned);
+  await save(owned,7);
+  const ownedRoundTrip=(await read()).state;
+  assert.deepEqual(ownedRoundTrip.source.routine,ownSource.routine);
+  assert.equal(ownedRoundTrip.activeSession.exercises[0].sets[0].result.actualLoadKg,7);
+  assert.deepEqual(ownedRoundTrip.block.catalog,owned.block.catalog);
+  assert.equal((await db.query("select count(*)::int as n from fitarc.fitarc_exercise_catalog where id='user_private_curl'")).rows[0].n,0);
+  assert.equal(ownedRoundTrip.sessions.filter(x=>x.status==='committed').length,replanned.sessions.filter(x=>x.status==='committed').length);
   await db.close();
   // Separately verify the entire active migration chain against an empty app schema.
   const freshDb = await PGlite.create();

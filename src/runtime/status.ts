@@ -1,3 +1,4 @@
+import { scheduledOccurrences } from './sequence';
 import { belongsToPlan } from './planDates';
 import { hardSetCredit, MUSCLES, secondaryMuscleCredit } from './trainingPolicy';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
@@ -71,26 +72,28 @@ export const computeWeeklyStatus = (
   const weekResults = results.filter((result) => weekSessionIds.has(result.prescriptionId));
   const committedSessions = weekSessions.filter((session) => session.status === 'committed');
   const committedSlotIds = new Set(committedSessions.map((session) => session.slotId));
-  const sessionsLogged = committedSlotIds.size;
+  const sessionsLogged = block.scheduling ? committedSessions.length : committedSlotIds.size;
+  const occurrences = block.scheduling ? scheduledOccurrences(block,sessions,weekNumber) : [];
   const remaining = block.remainingWeek?.week === weekNumber ? block.remainingWeek : undefined;
-  const totalSessions = remaining ? new Set([...committedSlotIds, ...remaining.windows.map((item) => item.slotId)]).size : block.slots.length;
+  const totalSessions = block.scheduling ? sessionsLogged+occurrences.length : remaining ? new Set([...committedSlotIds, ...remaining.windows.map((item) => item.slotId)]).size : block.slots.length;
   const today = new Date();
-  const weekState: WeeklyStatus['weekState'] = sessionsLogged >= totalSessions || today >= weekEnd ? 'complete' : 'in_progress';
+  const weekState: WeeklyStatus['weekState'] = (!block.scheduling && sessionsLogged >= totalSessions) || today >= weekEnd ? 'complete' : 'in_progress';
   const completed = Object.fromEntries(MUSCLES.map((muscle) => [muscle, 0])) as Record<(typeof MUSCLES)[number], number>;
   let fatiguePoints = 0;
   let misses = 0;
   weekResults.forEach((result) => {
-    const exercise = weekSessions.flatMap((session) => session.exercises).find((entry) => entry.exercise.id === result.exerciseId)?.exercise;
+    const exercise = weekSessions.find(session=>session.id===result.prescriptionId)?.exercises.find(entry=>entry.exercise.id===result.exerciseId)?.exercise;
     if (!exercise) return;
-    const credit = hardSetCredit(result.reportedRir, result.targetRir);
+    const credit = block.scheduling ? (result.completedReps > 0 ? 1 : 0) : hardSetCredit(result.reportedRir, result.targetRir);
     exercise.primaryMuscles.forEach((muscle) => { completed[muscle] += credit; });
     exercise.secondaryMuscles.forEach((muscle) => { completed[muscle] += credit * secondaryMuscleCredit; });
     fatiguePoints += credit * (6 - Math.min(5, result.reportedRir)) * exercise.fatigueCost;
     if (result.completedReps < result.prescribedMinReps) misses += 1;
   });
   const scheduled = Object.fromEntries(MUSCLES.map((muscle) => [muscle, 0])) as Record<(typeof MUSCLES)[number], number>;
-  block.slots.filter((slot) => !committedSlotIds.has(slot.id) && (!remaining || remaining.windows.some((item) => item.slotId === slot.id))).forEach((slot) => {
-    const prescribed = [...weekSessions].reverse().find((session) => session.slotId === slot.id && session.status !== 'committed') ?? remaining?.windows.find((item) => item.slotId === slot.id)?.workout;
+  const scheduledEntries = block.scheduling ? occurrences : block.slots.filter((slot) => !committedSlotIds.has(slot.id) && (!remaining || remaining.windows.some((item) => item.slotId === slot.id))).map(slot=>({slot,workout:undefined as SessionPrescription | undefined}));
+  scheduledEntries.forEach(({slot,workout}) => {
+    const prescribed = workout ?? (!block.scheduling ? [...weekSessions].reverse().find((session) => session.slotId === slot.id && session.status !== 'committed') ?? remaining?.windows.find((item) => item.slotId === slot.id)?.workout : undefined);
     if (prescribed) {
       prescribed.exercises.forEach((entry) => {
         const remainingSets = entry.sets.filter((set) => set.status === 'pending').length;
@@ -120,11 +123,11 @@ export const computeWeeklyStatus = (
   }, 0), 0));
   const fatiguePercent = Math.min(100, Math.round((fatiguePoints / weeklyFatigueCapacity) * 100));
   const repeatedMisses = misses >= 3;
-  const deloadRecommended = weekNumber >= block.durationWeeks || (weekState === 'complete' && fatiguePercent >= 80 && repeatedMisses);
+  const deloadRecommended = (!block.scheduling && weekNumber >= block.durationWeeks) || (weekState === 'complete' && fatiguePercent >= 80 && repeatedMisses);
   const reasons = [
     ...(fatiguePercent >= 80 ? ['Systemic fatigue budget is above 80%.'] : []),
     ...(repeatedMisses ? ['At least three prescribed rep targets were missed.'] : []),
-    ...(weekNumber >= block.durationWeeks ? ['The scheduled recovery week has arrived.'] : []),
+    ...(!block.scheduling && weekNumber >= block.durationWeeks ? ['The scheduled recovery week has arrived.'] : []),
   ];
   return {
     weekState, sessionsLogged, totalSessions, muscles, fatiguePercent,

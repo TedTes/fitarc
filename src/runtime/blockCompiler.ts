@@ -1,3 +1,4 @@
+import { routineCatalog, validateRoutineSource } from './routine';
 import { localDate } from './planDates';
 import { phasesFor, RULE_VERSION, weeklyTargetsFor } from './trainingPolicy';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
@@ -32,14 +33,20 @@ export const compileBlock = (
   workingSets: Record<string, WorkingSetState> = {},
   catalog: ExerciseDefinition[] = RUNTIME_EXERCISES
 ): TrainingBlock => {
-  const blueprint = SLOT_BLUEPRINTS[source.daysPerWeek];
+  catalog = routineCatalog(source,catalog);
+  validateRoutineSource(source, catalog);
+  const split = source.routine?.split;
+  const blueprint = split === 'full_body' ? SLOT_BLUEPRINTS[3]
+    : split === 'upper_lower' ? SLOT_BLUEPRINTS[4]
+    : split === 'push_pull_legs' ? [SLOT_BLUEPRINTS[5][0], SLOT_BLUEPRINTS[5][1], { ...SLOT_BLUEPRINTS[5][2], label: 'legs', muscles: ['quads', 'hamstrings', 'glutes', 'calves', 'core'] as Muscle[], patterns: ['squat','hinge'] as MovementPattern[] }]
+    : SLOT_BLUEPRINTS[source.daysPerWeek <= 3 ? 3 : source.daysPerWeek === 4 ? 4 : 5];
   const setsPerSlot = source.sessionMinutes <= 30 ? 10 : source.sessionMinutes <= 45 ? 14 : source.sessionMinutes <= 60 ? 18 : 22;
   const exerciseLimit = source.sessionMinutes <= 30 ? 3 : source.sessionMinutes <= 45 ? 4 : 5;
   const creditSets = (budget: Partial<Record<Muscle, number>>, exercise: ExerciseDefinition, sets: number) => {
     exercise.primaryMuscles.forEach((muscle) => { budget[muscle] = (budget[muscle] ?? 0) + sets; });
     exercise.secondaryMuscles.forEach((muscle) => { budget[muscle] = (budget[muscle] ?? 0) + sets * 0.5; });
   };
-  const slots: TrainingSlot[] = blueprint.map((slot, index) => {
+  let slots: TrainingSlot[] = blueprint.map((slot, index) => {
     const selected = selectExercisesWithReasons({
       catalog, source, targetMuscles: slot.muscles,
       movementPatterns: slot.patterns, workingSets, limit: exerciseLimit,
@@ -56,6 +63,22 @@ export const compileBlock = (
       movementPatterns: slot.patterns, muscleSetBudget, plannedExercises,
     };
   });
+  if (split === 'custom') slots = source.routine!.workouts.map((workout, index) => {
+    const plannedExercises = workout.exercises.map(item => {
+      const exercise = catalog.find(x => x.id === item.exerciseId)!;
+      return { exerciseId: item.exerciseId, sets: item.sets, prescription: { ...item }, selection: {
+        originalExerciseId: exercise.id, originalExerciseName: exercise.name,
+        selectedExerciseId: exercise.id, selectedExerciseName: exercise.name,
+        substituted: false, forced: false, reasons: ['From your routine'], avoidedLimitations: [],
+      } };
+    });
+    const definitions = plannedExercises.map(item => catalog.find(x => x.id === item.exerciseId)!);
+    const muscleSetBudget: Partial<Record<Muscle, number>> = {};
+    definitions.forEach((exercise, i) => creditSets(muscleSetBudget, exercise, plannedExercises[i].sets));
+    return { id: workout.id, label: workout.name.trim(), dayIndex: index, plannedExercises, muscleSetBudget,
+      targetMuscles: [...new Set(definitions.flatMap(x => [...x.primaryMuscles, ...x.secondaryMuscles]))],
+      movementPatterns: [...new Set(definitions.map(x => x.movementPattern))] };
+  });
   const weeklySetBudget = Object.fromEntries(
     Object.keys(weeklyTargetsFor(source.goal, source.experience)).map((muscle) => [
       muscle,
@@ -66,11 +89,12 @@ export const compileBlock = (
     id: createRuntimeId(), groupId: previous?.groupId ?? previous?.id ?? createRuntimeId(),
     preferences: JSON.parse(JSON.stringify(source)) as TrainingSource, userId: source.userId,
     version: (previous?.version ?? 0) + 1, sourceVersion: source.version,
+    ...(source.routine ? { scheduling: 'sequence' as const } : {}),
     sourceId: source.id, catalog: JSON.parse(JSON.stringify(catalog)) as ExerciseDefinition[],
     ruleVersion: RULE_VERSION, goal: source.goal,
     startedOn: previous?.startedOn ?? localDate(), durationWeeks: 6,
     currentWeek: previous?.currentWeek ?? 1,
-    phases: phasesFor(source.goal), slots, weeklySetBudget,
+    phases: source.routine ? [{ ...phasesFor(source.goal)[0], startWeek: 1, endWeek: 6 }] : phasesFor(source.goal), slots, weeklySetBudget,
     weeklyTargets: weeklyTargetsFor(source.goal, source.experience),
     createdAt: new Date().toISOString(),
   };
@@ -78,8 +102,8 @@ export const compileBlock = (
 
 export const validateBlock = (block: TrainingBlock): string[] => {
   const errors: string[] = [];
-  if (block.slots.length < 3 || block.slots.length > 5) errors.push('Your plan needs 3–5 weekly workouts.');
-  if (!block.phases.some((phase) => phase.kind === 'deload')) errors.push('Your plan needs a recovery phase.');
+  if (block.slots.length < (block.scheduling ? 1 : 3) || block.slots.length > (block.scheduling ? 14 : 5)) errors.push('Your plan needs 3–5 weekly workouts.');
+  if (!block.scheduling && !block.phases.some((phase) => phase.kind === 'deload')) errors.push('Your plan needs a recovery phase.');
   if (block.phases[block.phases.length - 1]?.endWeek !== block.durationWeeks) errors.push('Training phases must cover the full plan.');
   if (block.slots.some((slot) => Object.values(slot.muscleSetBudget).every((sets) => !sets || sets <= 0))) errors.push('Each planned workout needs a muscle training target.');
   if (block.slots.some((slot) => !slot.plannedExercises?.length)) errors.push('No compatible exercises are available for a planned workout. Check your equipment and limitations.');

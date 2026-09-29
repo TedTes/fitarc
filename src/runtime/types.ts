@@ -32,14 +32,41 @@ export type SeedWorkingSet = {
   rir?: number;
 };
 
+export type ProgressionSettings = {
+  mode: 'manual' | 'double_progression';
+  successfulSessions: number;
+  minimumRir: number;
+  adjustDuringWorkout: boolean;
+  increments: Record<string, number>;
+};
+export type RoutineExercise = {
+  exerciseId: string;
+  sets: number;
+  minReps: number;
+  maxReps: number;
+  targetRir: number;
+  /** User-reported baseline, never a completed set. */
+  startingLoadKg?: number;
+};
+export type RoutineWorkout = { id: string; name: string; exercises: RoutineExercise[] };
+export type RoutineDefinition = {
+  split: 'auto' | 'full_body' | 'upper_lower' | 'push_pull_legs' | 'custom';
+  workouts: RoutineWorkout[];
+  /** Private exercise definitions, stored with the routine rather than in the shared catalog. */
+  customExercises?: ExerciseDefinition[];
+  progression: ProgressionSettings;
+};
+
 export type TrainingSource = {
   id: string;
   userId: string;
   version: number;
   goal: RuntimeGoal;
   experience: RuntimeExperience;
-  daysPerWeek: 3 | 4 | 5;
-  sessionMinutes: 30 | 45 | 60 | 75;
+  daysPerWeek: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  /** Absent on legacy plans, which retain their original behavior until edited. */
+  routine?: RoutineDefinition;
+  sessionMinutes: number;
   equipment: string[];
   excludedExerciseIds: string[];
   limitations: string[];
@@ -83,6 +110,7 @@ export type PlannedExercise = {
   exerciseId: string;
   sets: number;
   selection: ExerciseSelectionTrace;
+  prescription?: RoutineExercise;
 };
 
 export type TrainingBlock = {
@@ -93,6 +121,7 @@ export type TrainingBlock = {
   groupId?: string;
   preferences?: TrainingSource;
   remainingWeek?: RemainingWeekPlan;
+  scheduling?: 'sequence';
   sourceVersion: number;
   sourceId?: string;
   /** Frozen catalog used to compile this version, including substitution candidates. */
@@ -139,6 +168,10 @@ export type SessionContext = {
   recovery: RecoveryState;
   unavailableExerciseIds: string[];
   unavailableEquipment: string[];
+  /** Explicit one-workout override, without editing the usual routine. */
+  workoutId?: string;
+  extraWorkout?: boolean;
+  exerciseReplacements?: Record<string,string>;
 };
 
 export type RemainingWeekPlan = {
@@ -163,6 +196,7 @@ export type PrescribedExercise = {
   id: string;
   exercise: ExerciseDefinition;
   priority: number;
+  needsBaseline?: boolean;
   reason: string;
   sets: SetPrescription[];
 };

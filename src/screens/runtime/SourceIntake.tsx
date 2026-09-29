@@ -30,8 +30,8 @@ const parseWeight = (raw: string | undefined): { value: number | null; error: st
 
 export const SourceIntake = ({ user, initial, sessionActive, onSubmit, onCancel }: Props) => {
   const [goal, setGoal] = useState<RuntimeGoal>(initial.goal);
-  const [days, setDays] = useState<3 | 4 | 5>(initial.daysPerWeek);
-  const [minutes, setMinutes] = useState<30 | 45 | 60 | 75>(initial.sessionMinutes);
+  const [days, setDays] = useState<TrainingSource['daysPerWeek']>(initial.daysPerWeek);
+  const [minutes, setMinutes] = useState<number>(initial.sessionMinutes);
   const [preset, setPreset] = useState<EquipmentPreset>(presetOf(initial));
   const [limitations, setLimitations] = useState<string[]>(initial.limitations);
   const [excluded, setExcluded] = useState<string[]>(initial.excludedExerciseIds);

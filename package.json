@@ -13,7 +13,8 @@
     "data:check": "node scripts/check-database-routing.cjs && node scripts/check-data-model.cjs && node scripts/seed-exercises.cjs --check",
     "catalog:seed": "node scripts/seed-exercises.cjs",
     "catalog:import": "node scripts/import-exercises.cjs",
-    "adaptation:check": "node scripts/check-adaptation.cjs"
+    "adaptation:check": "node scripts/check-adaptation.cjs",
+    "routine:check": "node scripts/check-routine.cjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

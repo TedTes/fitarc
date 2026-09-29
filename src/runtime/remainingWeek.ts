@@ -1,3 +1,4 @@
+import { upcomingRoutineSlots } from './sequence';
 import { createRuntimeId } from './id';
 import { belongsToPlan, datePlusDays, dayNumber, localDate, planWeek } from './planDates';
 import { solveSession } from './sessionSolver';
@@ -32,16 +33,17 @@ export const previewRemainingWeek = (state: RuntimeState, availability: SessionC
   const finished = state.sessions.filter((item) => belongsToPlan(item, plan) && item.status === 'committed' && item.context.date >= start && item.context.date < end);
   const used = new Set(finished.map((item) => item.slotId));
   const slots = plan.slots.filter((item) => !used.has(item.id));
-  if (availability.length > slots.length) throw new Error(`Choose at most ${slots.length} remaining workout days.`);
+  if (!plan.scheduling && availability.length > slots.length) throw new Error(`Choose at most ${slots.length} remaining workout days.`);
   const forecast = { ...status, muscles: status.muscles.map((item) => ({ ...item })) };
-  const windows = [...availability].sort((a,b) => a.date.localeCompare(b.date)).map((context) => {
+  const sequence = upcomingRoutineSlots(plan,state.sessions,availability.length,today);
+  const windows = [...availability].sort((a,b) => a.date.localeCompare(b.date)).map((context, index) => {
     if (finished.some((item) => item.context.date === context.date)) throw new Error('A workout is already finished on that date. Choose another day.');
     const deficit = (slot: typeof slots[number]) => slot.targetMuscles.reduce((sum, muscle) => {
       const value = forecast.muscles.find((item) => item.muscle === muscle)!;
       return sum + Math.max(0, value.min - value.completedSets);
     }, 0);
-    const slot = slots.filter((item) => !used.has(item.id)).sort((a,b) => deficit(b)-deficit(a) || a.dayIndex-b.dayIndex)[0];
-    const workout = solveSession({ source: state.source!, block: plan, context, workingSets: state.workingSets,
+    const slot = plan.scheduling === 'sequence' ? sequence[index] : slots.filter((item) => !used.has(item.id)).sort((a,b) => deficit(b)-deficit(a) || a.dayIndex-b.dayIndex)[0];
+    const workout = solveSession({ source: state.source!, block: plan, context, workingSets: state.workingSets, sessions: state.sessions,
       weeklyStatus: forecast, phaseOverride: status.deloadRecommended ? plan.phases.find((phase) => phase.kind === 'deload') : undefined, slotIndex: plan.slots.indexOf(slot) });
     if (!workout.exercises.length) throw new Error(`No suitable workout fits ${context.date}. Change its equipment or time, or remove that day.`);
     used.add(slot.id);
@@ -54,11 +56,11 @@ export const previewRemainingWeek = (state: RuntimeState, availability: SessionC
   const short = forecast.muscles.filter((item) => item.completedSets < item.min).map((item) => item.muscle);
   const explanation = [
     `${finished.length} completed workout${finished.length === 1 ? '' : 's'} kept. ${windows.length} remaining workout${windows.length === 1 ? '' : 's'} planned.`,
-    'Prioritizes muscle groups below their weekly targets while keeping compatible exercises. Missed work is not doubled.',
+    plan.scheduling === 'sequence' ? 'Keeps your workout sequence. Repeated workout types are separate sessions; missed work is not doubled.' : 'Prioritizes muscle groups below their weekly targets while keeping compatible exercises. Missed work is not doubled.',
     ...(availability.some((item) => item.recovery !== 'yes') ? ['Set counts are reduced for the recovery you reported.'] : []),
     ...(availability.some((item) => item.unavailableEquipment.length) ? ['Workouts use only the equipment available on each selected day.'] : []),
     short.length ? `With this availability, these muscle groups are projected below their weekly targets: ${short.join(', ')}.` : 'The remaining workouts are projected to cover your weekly minimums.',
-    'Forecast assumes planned sets are completed at the target effort. Next week keeps your usual schedule.',
+    plan.scheduling ? 'Forecast assumes these workouts are completed. The sequence continues from your last finished workout next week.' : 'Forecast assumes planned sets are completed at the target effort. Next week keeps your usual schedule.',
   ];
   plan.remainingWeek = { week, windows, explanation };
   return { fromPlanId: state.block.id, evidence: evidence(state), plan, explanation };

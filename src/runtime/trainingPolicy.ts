@@ -52,8 +52,8 @@ export const phasesFor = (goal: RuntimeGoal): BlockPhase[] => goal === 'strength
     ];
 
 export const roundLoad = (loadKg: number, incrementKg: number): number => {
-  const increment = Math.max(0.5, incrementKg);
-  return Math.max(0, Math.round(loadKg / increment) * increment);
+  const increment = Math.max(0.01, incrementKg);
+  return Math.max(0, Number((Math.round(loadKg / increment) * increment).toFixed(4)));
 };
 
 export const hardSetCredit = (reportedRir: number, targetRir: number): number =>

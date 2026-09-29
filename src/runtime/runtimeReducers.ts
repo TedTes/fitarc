@@ -11,7 +11,12 @@ export const applySetResult = (input: {
   const previous = input.state.workingSets[input.result.exerciseId];
   const decision = solveNextSet({
     result: input.result, phase: input.session.phase,
-    incrementKg: prescribedExercise.exercise.incrementKg, previous,
+    incrementKg: input.state.source?.routine?.progression.increments[prescribedExercise.exercise.id] ?? prescribedExercise.exercise.incrementKg, previous,
+    settings: input.state.source?.routine?.progression,
   });
+  if (input.state.source?.routine && input.session.context.recovery !== 'yes' && decision.action === 'increase') {
+    decision.action='hold';decision.nextLoadKg=input.result.actualLoadKg??input.result.prescribedLoadKg;
+    decision.reasonCode='recovery_hold';decision.explanation='Keep the weight while recovery is reduced.';
+  }
   return { decision, state: input.state };
 };
