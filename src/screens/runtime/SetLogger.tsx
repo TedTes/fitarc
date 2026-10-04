@@ -15,6 +15,7 @@ import { ExerciseDetailsSheet, ExerciseMuscleDetails, ExerciseTargetPreview } fr
 import { useLayoutMotion } from './useLayoutMotion';
 import { ExerciseSectionHeader } from './ExerciseCard';
 import { EmptyWorkoutLogger } from './EmptyWorkoutLogger';
+import { TodayExercisePicker } from './TodayExercisePicker';
 import { sessionProgress } from './selectors';
 import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
@@ -50,8 +51,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const session=state.activeSession;
   const results=useMemo(()=>session?state.setResults.filter(result=>result.prescriptionId===session.id):[],[state.setResults,session]);
   const lastResult=results[results.length-1];
-  const [selectedExerciseId,setSelectedExerciseId]=useState<string|null>(()=>lastResult?.exerciseId??null);
-  const [addQuery,setAddQuery]=useState('');
+  // Undefined uses the initial dock; null means the user explicitly collapsed it.
+  const [selectedExerciseId,setSelectedExerciseId]=useState<string|null|undefined>(undefined);
   const [reps,setReps]=useState('');
   const [load,setLoad]=useState('');
   const [rir,setRir]=useState<number|null>(null);
@@ -69,7 +70,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     return until>Date.now()?{until,durationSeconds:duration}:null;
   });
   const drafts=useRef<Record<string,{load:string;reps:string;rir:number|null}>>({});
-  const chosen=session?.exercises.find(item=>item.exercise.id===selectedExerciseId);
+  const defaultEntry=session?.exercises.find(item=>item.exercise.id===lastResult?.exerciseId)??session?.exercises[0];
+  const chosen=selectedExerciseId===null?undefined:session?.exercises.find(item=>item.exercise.id===selectedExerciseId)??defaultEntry;
   const entry=chosen??session?.exercises[0];
   const pendingSet=entry?.sets.find(item=>item.status==='pending');
   const set=pendingSet??entry?.sets[entry.sets.length-1];
@@ -215,7 +217,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const completed=allSets.filter(item=>item.status==='completed').length;
   const startedAt=session.startedAt??results[0]?.completedAt;
   const elapsed=startedAt?Math.max(0,Math.floor((clockNow-Date.parse(startedAt))/1000)):0;
-  const upcoming=session.exercises.filter(item=>item.exercise.id!==selectedExerciseId&&item.sets.some(s=>s.status==='pending'));
+  const upcoming=session.exercises.filter(item=>item.exercise.id!==chosen?.exercise.id&&item.sets.some(s=>s.status==='pending'));
   const logged=entry.sets.filter(item=>item.result);
   const cardMinimum=Math.min(330,Math.max(190,availableHeight-130));
   const targetRest=restSecondsFor(state.source?.goal??'hypertrophy',exercise.compound);
@@ -318,7 +320,12 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     </>:null}
 
       <ExerciseDetailsSheet exercise={inspectedExercise} onClose={()=>setInspectedExercise(null)}/>
-      <Sheet visible={sheet !== null} onClose={closeSheet} title={sheetTitle}>
+      {sheet==='add'?<TodayExercisePicker
+        catalog={(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq)))}
+        onClose={closeSheet}
+        onAdd={exercise=>report(apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${exercise.name} added for today`});})}
+      />:null}
+      <Sheet visible={sheet !== null && sheet !== 'add'} onClose={closeSheet} title={sheetTitle}>
         {sheet === 'menu' ? <>
         <Txt variant="label" tone="muted">this lift</Txt>
         <OptionRow icon="swap-horizontal" title="Swap lift" onPress={() => setSheet('swap')} />
@@ -336,12 +343,6 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
           <IconButton icon="chevron-up" label={`Move ${item.exercise.name} earlier`} disabled={index === 0} onPress={() => moveExercise(item.exercise.id, -1)} />
           <IconButton icon="chevron-down" label={`Move ${item.exercise.name} later`} disabled={index === session.exercises.length - 1} onPress={() => moveExercise(item.exercise.id, 1)} />
         </View>) : null}
-        {sheet === 'add' ? <>
-          <TextInput value={addQuery} onChangeText={setAddQuery} placeholder="Search exercises" placeholderTextColor={colors.textMuted} style={{color:colors.text,minHeight:44}} accessibilityLabel="Search exercises to add today" />
-          {(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq)) && x.name.toLowerCase().includes(addQuery.toLowerCase())).map(x=><Button key={x.id} variant="ghost" label={x.name} onPress={()=>{
-            report(apply(current=>addRuntimeExercise(current,{exerciseId:x.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${x.name} added for today`});});
-          }} />)}
-        </> : null}
         {sheet === 'details' ? <ExerciseMuscleDetails key={exercise.id} exercise={exercise} reason={entry.reason} /> : null}
         {sheet === 'swap' ? <>
         <Txt variant="caption" tone="secondary">Compare muscle targets before choosing a replacement. Your logged sets stay.</Txt>

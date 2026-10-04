@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { addRuntimeExercise, discardRuntimeSession } from '../../runtime';
 import type { RuntimeState } from '../../runtime';
-import { Button, IconButton, Sheet, Txt } from './ui';
-import { ExercisePicker } from './RoutineWorkoutSheet';
+import { Button, IconButton, Txt } from './ui';
+import { TodayExercisePicker } from './TodayExercisePicker';
 import { colors, space } from './theme';
 import type { ApplyResult } from './useRuntimeController';
 
@@ -23,7 +23,7 @@ export const EmptyWorkoutLogger=({state,apply}:{state:RuntimeState;apply:(fn:(st
     <Txt variant="mono" tone="accent" style={s.meta}>Ready · 0 sets</Txt>
     <View style={s.body}><Button label="Add exercise" icon="add" onPress={()=>setAdding(true)}/></View>
     {error?<Txt tone="danger">{error}</Txt>:null}
-    <Sheet visible={adding} title="Add exercise" onClose={()=>setAdding(false)}><ExercisePicker catalog={catalog} selectedIds={[]} onAdd={exercise=>update(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2}))}/></Sheet>
+    {adding?<TodayExercisePicker catalog={catalog} onClose={()=>setAdding(false)} onAdd={exercise=>update(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2}))}/>:null}
   </View>;
 };
 const s=StyleSheet.create({page:{flex:1,padding:space.lg,gap:space.md,backgroundColor:colors.ground},header:{flexDirection:'row',alignItems:'center'},flex:{flex:1},meta:{fontSize:12},body:{flex:1,justifyContent:'center'}});
