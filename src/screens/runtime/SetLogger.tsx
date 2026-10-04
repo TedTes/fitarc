@@ -191,7 +191,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const finishEarly = () => {
     if(!results.length)return;
     report(apply(current=>commitRuntimeSession(skipRemainingRuntimeSets(current))),()=>{
-      setSheet(null);setRest(null);notify({tone:'success',title:'Workout finished'});
+      setSheet(null);setRest(null);
     });
   };
 

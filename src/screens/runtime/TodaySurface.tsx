@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { previewTrainingSessionDetailed } from '../../runtime';
@@ -11,7 +11,7 @@ import { todayISO } from './selectors';
 import { SetLogger, type WorkoutDockState } from './SetLogger';
 import { ExerciseCardHeader, ExerciseSetRows } from './ExerciseCard';
 import { ExerciseMuscleDetails } from './ExerciseMuscles';
-import { WorkoutResults } from './WorkoutResults';
+import { WorkoutCompleteSheet } from './WorkoutCompleteSheet';
 import { EmptyToday } from './EmptyToday';
 import { useLayoutMotion } from './useLayoutMotion';
 import { WorkoutAlternatives } from './WorkoutAlternatives';
@@ -33,14 +33,22 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
   const [replacements,setReplacements]=useState<Record<string,string>>({});
   const [workoutId, setWorkoutId] = useState<string | undefined>();
   const [extraWorkout, setExtraWorkout] = useState(false);
-  const [showNext, setShowNext] = useState(false);
+  const [completedId, setCompletedId] = useState<string|null>(null);
   const [panel,setPanel]=useState<Panel>(null);
   const [detailsId,setDetailsId]=useState<string|null>(null);
   const [inspected,setInspected]=useState<string|null>(null);
   const [swapTarget,setSwapTarget]=useState<ExerciseDefinition|null>(null);
   const date = todayISO();
   const session = state.activeSession;
-  useEffect(()=>{setShowNext(false);},[session?.id,date]);
+  const previousSession = useRef(session?.id);
+  useEffect(()=>{
+    const previous=previousSession.current;
+    previousSession.current=session?.id;
+    if(previous&&!session&&state.sessions.some(item=>item.id===previous&&item.status==='committed'))setCompletedId(previous);
+  },[session?.id,state.sessions]);
+  const completed=state.sessions.find(item=>item.id===completedId);
+  const completedPlan=completed?[...(state.blockHistory??[]),...(state.block?[state.block]:[])].find(plan=>plan.id===completed.blockId):null;
+  const completion=completed&&active?<WorkoutCompleteSheet session={completed} history={state.sessions} name={completed.name??slotPlain(completedPlan?.slots.find(slot=>slot.id===completed.slotId))} onDismiss={()=>setCompletedId(null)} onProgress={onOpenWeek}/>:null;
   useEffect(() => {
     const window = state.block?.remainingWeek?.windows.find((item) => item.date === date);
     setReplacements({}); setWorkoutId(undefined); setExtraWorkout(false);
@@ -57,21 +65,7 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
     try { return { value: previewTrainingSessionDetailed(state, context), error: null }; }
     catch (error) { return { value: null, error: describeRuntimeError(error).message }; }
   }, [state, context, session]);
-  const completed=[...state.sessions].reverse().find(item=>item.status==='committed'&&item.context.date===date);
-  if(!session&&completed&&!showNext)return <View style={styles.root}>
-    <ScrollView contentContainerStyle={styles.page}>
-      <ScreenBrand name="Today" chip=""/>
-      <View style={styles.hero}><View style={styles.copy}>
-        <Txt variant="title">Workout complete</Txt>
-        <Txt tone="secondary">{completed.name??slotPlain(state.block?.slots.find(slot=>slot.id===completed.slotId))}</Txt>
-      </View><Ionicons name="checkmark-circle" size={28} color={colors.success}/></View>
-      <WorkoutResults session={completed}/>
-      <Button label="New workout" icon="add" onPress={onNewWorkout}/>
-      {state.block?.kind!=='workout'?<Button label="Next in my routine" variant="secondary" onPress={()=>setShowNext(true)}/>:null}
-      <Button label="Progress" variant="ghost" onPress={onOpenWeek}/>
-    </ScrollView>
-  </View>;
-  if(!session&&state.block?.kind==='workout')return <EmptyToday onAddRoutine={onOpenSource} onLogWorkout={onNewWorkout}/>;
+  if(!session&&state.block?.kind==='workout')return <><EmptyToday onAddRoutine={onOpenSource} onLogWorkout={onNewWorkout}/>{completion}</>;
   const proposal = preview?.value;
 
 
@@ -85,8 +79,9 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
   const omitted=chosenSlot?.plannedExercises.filter(p=>!entries.some(e=>e.exercise.id===(replacements[p.exerciseId]??p.exerciseId)))??[];
   const inspectedEntry=entries.find(e=>e.exercise.id===detailsId);
   const recoveryLabel=recovery==='yes'?'Ready':recovery==='meh'?'Tired':'Very tired';
-  if(session||proposal) return <WorkoutWorkspace state={state} proposal={proposal} apply={apply} notify={notify} onDockChange={onDockChange}/>;
+  if(session||proposal) return <><WorkoutWorkspace state={state} proposal={proposal} apply={apply} notify={notify} onDockChange={onDockChange}/>{completion}</>;
   return <View style={styles.root}>
+    {completion}
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
       <View style={styles.hero}><View style={styles.copy}><ScreenBrand name="Today" chip="" /></View><IconButton label="New workout" icon="add" onPress={onNewWorkout}/></View>
       <View style={styles.hero}>

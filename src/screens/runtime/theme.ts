@@ -63,3 +63,11 @@ export const planTokens = {
   tile:30, muscleTile:44, icon:16, touch:44, button:50, border:1,
   duration:180, disabled:0.45, pressed:0.7, primaryFlex:1.7,
 } as const;
+
+/** Workout-complete sheet: one scroll region below the pinned hero. */
+export const completeTokens = {
+  surface:'#0a0c11', scrim:'rgba(4,5,7,0.74)', radius:24, heightFraction:0.92,
+  openDuration:260, fadeDuration:200, closeDuration:200, swipeFraction:0.25, swipeVelocity:0.7,
+  gripWidth:38, gripHeight:4, checkSize:46, headerHeight:28,
+  titleSize:23, statSize:19, statLabel:9.5, setSize:13, setColumn:52, setPadding:2, recapPadding:12,
+} as const;

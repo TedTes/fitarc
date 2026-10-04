@@ -4,16 +4,18 @@ import { planTokens } from './theme';
 
 /** Animate user-triggered layout changes, never timers or background updates. */
 export const useLayoutMotion = () => {
+  const [ready, setReady] = useState(false);
   const [reduced, setReduced] = useState(true);
   useEffect(() => {
     let mounted = true;
-    const update = (value: boolean) => { if (mounted) setReduced(value); };
+    const update = (value: boolean) => { if (mounted) { setReduced(value); setReady(true); } };
     void AccessibilityInfo.isReduceMotionEnabled().then(update).catch(() => update(true));
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', update);
     return () => { mounted = false; subscription.remove(); };
   }, []);
   return {
     reduced,
+    ready,
     animate: () => {
       if (reduced) return;
       LayoutAnimation.configureNext({

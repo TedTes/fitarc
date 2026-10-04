@@ -15,7 +15,8 @@
     "catalog:import": "node scripts/import-exercises.cjs",
     "adaptation:check": "node scripts/check-adaptation.cjs",
     "routine:check": "node scripts/check-routine.cjs",
-    "routine-setup:check": "node scripts/check-routine-setup.cjs"
+    "routine-setup:check": "node scripts/check-routine-setup.cjs",
+    "workout-summary:check": "node scripts/check-workout-summary.cjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

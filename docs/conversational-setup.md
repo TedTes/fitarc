@@ -8,6 +8,8 @@ Profile → Training preferences opens Your routine: description and microphone 
 
 Set defaults seed new exercises without rewriting existing prescriptions. Focus, defaults, target muscles and the limitations note persist in the existing routine JSON. Strength uses the existing strength engine; the other focus labels use the existing hypertrophy engine. A free-text limitations note is stored context, not an interpreted contraindication. Existing structured limitations and excluded exercises are preserved. No new SQL migration is required.
 
+Finish saves the session and opens a read-only Workout complete sheet over Today. Time uses the saved first-set and finish timestamps; volume and set counts use logged results only. Unloaded sessions show reps instead of volume. A PR requires greater weight than the same exercise’s prior best with at least as many reps; first sessions have no PR. The sheet shows the largest weight improvement, permits X/scrim/swipe/Escape dismissal, and links to Progress. The hero stays pinned while the recap scrolls. Dismissing never writes or reopens the completed session.
+
 Orange marks selection/readiness; green marks completion and validity. Shared tokens, selectors, rows, buttons and reduced-motion-aware transitions are in PlanKit and useLayoutMotion. Profile has compact body measurements, training settings, and a read-only Workout log of finished sessions.
 
 Configured hosted voice retains recording controls; local-mode voice reports missing configuration when tapped. Neither transcription nor drafting creates completed sets. Unsaved draft state lasts only while the setup screen is mounted.
