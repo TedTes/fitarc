@@ -1,5 +1,7 @@
 # Fresh training data model
 
+Current routine behavior is documented in [routine-first-implementation.md](routine-first-implementation.md). The seven tables below are unchanged; new routines replace the earlier fixed split and six-week assumptions with an ongoing user-controlled sequence.
+
 This implementation starts fresh. No old users, plans, templates, workouts, or JSON runtime snapshots are migrated. It uses the existing 23 exercises as an initial catalog while an external dataset is selected.
 
 ## Data flow

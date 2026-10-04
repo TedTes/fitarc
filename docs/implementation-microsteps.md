@@ -1,5 +1,7 @@
 # FitArc implementation microsteps
 
+The subsequent nine-step routine-first implementation is tracked in [routine-first-implementation.md](routine-first-implementation.md). This checklist records the preceding foundation.
+
 Planning checkpoint: 2026-09-27. Implementation is proceeding one step at a time. Completed checkboxes link to recorded evidence; deployment remains separate.
 
 Current state: the seven-table model, plain-language app flow, remaining-week adaptation and landing alignment are implemented locally. Automated validation is recorded in release-readiness.md. Real-user testing and full hosted verification are pending; the user reports manual table deployment and login working. Legacy decommissioning was pushed in `7a5a114` and `e1ef501`. Preserve unrelated scratch files and draft artwork. The user has now authorized grouped commits and a push after reporting manual database setup and login working.
