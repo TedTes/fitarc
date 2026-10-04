@@ -1,12 +1,12 @@
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import {
-  AccessibilityInfo, Modal, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextProps,
+  AccessibilityInfo, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextProps,
   TextStyle, View, ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, MAX_FONT_SCALE, mono, radius, space, TOUCH } from './theme';
-import { monoFace } from './fonts';
+import { headingFace, monoFace } from './fonts';
 import type { SyncStatus } from './useRuntimeController';
 
 // ───────────────────────── Text ─────────────────────────
@@ -38,6 +38,7 @@ const scaleCap: Record<Variant, number> = {
 /** Monospace variants use JetBrains Mono once loaded; each weight is a separate face. */
 const resolveVariant = (variant: Variant): TextStyle => {
   const base = variantStyle[variant];
+  if (['display','title','heading'].includes(variant)) return {...base,fontFamily:headingFace()};
   if (base.fontFamily !== mono) return base;
   const face = monoFace((base.fontWeight as '400' | '600' | '700' | '800') ?? '400');
   return face ? { ...base, fontFamily: face, fontWeight: undefined } : base;
@@ -247,13 +248,20 @@ export const Pill = ({ label, icon, onPress, highlight, hint, accessibilityLabel
   </Pressable>
 );
 
-/** Square icon-only button for secondary menus. */
-export const IconButton = ({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) => (
+/** Square icon-only button for secondary menus. `tone` fills it for a state that needs to read as
+ * hot (recording) or as the primary choice (confirm), without a whole second button component. */
+export const IconButton = ({ icon, label, onPress, disabled = false, tone = 'default' }: {
+  icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void; disabled?: boolean;
+  tone?: 'default' | 'accent' | 'danger';
+}) => (
   <Pressable
-    accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
-    style={({ pressed }) => [styles.iconBox, pressed && styles.pressed]}
+    accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
+    style={({ pressed }) => [
+      styles.iconBox, tone === 'accent' && styles.iconBoxAccent, tone === 'danger' && styles.iconBoxDanger,
+      disabled && styles.buttonInactive, pressed && styles.pressed,
+    ]}
   >
-    <Ionicons name={icon} size={22} color={colors.text} />
+    <Ionicons name={icon} size={22} color={disabled ? colors.textMuted : tone === 'accent' ? colors.accentText : tone === 'danger' ? colors.ground : colors.text} />
   </Pressable>
 );
 
@@ -311,11 +319,11 @@ export const Banner = ({
 
 // ───────────────────────── Sheets & help ─────────────────────────
 
-export const Sheet = ({ visible, onClose, title, children }: { visible: boolean; onClose: () => void; title: string; children: ReactNode }) => {
+export const Sheet = ({ visible, onClose, title, children, avoidKeyboard = false }: { visible: boolean; onClose: () => void; title: string; children: ReactNode; avoidKeyboard?: boolean }) => {
   const insets = useSafeAreaInsets();
   return (
     <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
-      <View style={styles.sheetRoot}>
+      <KeyboardAvoidingView style={styles.sheetRoot} enabled={avoidKeyboard} behavior={Platform.OS==='ios'?'padding':undefined}>
         <Pressable accessibilityRole="button" accessibilityLabel="Close" style={StyleSheet.absoluteFill} onPress={onClose}>
           <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.scrim }]} />
         </Pressable>
@@ -329,7 +337,7 @@ export const Sheet = ({ visible, onClose, title, children }: { visible: boolean;
           </View>
           <ScrollView bounces={false} contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled">{children}</ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -424,6 +432,8 @@ const styles = StyleSheet.create({
   pill: { minHeight: 44, paddingHorizontal: space.md, borderRadius: 22, borderWidth: 1, borderColor: colors.borderStrong, flexDirection: 'row', alignItems: 'center', gap: space.xs },
   pillHighlight: { borderColor: colors.warning },
   iconBox: { width: TOUCH, height: TOUCH, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
+  iconBoxAccent: { backgroundColor: colors.accent, borderColor: colors.accent },
+  iconBoxDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
   divider: { height: 1, backgroundColor: colors.border },
   iconButton: { width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center', margin: -space.sm },
   sheetRoot: { flex: 1, justifyContent: 'flex-end' },

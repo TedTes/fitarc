@@ -2,6 +2,7 @@ import { useFonts } from 'expo-font';
 
 // JetBrains Mono (SIL OFL, see assets/fonts). Each weight is its own face, so weight is chosen by family name.
 const FACES = {
+  'SpaceGrotesk': require('../../../assets/fonts/SpaceGrotesk.ttf'),
   'JetBrainsMono-Regular': require('../../../assets/fonts/JetBrainsMono_400Regular.ttf'),
   'JetBrainsMono-SemiBold': require('../../../assets/fonts/JetBrainsMono_600SemiBold.ttf'),
   'JetBrainsMono-Bold': require('../../../assets/fonts/JetBrainsMono_700Bold.ttf'),
@@ -21,3 +22,5 @@ export const useMonoFonts = (): boolean => {
   if (loaded) ready = true;
   return loaded || Boolean(error);
 };
+
+export const headingFace = () => ready ? 'SpaceGrotesk' : undefined;
