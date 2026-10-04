@@ -14,7 +14,8 @@
     "catalog:seed": "node scripts/seed-exercises.cjs",
     "catalog:import": "node scripts/import-exercises.cjs",
     "adaptation:check": "node scripts/check-adaptation.cjs",
-    "routine:check": "node scripts/check-routine.cjs"
+    "routine:check": "node scripts/check-routine.cjs",
+    "routine-setup:check": "node scripts/check-routine-setup.cjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -26,6 +27,8 @@
     "@supabase/supabase-js": "^2.47.10",
     "expo": "~54.0.27",
     "expo-apple-authentication": "~8.0.8",
+    "expo-asset": "~12.0.13",
+    "expo-audio": "~1.1.1",
     "expo-constants": "~18.0.14",
     "expo-crypto": "~15.0.9",
     "expo-file-system": "~19.0.24",

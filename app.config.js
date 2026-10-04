@@ -11,10 +11,11 @@ module.exports = ({ config }) => {
   const iosUrlScheme = googleIosUrlScheme(iosClientId);
   const plugins = (config.plugins ?? []).filter((plugin) => {
     const name = Array.isArray(plugin) ? plugin[0] : plugin;
-    return name !== GOOGLE_PLUGIN && name !== 'expo-apple-authentication' && name !== 'expo-web-browser';
+    return name !== GOOGLE_PLUGIN && name !== 'expo-apple-authentication' && name !== 'expo-web-browser' && name !== 'expo-audio';
   });
 
   plugins.push('expo-apple-authentication');
+  plugins.push(['expo-audio', { microphonePermission: 'Allow FitArc to record your routine when you choose voice input.', recordAudioAndroid: true }]);
   if (iosUrlScheme) {
     plugins.push([GOOGLE_PLUGIN, { iosUrlScheme }]);
   }

@@ -1,217 +1,119 @@
-import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import type { RuntimeGoal, SeedWorkingSet, TrainingSource } from '../../runtime';
+import { useEffect, useRef, useState } from 'react';
+import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { ExerciseDefinition, TrainingSource } from '../../runtime/types';
 import type { User } from '../../types/domain';
-import { colors, radius, space, TOUCH } from './theme';
-import { Banner, Button, Card, Choice, ScreenBrand, ScreenTitle, Section, Segmented, StateTag, Txt } from './ui';
-import { exerciseName, goalLabel, limitationLabel } from './copy';
-import {
-  DAY_OPTIONS, EquipmentPreset, LIMITATIONS, MINUTE_OPTIONS, presetEquipment, presetLabel, presetOf, SEED_LIFTS,
-} from './constants';
+import { RUNTIME_EXERCISES } from '../../runtime/exerciseCatalog';
+import { draftFromRoutine, draftIssues, emptyDraft, sourceFromDraft, valueOf, type RoutineDraft } from '../../routineSetup/draft';
+import { interpretLocally } from '../../routineSetup/localInterpretation';
+import { hostedRoutineInputEnabled, interpretRoutine } from '../../services/routineInputService';
+import { defaultRoutine, editableRoutine } from '../../runtime/routine';
+import { applyInputContext, type RoutineInputContext } from '../../routineSetup/context';
+import { RoutineContextChips } from './RoutineContextChips';
+import { RoutineDescription, type RoutineStarter } from './RoutineDescription';
+import { RoutineDraftReview } from './RoutineDraftReview';
+import { PlanFooter, PlanText, planStyles } from './PlanKit';
+import { RoutineVoiceInput } from './RoutineVoiceInput';
+import { Txt } from './ui';
+import { colors, planTokens as t } from './theme';
+import { Ionicons } from '@expo/vector-icons';
+import { compileBlock } from '../../runtime/blockCompiler';
 
-type Props = {
-  user: User;
-  initial: TrainingSource;
-  /** Block version the source currently compiles to, for the version preview. */
-  blockVersion: number;
-  /** A session is active, so the block cannot be recompiled right now. */
-  sessionActive?: boolean;
-  onSubmit: (source: TrainingSource) => void;
-  onCancel: () => void;
-};
-
-const parseWeight = (raw: string | undefined): { value: number | null; error: string | null } => {
-  const text = (raw ?? '').trim().replace(',', '.');
-  if (!text) return { value: null, error: null };
-  const value = Number(text);
-  if (!Number.isFinite(value) || value <= 0 || value > 500) return { value: null, error: 'Enter a weight in kg from 1 to 500, or leave it blank.' };
-  return { value, error: null };
-};
-
-export const SourceIntake = ({ user, initial, sessionActive, onSubmit, onCancel }: Props) => {
-  const [goal, setGoal] = useState<RuntimeGoal>(initial.goal);
-  const [days, setDays] = useState<TrainingSource['daysPerWeek']>(initial.daysPerWeek);
-  const [minutes, setMinutes] = useState<number>(initial.sessionMinutes);
-  const [preset, setPreset] = useState<EquipmentPreset>(presetOf(initial));
-  const [limitations, setLimitations] = useState<string[]>(initial.limitations);
-  const [excluded, setExcluded] = useState<string[]>(initial.excludedExerciseIds);
-  const seedSource = initial.seedWorkingSets;
-  const [seeds, setSeeds] = useState<Record<string, string>>(
-    Object.fromEntries(seedSource.map((seed) => [seed.exerciseId, `${seed.loadKg}`]))
-  );
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const [attempted, setAttempted] = useState(false);
-
-  const seedChecks = SEED_LIFTS.map((lift) => ({ lift, ...parseWeight(seeds[lift.id]) }));
-  const invalidCount = seedChecks.filter((check) => check.error).length;
-  const showError = (id: string) => (touched[id] || attempted);
-
-  // Everything that would differ from the current source, in the runtime's own terms.
-  const changes = ((): string[] => {
-    const lines: string[] = [];
-    if (goal !== initial.goal) lines.push(`goal: ${goalLabel(initial.goal)} → ${goalLabel(goal)}`);
-    if (days !== initial.daysPerWeek) lines.push(`frequency: ${initial.daysPerWeek} → ${days} days`);
-    if (minutes !== initial.sessionMinutes) lines.push(`time cap: ${initial.sessionMinutes} → ${minutes} min`);
-    if (preset !== presetOf(initial)) lines.push(`equipment: ${presetLabel(presetOf(initial))} → ${presetLabel(preset)}`);
-    limitations.filter((item) => !initial.limitations.includes(item)).forEach((item) => lines.push(`+ limitation: ${item}`));
-    initial.limitations.filter((item) => !limitations.includes(item)).forEach((item) => lines.push(`− limitation: ${item}`));
-    initial.excludedExerciseIds.filter((id) => !excluded.includes(id)).forEach((id) => lines.push(`− excluded: ${exerciseName(id)}`));
-    seedChecks.forEach(({ lift, value }) => {
-      const before = initial.seedWorkingSets.find((seed) => seed.exerciseId === lift.id)?.loadKg ?? null;
-      if (value !== before) lines.push(`seed ${lift.label.toLowerCase()}: ${before ?? '—'} → ${value ?? '—'} kg`);
-    });
-    return lines;
-  })();
-
-  const toggleLimit = (item: string) =>
-    setLimitations((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item]);
-
-  const build = () => {
-    const seedWorkingSets: SeedWorkingSet[] = seedChecks.flatMap(({ lift, value }) =>
-      value ? [{ exerciseId: lift.id, loadKg: value, reps: goal === 'strength' ? 5 : 8, rir: 3 }] : []
-    );
-    onSubmit({
-      id: initial.id, userId: user.id,
-      version: initial.version + 1, goal,
-      experience: user.experienceLevel === 'advanced' ? 'advanced' : 'intermediate',
-      daysPerWeek: days, sessionMinutes: minutes, equipment: presetEquipment(preset),
-      excludedExerciseIds: excluded, limitations, seedWorkingSets, createdAt: new Date().toISOString(),
-    });
+type Props={user:User;catalog?:ExerciseDefinition[];firstRun?:boolean;initial:TrainingSource;blockVersion:number;sessionActive?:boolean;onSubmit:(source:TrainingSource)=>boolean|void;onCancel:()=>void};
+type Page='describe'|'review';
+export const SourceIntake=({user,initial,sessionActive,onSubmit,onCancel,firstRun=false,catalog=RUNTIME_EXERCISES}:Props)=>{
+  const insets=useSafeAreaInsets();
+  const reviewScroll=useRef<ScrollView>(null);
+  const [scheduleRequest,setScheduleRequest]=useState(0);
+  const [inputContext,setInputContext]=useState<RoutineInputContext>({split:initial.routine?.preferredSplit??(initial.routine?.split!=='custom'?initial.routine?.split:undefined)});
+  const [goalStarter,setGoalStarter]=useState<'muscle'|'fat_loss'|null>(null);
+  const existing=initial.routine?.split==='custom'&&initial.routine.workouts.length?initial.routine:null;
+  const [page,setPage]=useState<Page>('describe');
+  const [text,setText]=useState(()=>existing?existing.workouts.map(workout=>`${workout.name}: ${workout.exercises.map(item=>`${catalog.find(e=>e.id===item.exerciseId)?.name??item.exerciseId} ${item.sets} x ${item.minReps}–${item.maxReps}${item.startingLoadKg===undefined?'':` at ${item.startingLoadKg} kg`} RIR ${item.targetRir}`).join(', ')}`).join('\n') : ''),[draft,setDraft]=useState<RoutineDraft|null>(()=>!firstRun&&existing?draftFromRoutine(existing,initial,catalog):null);
+  const [settings,setSettings]=useState(initial),[busy,setBusy]=useState(false),[error,setError]=useState(''),[voiceBusy,setVoiceBusy]=useState(false);
+  const originalText=useRef(text);
+  const request=useRef<AbortController|null>(null);
+  useEffect(()=>()=>request.current?.abort(),[]);
+  const navigate=(next:Page)=>{request.current?.abort();request.current=null;setBusy(false);setError('');setPage(next);};
+  const adopt=(next:RoutineDraft)=>{
+    Keyboard.dismiss();
+    // Keep definitions for the user's existing private exercises available on save.
+    next={...next,...(goalStarter?{focus:goalStarter==='muscle'?'build_muscle' as const:'lose_fat' as const,goal:valueOf('hypertrophy' as const)}:{}),notes:[...new Set([...next.notes,...(goalStarter==='fat_loss'?['Focus: fat loss.']:[])])],customExercises:[...new Map([...(initial.routine?.customExercises??[]),...next.customExercises].map(e=>[e.id,e])).values()]};
+    setDraft(next);setError('');setPage('review');
   };
-
-  const submit = () => {
-    setAttempted(true);
-    if (invalidCount > 0) return;
-    Alert.alert(
-      'Update your plan?',
-      'Updates your planned exercises and targets. Your completed workouts, working weights and current training week are preserved.',
-      [{ text: 'Not yet', style: 'cancel' }, { text: 'Update my plan', onPress: build }]
-    );
+  const interpret=async(local=false)=>{
+    request.current?.abort();const controller=new AbortController();request.current=controller;setBusy(true);setError('');
+    const timeout=setTimeout(()=>controller.abort(),60000);
+    try{const next=local?interpretLocally(text,catalog):await interpretRoutine(text,catalog,controller.signal);if(!controller.signal.aborted&&request.current===controller){const contextual=applyInputContext(next,inputContext);adopt(contextual.workouts.length?contextual:generateDraft(contextual));}}
+    catch(e){if(request.current===controller)setError(controller.signal.aborted?'This is taking too long. Your text is preserved; try again.':e instanceof Error?e.message:'Could not prepare a draft. Your text is preserved.');}
+    finally{clearTimeout(timeout);if(request.current===controller){setBusy(false);request.current=null;}}
   };
-
-  const nothingChanged = changes.length === 0;
-  const blockedReason = sessionActive
-    ? 'A session is active. Finish or discard it before updating your plan.'
-    : nothingChanged ? 'Your training preferences have not changed.' : null;
-  const experience = user.experienceLevel === 'advanced' ? 'advanced' : 'intermediate';
-
-  return (
-    <View style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-        <ScreenBrand name="Training preferences" />
-        <ScreenTitle title="Training preferences" />
-
-        <Section title="goal" hint={<Txt variant="caption" tone="muted">required · choose one</Txt>}>
-          <Choice label="hypertrophy" code description="build muscle" selected={goal === 'hypertrophy'} onPress={() => setGoal('hypertrophy')} />
-          <Choice label="strength" code description="get stronger" selected={goal === 'strength'} onPress={() => setGoal('strength')} />
-        </Section>
-
-        <Section title="days per week" hint={<Txt variant="caption" tone="muted">required · choose one</Txt>}>
-          <Segmented label="Training days per week" options={DAY_OPTIONS} value={days} onChange={setDays} format={(value) => `${value}`} />
-        </Section>
-
-        <Section title="time cap" hint={<Txt variant="caption" tone="muted">required · choose one</Txt>}>
-          <Segmented label="Session time cap in minutes" options={MINUTE_OPTIONS} value={minutes} onChange={setMinutes} format={(value) => `${value}m`} />
-        </Section>
-
-        <Section title="equipment" hint={<Txt variant="caption" tone="muted">required · choose one</Txt>}>
-          <Choice label="full gym" code description="barbell, rack, machines, cables, dumbbells, bench, pull-up bar" selected={preset === 'full'} onPress={() => setPreset('full')} />
-          <Choice label="dumbbells + bench" code selected={preset === 'dumbbells'} onPress={() => setPreset('dumbbells')} />
-        </Section>
-
-        <Section title="limitations" hint={<Txt variant="caption" tone="muted">optional</Txt>}>
-          <View style={styles.wrap}>
-            {LIMITATIONS.map((item) => <Choice key={item} compact role="checkbox" label={limitationLabel(item)} selected={limitations.includes(item)} onPress={() => toggleLimit(item)} />)}
-          </View>
-          {excluded.length ? (
-            <Card tone="warning">
-              <Txt variant="label" tone="warning">excluded after pain</Txt>
-              {excluded.map((id) => (
-                <View key={id} style={styles.excludedRow}>
-                  <Txt style={styles.flex}>{exerciseName(id)}</Txt>
-                  <Button label="Allow again" variant="secondary" onPress={() => setExcluded((current) => current.filter((item) => item !== id))} accessibilityLabel={`Allow ${exerciseName(id)} again`} style={styles.smallButton} />
-                </View>
-              ))}
-            </Card>
-          ) : null}
-        </Section>
-
-        <Section title="seed working weights" hint={<Txt variant="caption" tone="muted">optional</Txt>}>
-          {preset === 'dumbbells' ? (
-            <Txt variant="caption" tone="secondary">These are barbell lifts, which a dumbbell plan doesn't use.</Txt>
-          ) : (
-            <>
-              <Txt variant="caption" tone="secondary">
-                A normal working weight for about {goal === 'strength' ? '5' : '8'} reps, not a one-rep max. Blank starts light.
-              </Txt>
-              {seedChecks.map(({ lift, error }) => (
-                <View key={lift.id} style={styles.field}>
-                  <View style={styles.fieldRow}>
-                    <Txt style={styles.flex}>{lift.label}</Txt>
-                    <TextInput
-                      style={[styles.input, error && showError(lift.id) && styles.inputError]}
-                      value={seeds[lift.id] ?? ''}
-                      onChangeText={(value) => setSeeds((current) => ({ ...current, [lift.id]: value }))}
-                      onBlur={() => setTouched((current) => ({ ...current, [lift.id]: true }))}
-                      inputMode="decimal"
-                      keyboardType="decimal-pad"
-                      placeholder="optional"
-                      placeholderTextColor={colors.textMuted}
-                      maxFontSizeMultiplier={1.6}
-                      accessibilityLabel={`${lift.label} seed working weight in kilograms`}
-                      accessibilityHint="Optional"
-                    />
-                    <Txt tone="secondary">kg</Txt>
-                  </View>
-                  {error && showError(lift.id) ? <Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">⚠ {error}</Txt> : null}
-                </View>
-              ))}
-            </>
-          )}
-        </Section>
-
-        <Card>
-          <Txt variant="mono" tone="muted">From your profile</Txt>
-          <Txt variant="code">experience: {experience}</Txt>
-        </Card>
-
-        <Card tone={changes.length ? 'accent' : undefined}>
-          <View style={styles.versionRow}>
-            <Txt variant="mono" tone="muted">Planned changes</Txt>
-            <StateTag state={changes.length ? 'recompiled' : 'blocked'} label={changes.length ? 'pending' : 'no changes'} />
-          </View>
-          <Txt variant="caption">Your updated preferences will apply to future workouts. Completed workouts stay in your history.</Txt>
-          {changes.length ? changes.map((line) => <Txt key={line} variant="caption">• {line}</Txt>) : <Txt variant="caption" tone="secondary">Change a value above to see the changes.</Txt>}
-        </Card>
-
-        {attempted && invalidCount > 0 ? <Banner tone="error" title={`Fix ${invalidCount} seed ${invalidCount === 1 ? 'weight' : 'weights'} to continue`} message="Each must be a number in kg, or blank." /> : null}
-
-        <View style={styles.actions}>
-          {blockedReason ? <Txt variant="caption" tone="warning" accessibilityLiveRegion="polite">⊘ {blockedReason}</Txt> : null}
-          <Button
-            label="Update my plan"
-            icon="refresh"
-            onPress={submit}
-            disabled={Boolean(blockedReason)}
-            hint="Updates your plan after you confirm"
-          />
-          <Button label="Cancel" variant="secondary" onPress={onCancel} hint="Discards your edits" />
-        </View>
+  const save=()=>{
+    if(!draft||sessionActive)return;
+    try{
+      const source=sourceFromDraft(draft,{...settings,userId:user.id},catalog);
+      if(onSubmit(source)===false)setError('Could not apply every workout. Check equipment, limitations and excluded exercises in Advanced settings.');
+      else setError('');
+    }catch(e){setError(e instanceof Error?e.message:'Check your routine before saving.');}
+  };
+  const generateDraft=(parsed?:RoutineDraft):RoutineDraft=>{
+    const selected=inputContext.split??parsed?.preferredSplit??settings.routine?.preferredSplit??settings.routine?.split??'auto';
+    const split=selected==='custom'?'auto':selected;
+    const proposed:TrainingSource={...settings,goal:parsed?.goal.value??settings.goal,
+      daysPerWeek:inputContext.days??(parsed?.days.value as TrainingSource['daysPerWeek']|undefined)??settings.daysPerWeek,
+      sessionMinutes:inputContext.minutes??parsed?.minutes.value??settings.sessionMinutes,equipment:parsed?.equipment??settings.equipment,
+      routine:{...defaultRoutine(),progression:settings.routine?.progression??defaultRoutine().progression,split,preferredSplit:split}};
+    const plan=compileBlock(proposed,undefined,undefined,catalog);
+    if(!plan.slots.length||plan.slots.some(slot=>!slot.plannedExercises.length))throw Error('No routine fits these constraints. Adjust your preferences or build manually.');
+    const generated=draftFromRoutine(editableRoutine(plan),proposed,catalog,'guided');
+    return {...generated,originalText:text,notes:[...(parsed?.notes??[]),...(goalStarter==='fat_loss'?['Focus: fat loss.']:[])]};
+  };
+  const generate=()=>{
+    if(existing&&text===originalText.current&&draft?.method==='saved'){adopt(applyInputContext(draft,inputContext));return;}
+    if(text.trim()){void interpret();return;}
+    try{adopt(generateDraft());}catch(e){setError(e instanceof Error?e.message:'Could not generate a routine.');}
+  };
+  const selectStarter=(starter:RoutineStarter)=>{
+    setError('');
+    if(starter==='muscle'||starter==='fat_loss'){
+      setGoalStarter(starter);
+      if(starter==='muscle')setSettings(current=>({...current,goal:'hypertrophy'}));
+    }else setInputContext(current=>({...current,split:starter,...(starter==='full_body'?{days:3 as const}:{})}));
+  };
+  const manual=()=>adopt(applyInputContext(draft??emptyDraft(text),inputContext));
+  const selectedStarters:RoutineStarter[]=[...(goalStarter?[goalStarter]:[]),...(inputContext.split&&['full_body','upper_lower','push_pull_legs'].includes(inputContext.split)?[inputContext.split as RoutineStarter]:[])];
+  const issues=draft?draftIssues(draft,catalog):[];
+  const exitAction = <Pressable accessibilityRole="button" accessibilityLabel={firstRun?'Sign out':'Cancel and discard changes'}
+    onPress={()=>{request.current?.abort();onCancel();}} style={({pressed})=>[styles.exitLink,pressed&&styles.pressed]}>
+    <Txt variant="caption" tone="muted">{firstRun?'Sign out':'Cancel'}</Txt>
+  </Pressable>;
+  return <KeyboardAvoidingView style={styles.flex} enabled={firstRun} behavior={Platform.OS==='ios'?'padding':undefined}>
+    {page==='describe'?<RoutineDescription text={text} onChange={value=>{setText(value);setError('');}} busy={busy||voiceBusy}
+      onGenerate={generate} onManual={manual} onStarter={selectStarter} selectedStarters={selectedStarters}
+      onLocalReview={hostedRoutineInputEnabled&&text.trim()?()=>void interpret(true):undefined}
+      error={error} headerAction={exitAction}
+      contextControls={<RoutineContextChips value={inputContext} initial={settings} disabled={busy||voiceBusy} onChange={next=>{setInputContext(next);setError('');}}/>}
+      bottomInset={firstRun?insets.bottom:0}
+      voiceControl={<RoutineVoiceInput disabled={busy} onBusy={setVoiceBusy} onError={setError} onTranscript={transcript=>setText(previous=>previous.trim()?`${previous.trim()}\n${transcript}`:transcript)} />} />:null}
+    {page==='review'&&draft?<View style={styles.flex}>
+      <View style={planStyles.header}>
+        <View style={styles.flex}><PlanText kind="overline">TRAINING PREFERENCES</PlanText><PlanText kind="title">Review routine</PlanText></View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Edit schedule" onPress={()=>{setScheduleRequest(value=>value+1);reviewScroll.current?.scrollTo({y:0,animated:true});}} style={styles.calendar}><Ionicons name="calendar-outline" size={t.icon} color={colors.textMuted}/></Pressable>
+        {exitAction}
+      </View>
+      <ScrollView ref={reviewScroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={planStyles.content}>
+        <RoutineDraftReview draft={draft} initial={settings} catalog={catalog} scheduleRequest={scheduleRequest} onChange={next=>{setDraft(next);setError('');}}
+          onSettingsChange={next=>{setSettings(next);setError('');}}/>
+        {error?<PlanText kind="meta">{error}</PlanText>:null}
+        {sessionActive?<Txt variant="caption" tone="warning">Finish or discard your active workout before updating your routine.</Txt>:null}
       </ScrollView>
-    </View>
-  );
-};
+      <View style={{paddingBottom:firstRun?insets.bottom:0}}><PlanFooter secondary="Edit input" primary="Save changes" disabled={Boolean(sessionActive)||issues.length>0} onSecondary={()=>{setInputContext({split:draft.preferredSplit,days:(draft.days.value??settings.daysPerWeek) as TrainingSource['daysPerWeek'],minutes:draft.minutes.value??settings.sessionMinutes});navigate('describe');}} onPrimary={save}/></View>
+    </View>:null}
 
-const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  page: { padding: space.lg, paddingBottom: space.xxl * 2, gap: space.xl },
-  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  excludedRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, flexWrap: 'wrap' },
-  smallButton: { minHeight: TOUCH },
-  field: { gap: space.xs },
-  fieldRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  input: { width: 116, minHeight: TOUCH, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.sm, paddingHorizontal: space.md, color: colors.text, backgroundColor: colors.surface, fontSize: 17, textAlign: 'right' },
-  inputError: { borderColor: colors.danger, borderWidth: 2 },
-  versionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: space.sm },
-  actions: { gap: space.md },
+  </KeyboardAvoidingView>;
+};
+const styles=StyleSheet.create({
+  flex:{flex:1},calendar:{width:t.touch,height:t.touch,alignItems:'center',justifyContent:'center',borderWidth:t.border,borderColor:colors.border,borderRadius:t.radius.segment},
+  exitLink:{minHeight:t.touch,paddingHorizontal:t.pad.small,justifyContent:'center'},
+  pressed:{opacity:t.pressed},
 });
