@@ -4,7 +4,6 @@ import Svg, { G, Path } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import type { Muscle } from '../../runtime';
 import { colors, radius, space } from './theme';
-import { Txt } from './ui';
 import { MUSCLE_MAP_SIZE, MUSCLE_MASKS, type MuscleMapView } from './muscleMasks';
 import { ATHLETE_ARTWORK } from '../../components/athleteArtwork';
 import { hasLowerBodyTarget, muscleTargetRole, type TargetMuscles } from './muscleTargeting';
@@ -13,6 +12,7 @@ export type MuscleMapTone = 'neutral' | 'success' | 'warning' | 'danger';
 
 type Props = {
   view: MuscleMapView;
+  onViewChange?: (view: MuscleMapView) => void;
   /** Status colour per muscle GROUP. Parts of a group share it. */
   tones?: Partial<Record<Muscle, MuscleMapTone>>;
   selected?: Muscle | null;
@@ -67,7 +67,7 @@ const look = (tone: MuscleMapTone | undefined, emphasis: Emphasis) => {
  * locked together at any container width and at any zoom.
  */
 export const MuscleMap = memo(({
-  view, tones = NO_TONES, selected = null, selectedPart = null, onSelect,
+  view, onViewChange, tones = NO_TONES, selected = null, selectedPart = null, onSelect,
   targets, height = 420, showZoom = true, overview = false, focusTargets = false,
 }: Props) => {
   const [box, setBox] = useState<{ width: number; height: number } | null>(null);
@@ -161,16 +161,21 @@ export const MuscleMap = memo(({
           </Svg>
         </View>
       ) : null}
-      {showZoom ? <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={zoomed ? 'Show the full body' : zoomToLegs ? 'Zoom to the legs' : 'Zoom to the upper body'}
-        accessibilityState={{ selected: zoomed }}
-        onPress={() => setZoomed((value) => !value)}
-        style={({ pressed }) => [styles.zoom, pressed && styles.pressed]}
-      >
-        <Ionicons name={zoomed ? 'contract-outline' : 'expand-outline'} size={16} color={colors.text} />
-        <Txt variant="label" tone="secondary" maxFontSizeMultiplier={1.2}>{zoomed ? 'full' : 'zoom'}</Txt>
-      </Pressable> : null}
+      {onViewChange || showZoom ? <View style={styles.tools}>
+        {onViewChange ? <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Show ${view === 'front' ? 'back' : 'front'} muscles`}
+          onPress={() => onViewChange(view === 'front' ? 'back' : 'front')}
+          style={({ pressed }) => [styles.tool, pressed && styles.pressed]}
+        ><Ionicons name="sync-outline" size={22} color={colors.text} /></Pressable> : null}
+        {showZoom ? <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={zoomed ? 'Show the full body' : zoomToLegs ? 'Zoom to the legs' : 'Zoom to the upper body'}
+          accessibilityState={{ selected: zoomed }}
+          onPress={() => setZoomed((value) => !value)}
+          style={({ pressed }) => [styles.tool, pressed && styles.pressed]}
+        ><Ionicons name={zoomed ? 'contract-outline' : 'expand-outline'} size={22} color={colors.text} /></Pressable> : null}
+      </View> : null}
     </View>
   );
 });
@@ -180,10 +185,10 @@ const styles = StyleSheet.create({
     width: '100%', height: 420, position: 'relative', overflow: 'hidden', borderRadius: 16,
     backgroundColor: '#050607',
   },
-  zoom: {
-    position: 'absolute', top: space.sm, right: space.sm, minHeight: 40, minWidth: 40, paddingHorizontal: space.md,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.xs,
-    borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: 'rgba(9,11,15,0.82)',
+  tools: {
+    position: 'absolute', bottom: space.sm, right: space.sm, flexDirection: 'row',
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: 'rgba(9,11,15,0.88)',
   },
+  tool: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.7 },
 });

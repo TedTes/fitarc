@@ -51,26 +51,17 @@ export const ExerciseMuscleDetails = memo(({ exercise, reason, showNotes = true 
 
   return (
     <View style={styles.details}>
-      <View style={styles.detailsHeader}>
-        <Txt variant="caption" tone="secondary" style={styles.flex}>
-          {exercise.compound ? 'Compound lift' : 'Isolation lift'} · {exercise.equipment.map(equipmentLabel).join(' · ')}
-        </Txt>
-        <View style={styles.viewSwitch} accessibilityRole="radiogroup" accessibilityLabel="Muscle map view">
-          {(['front', 'back'] as const).map((side) => (
-            <Pressable
-              key={side} accessibilityRole="radio" accessibilityLabel={`Show ${side} muscles`}
-              accessibilityState={{ checked: side === view }}
-              onPress={() => { setView(side); if (selection && !isMuscleVisible(selection.muscle, side)) setSelection(null); }}
-              style={({ pressed }) => [styles.viewChoice, side === view && styles.viewActive, pressed && styles.pressed]}
-            ><Txt variant="label" tone={side === view ? 'accent' : 'secondary'}>{side}</Txt></Pressable>
-          ))}
-        </View>
-      </View>
       <MuscleMap
-        view={view} targets={exercise} height={Math.min(380, Math.max(250, height * 0.42))}
+        view={view} onViewChange={side => {
+          setView(side);
+          if (selection && !isMuscleVisible(selection.muscle, side)) setSelection(null);
+        }} targets={exercise} height={Math.min(380, Math.max(250, height * 0.42))}
         selected={selection?.muscle} selectedPart={selection?.part}
         onSelect={(muscle, part) => setSelection({ muscle, part: part === muscle ? null : part })}
       />
+      <Txt variant="caption" tone="secondary">
+        {exercise.compound ? 'Compound lift' : 'Isolation lift'} · {exercise.equipment.map(equipmentLabel).join(' · ')}
+      </Txt>
       <View style={styles.legend}>
         <View style={styles.legendItem}><View style={styles.primaryDot} /><Txt variant="mono" tone="secondary">primary</Txt></View>
         <View style={styles.legendItem}><View style={styles.assistDot} /><Txt variant="mono" tone="secondary">assisting</Txt></View>
@@ -127,9 +118,6 @@ const styles = StyleSheet.create({
   thumbnailCompact: { width: 46, height: 60 },
   previewCopy: { flex: 1, minWidth: 0, gap: 3, paddingVertical: space.sm },
   details: { gap: space.md },
-  detailsHeader: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md },
-  viewSwitch: { flexDirection: 'row', borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, overflow: 'hidden' },
-  viewChoice: { minHeight: TOUCH, paddingHorizontal: space.md, alignItems: 'center', justifyContent: 'center' },
   viewActive: { backgroundColor: colors.accentSoft },
   legend: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
