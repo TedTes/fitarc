@@ -5,9 +5,13 @@ import * as ImagePicker from 'expo-image-picker';
 import type { User } from '../../types/domain';
 import type { RuntimeState } from '../../runtime';
 import { uploadUserAvatar } from '../../services/userProfileService';
-import { colors, radius, space, TOUCH } from './theme';
-import { Button, Card, Choice, Divider, ScreenBrand, Sheet, Txt } from './ui';
-import { goalLabel, limitationLabel } from './copy';
+import { colors, radius, space, TOUCH, planTokens as t } from './theme';
+import { Button, Choice, Sheet, Txt } from './ui';
+import { equipmentLabel, goalLabel, limitationLabel } from './copy';
+import { PlanPanel, PlanText } from './PlanKit';
+import { useLayoutMotion } from './useLayoutMotion';
+import { WorkoutResults } from './WorkoutResults';
+import { FULL_GYM } from './constants';
 import type { SyncStatus } from './useRuntimeController';
 
 type Props = {
@@ -22,10 +26,19 @@ type Props = {
 
 const Fact = ({ label, value }: { label: string; value: string }) => (
   <View style={styles.fact} accessible accessibilityLabel={`${label}: ${value}`}>
-    <Txt variant="label" tone="muted" style={styles.factLabel}>{label}</Txt>
-    <Txt variant="code" style={styles.flex}>{value}</Txt>
+    <Txt variant="mono" tone="muted" style={styles.factLabel}>{label}</Txt>
+    <Txt variant="code" style={[styles.flex,styles.factValue]}>{value}</Txt>
   </View>
 );
+
+const Metric = ({label,value,unit}:{label:string;value:number|null|undefined;unit?:string}) => <View style={styles.metric} accessible accessibilityLabel={`${label}: ${value??'Not set'}${value&&unit?` ${unit}`:''}`}>
+  <View style={styles.metricValue}><Txt variant="code" style={styles.metricNumber}>{value??'—'}</Txt>{value&&unit?<Txt variant="mono" tone="muted" style={styles.metricUnit}>{unit}</Txt>:null}</View>
+  <Txt variant="label" tone="muted" style={styles.metricLabel}>{label}</Txt>
+</View>;
+const AccountButton = ({label,icon,onPress,compact=false}:{label:string;icon:keyof typeof Ionicons.glyphMap;onPress:()=>void;compact?:boolean}) => <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({pressed})=>[styles.outlineButton,compact&&styles.compactButton,pressed&&styles.pressed]}>
+  <Ionicons name={icon} size={t.icon} color={colors.textMuted}/><Txt variant="heading" style={styles.buttonLabel}>{label}</Txt>
+</Pressable>;
+const initialsFor = (name?:string) => (name?.trim()||'Athlete').split(/\s+/).map(part=>part[0]).join('').slice(0,2).toUpperCase();
 
 const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }: {
   label: string;
@@ -53,6 +66,9 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
 );
 
 export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
+  const { animate } = useLayoutMotion();
+  const [logOpen,setLogOpen] = useState(false);
+  const [openSession,setOpenSession] = useState<string|null>(null);
   const [editingProfile, setEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -66,7 +82,12 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
   const [avatarPath, setAvatarPath] = useState(user.avatarPath);
   const source = state.source;
-  const initials = useMemo(() => (name || 'Athlete').trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(), [name]);
+  const initials = initialsFor(name);
+  const completedWorkouts = useMemo(()=>state.sessions.filter(session=>session.status==='committed'&&session.exercises.some(entry=>entry.sets.some(set=>set.status==='completed'&&set.result))).slice().sort((a,b)=>(b.finishedAt??b.context.date).localeCompare(a.finishedAt??a.context.date)),[state.sessions]);
+  const equipment = source?.equipment??[];
+  const equipmentSummary = FULL_GYM.every(item=>equipment.includes(item))?'full gym':equipment.length?equipment.map(equipmentLabel).join(', ').toLowerCase():'bodyweight';
+  const limits = [...(source?.limitations.map(limitationLabel)??[]),...(source?.routine?.limitationNote?.trim()?[source.routine.limitationNote.trim()]:[])].join(' · ')||'none';
+  const trainingGoal = source?.routine?.focus?.replaceAll('_',' ')??(source?goalLabel(source.goal):'—');
 
   useEffect(() => {
     setName(user.name ?? '');
@@ -78,8 +99,6 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
     setAvatarUrl(user.avatarUrl);
     setAvatarPath(user.avatarPath);
   }, [user]);
-
-  if (!source) return null;
 
   const openProfileEditor = () => {
     setName(user.name ?? '');
@@ -157,54 +176,67 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-        <ScreenBrand name="account" />
+        <View style={styles.header}><PlanText kind="title">Account</PlanText><AccountButton label="Workout log" icon="calendar-outline" compact onPress={()=>setLogOpen(true)}/></View>
 
         <View style={styles.section}>
-          <Txt variant="label" tone="muted">PROFILE</Txt>
-          <Card>
+          <PlanText kind="overline">PROFILE</PlanText>
+          <View style={styles.card}>
             <View style={styles.profileRow}>
               <View style={styles.avatar}>
-                {user.avatarUrl ? <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} /> : <Txt variant="heading" tone="accent">{initials}</Txt>}
+                {user.avatarUrl ? <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} /> : <Txt variant="heading" tone="accent" style={styles.initials}>{initialsFor(user.name)}</Txt>}
               </View>
-              <View style={styles.flex}>
-                <Txt variant="heading">{user.name?.trim() || 'Athlete'}</Txt>
-                <Txt variant="mono" tone="secondary">{user.experienceLevel} · {user.age} yr · {user.heightCm} cm{user.weightKg ? ` · ${user.weightKg} kg` : ''}</Txt>
+              <View style={styles.identity}>
+                <Txt variant="heading" style={styles.name}>{user.name?.trim() || 'Athlete'}</Txt>
+                <View style={styles.badge}><Txt variant="code" tone="accent" style={styles.badgeText}>{user.experienceLevel.toUpperCase()}</Txt></View>
               </View>
             </View>
-            <Button label="Edit profile" variant="secondary" icon="person-outline" onPress={openProfileEditor} />
-          </Card>
+            <View style={styles.metrics}><Metric label="YEARS" value={user.age}/><Metric label="HEIGHT" value={user.heightCm} unit="cm"/><Metric label="WEIGHT" value={user.weightKg} unit="kg"/></View>
+            <AccountButton label="Edit profile" icon="person-outline" onPress={openProfileEditor}/>
+          </View>
         </View>
 
         <View style={styles.section}>
-          <Txt variant="label" tone="muted">TRAINING SOURCE</Txt>
-          <Card>
-            <Fact label="goal" value={goalLabel(source.goal)} />
-            <Fact label="schedule" value={`${source.daysPerWeek} days · ${source.sessionMinutes} min`} />
-            <Fact label="equipment" value={source.equipment.includes('barbell') ? 'full gym' : 'dumbbells + bench'} />
-            <Fact label="limits" value={source.limitations.length ? source.limitations.map(limitationLabel).join(', ') : 'none'} />
-            <Button label="Training preferences" variant="secondary" icon="options-outline" onPress={onEditSource} />
-          </Card>
+          <PlanText kind="overline">TRAINING</PlanText>
+          <View style={styles.card}>
+            <View>
+              <Fact label="goal" value={trainingGoal}/>
+              <Fact label="schedule" value={source?`${source.daysPerWeek} days · ${source.sessionMinutes} min`:'—'}/>
+              <Fact label="equipment" value={source?equipmentSummary:'—'}/>
+              <Fact label="limits" value={source?limits:'—'}/>
+            </View>
+            <AccountButton label="Training preferences" icon="options-outline" onPress={onEditSource}/>
+          </View>
         </View>
 
         <View style={styles.section}>
-          <Txt variant="label" tone="muted">ACCOUNT</Txt>
-          <Card style={styles.accountCard}>
-            <Pressable accessibilityRole="button" onPress={confirmSignOut} style={({ pressed }) => [styles.accountAction, pressed && styles.pressed]}>
-              <Ionicons name="log-out-outline" size={20} color={colors.textSecondary} />
-              <Txt variant="code" style={styles.flex}>Sign out</Txt>
-              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          <PlanText kind="overline">ACCOUNT</PlanText>
+          <View style={styles.accountCard}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Sign out" onPress={confirmSignOut} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed]}>
+              <Ionicons name="log-out-outline" size={t.icon} color={colors.textMuted}/>
+              <Txt variant="heading" style={[styles.flex,styles.actionLabel]}>Sign out</Txt>
+              <Ionicons name="chevron-forward" size={t.icon} color={colors.textDim}/>
             </Pressable>
-            <Divider />
-            <Pressable accessibilityRole="button" disabled={deleting} onPress={confirmDelete} style={({ pressed }) => [styles.accountAction, pressed && styles.pressed, deleting && styles.disabled]}>
-              {deleting ? <ActivityIndicator color={colors.danger} /> : <Ionicons name="trash-outline" size={20} color={colors.danger} />}
-              <Txt variant="code" tone="danger" style={styles.flex}>{deleting ? 'Deleting account…' : 'Delete account'}</Txt>
-              {!deleting ? <Ionicons name="chevron-forward" size={18} color={colors.danger} /> : null}
+            <View style={styles.accountDivider}/>
+            <Pressable accessibilityRole="button" accessibilityLabel="Delete account" accessibilityState={{disabled:deleting}} disabled={deleting} onPress={confirmDelete} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed,deleting&&styles.disabled]}>
+              {deleting?<ActivityIndicator color={colors.danger}/>:<Ionicons name="trash-outline" size={t.icon} color={colors.danger}/>}
+              <Txt variant="heading" tone="danger" style={[styles.flex,styles.actionLabel]}>{deleting?'Deleting account…':'Delete account'}</Txt>
+              {!deleting?<Ionicons name="chevron-forward" size={t.icon} color={colors.danger}/>:null}
             </Pressable>
-          </Card>
+          </View>
         </View>
       </ScrollView>
 
-      <Sheet visible={editingProfile} onClose={() => setEditingProfile(false)} title="edit profile">
+      <Sheet visible={logOpen} onClose={()=>setLogOpen(false)} title="Workout log">
+        {completedWorkouts.length?completedWorkouts.map(session=>{
+          const plan=[...(state.blockHistory??[]),...(state.block?[state.block]:[])].find(plan=>plan.id===session.blockId);
+          const title=session.name??plan?.slots.find(slot=>slot.id===session.slotId)?.label??'Workout';
+          const sets=session.exercises.flatMap(entry=>entry.sets).filter(set=>set.status==='completed'&&set.result).length;
+          const date=new Date(`${session.context.date}T12:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+          return <PlanPanel key={session.id} title={`${title} · ${date}`} summary={`${sets} ${sets===1?'set':'sets'}`} open={openSession===session.id} onToggle={()=>{animate();setOpenSession(current=>current===session.id?null:session.id);}}><WorkoutResults session={session}/></PlanPanel>;
+        }):<PlanText kind="meta">No workouts yet</PlanText>}
+      </Sheet>
+
+      <Sheet visible={editingProfile} onClose={() => setEditingProfile(false)} title="Edit profile">
         <View style={styles.avatarEditor}>
           <View style={styles.avatarLarge}>
             {avatarUrl ? <Image source={{ uri: avatarUrl }} style={styles.avatarImage} /> : <Txt variant="title" tone="accent">{initials}</Txt>}
@@ -232,17 +264,30 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
 const styles = StyleSheet.create({
   root: { flex: 1 },
   flex: { flex: 1 },
-  page: { padding: space.lg, paddingBottom: space.xxl * 2, gap: space.lg },
+  page: { padding:t.gutter,gap:t.bodyGap },
+  header:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:t.pad.small},
+  card:{padding:t.pad.medium,gap:t.pad.medium,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.card,backgroundColor:colors.surface},
+  identity:{flex:1,alignItems:'flex-start',gap:t.pad.tiny},
+  name:{fontSize:16,lineHeight:22},initials:{fontSize:16},
+  badge:{paddingHorizontal:6,paddingVertical:2,backgroundColor:colors.accentSoft,borderWidth:t.border,borderColor:colors.accentBorder,borderRadius:6},
+  badgeText:{fontSize:9,lineHeight:13},
+  metrics:{flexDirection:'row',gap:t.pad.small},
+  metric:{flex:1,minHeight:56,justifyContent:'center',alignItems:'center',gap:t.pad.tiny,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.segment,backgroundColor:colors.surfaceInset},
+  metricValue:{flexDirection:'row',alignItems:'baseline'},metricNumber:{fontSize:17,lineHeight:22},metricUnit:{fontSize:9,lineHeight:13},metricLabel:{fontSize:8,lineHeight:12,letterSpacing:0.8},
+  outlineButton:{minHeight:t.touch,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:t.pad.small,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.segment},
+  compactButton:{paddingHorizontal:t.pad.medium},buttonLabel:{fontSize:12,lineHeight:17,color:colors.textSecondary},actionLabel:{fontSize:14,lineHeight:20},
   section: { gap: space.sm },
   profileRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { width: 54, height: 54, borderRadius: 27, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
+  avatar: { width: 48, height: 48, borderRadius: 24, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
   avatarLarge: { width: 82, height: 82, borderRadius: 41, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
   avatarImage: { width: '100%', height: '100%' },
   avatarEditor: { alignItems: 'center', gap: space.xs },
-  fact: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
-  factLabel: { width: 76 },
-  accountCard: { paddingVertical: 0, gap: 0 },
-  accountAction: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: space.md },
+  fact: { minHeight:34, paddingVertical:8,flexDirection:'row',gap:t.pad.medium,alignItems:'center',borderBottomWidth:t.border,borderBottomColor:colors.border },
+  factValue:{fontSize:12,lineHeight:18},
+  factLabel: { width:72,fontSize:10,lineHeight:16 },
+  accountCard: { borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.card,backgroundColor:colors.surface,overflow:'hidden' },
+  accountDivider:{height:t.border,backgroundColor:colors.border,marginHorizontal:t.pad.medium},
+  accountAction: { minHeight:48,paddingHorizontal:t.pad.medium,paddingVertical:t.pad.small,flexDirection:'row',alignItems:'center',gap:t.pad.medium },
   field: { gap: space.xs },
   inputRow: { minHeight: TOUCH, flexDirection: 'row', alignItems: 'center', gap: space.sm, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md, backgroundColor: colors.surfaceRaised, paddingHorizontal: space.md },
   input: { flex: 1, minHeight: TOUCH, color: colors.text, fontSize: 16, paddingVertical: space.sm },
