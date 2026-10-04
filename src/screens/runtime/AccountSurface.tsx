@@ -186,12 +186,14 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
                 {user.avatarUrl ? <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} /> : <Txt variant="heading" tone="accent" style={styles.initials}>{initialsFor(user.name)}</Txt>}
               </View>
               <View style={styles.identity}>
-                <Txt variant="heading" style={styles.name}>{user.name?.trim() || 'Athlete'}</Txt>
+                <Pressable accessibilityRole="button" accessibilityLabel="Edit profile" onPress={openProfileEditor} style={({pressed})=>[styles.editProfile,pressed&&styles.pressed]}>
+                  <Txt variant="heading" style={styles.name}>{user.name?.trim() || 'Athlete'}</Txt>
+                  <Ionicons name="pencil-outline" size={15} color={colors.textMuted}/>
+                </Pressable>
                 <View style={styles.badge}><Txt variant="code" tone="accent" style={styles.badgeText}>{user.experienceLevel.toUpperCase()}</Txt></View>
               </View>
             </View>
             <View style={styles.metrics}><Metric label="YEARS" value={user.age}/><Metric label="HEIGHT" value={user.heightCm} unit="cm"/><Metric label="WEIGHT" value={user.weightKg} unit="kg"/></View>
-            <AccountButton label="Edit profile" icon="person-outline" onPress={openProfileEditor}/>
           </View>
         </View>
 
@@ -204,13 +206,18 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
               <Fact label="equipment" value={source?equipmentSummary:'—'}/>
               <Fact label="limits" value={source?limits:'—'}/>
             </View>
-            <AccountButton label="Training preferences" icon="options-outline" onPress={onEditSource}/>
           </View>
         </View>
 
         <View style={styles.section}>
           <PlanText kind="overline">ACCOUNT</PlanText>
           <View style={styles.accountCard}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Training preferences" onPress={onEditSource} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed]}>
+              <Ionicons name="options-outline" size={t.icon} color={colors.textMuted}/>
+              <Txt variant="heading" style={[styles.flex,styles.actionLabel]}>Training preferences</Txt>
+              <Ionicons name="chevron-forward" size={t.icon} color={colors.textDim}/>
+            </Pressable>
+            <View style={styles.accountDivider}/>
             <Pressable accessibilityRole="button" accessibilityLabel="Sign out" onPress={confirmSignOut} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed]}>
               <Ionicons name="log-out-outline" size={t.icon} color={colors.textMuted}/>
               <Txt variant="heading" style={[styles.flex,styles.actionLabel]}>Sign out</Txt>
@@ -267,8 +274,9 @@ const styles = StyleSheet.create({
   page: { padding:t.gutter,gap:t.bodyGap },
   header:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:t.pad.small},
   card:{padding:t.pad.medium,gap:t.pad.medium,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.card,backgroundColor:colors.surface},
-  identity:{flex:1,alignItems:'flex-start',gap:t.pad.tiny},
-  name:{fontSize:16,lineHeight:22},initials:{fontSize:16},
+  identity:{flex:1,minWidth:0,alignItems:'flex-start'},
+  editProfile:{minHeight:t.touch,maxWidth:'100%',flexDirection:'row',alignItems:'center',gap:t.pad.small},
+  name:{fontSize:16,lineHeight:22,flexShrink:1},initials:{fontSize:16},
   badge:{paddingHorizontal:6,paddingVertical:2,backgroundColor:colors.accentSoft,borderWidth:t.border,borderColor:colors.accentBorder,borderRadius:6},
   badgeText:{fontSize:9,lineHeight:13},
   metrics:{flexDirection:'row',gap:t.pad.small},
