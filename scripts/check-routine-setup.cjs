@@ -138,3 +138,50 @@ const req=(body,auth=true)=>new Request('https://example/routine-input',{method:
   assert.equal((await handler(req({text:'bench press'}))).status,429);
   console.log('Routine input service: authentication, limits, schema, refusal, transcription and throttling passed with mocked providers.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+// Unified editor: automatic persistence must not turn incomplete drafts into live routines.
+{
+const {saveRoutineEditor,editorSettings,mergeRoutineInput}=require('../src/routineSetup/editor.ts');
+const {emptyRuntimeState}=require('../src/runtime/runtimePersistence.ts');
+const {toStoredTraining,fromStoredTraining}=require('../src/runtime/trainingState.ts');
+const {defaultRoutine}=require('../src/runtime/routine.ts');
+const {emptyDraft,valueOf}=require('../src/routineSetup/draft.ts');
+const {RUNTIME_EXERCISES}=require('../src/runtime/exerciseCatalog.ts');
+const {interpretLocally}=require('../src/routineSetup/localInterpretation.ts');
+const {solveTrainingSession}=require('../src/runtime/runtimeService.ts');
+const initial={id:'editor-source',userId:'editor-user',version:1,goal:'hypertrophy',experience:'intermediate',daysPerWeek:4,sessionMinutes:60,equipment:['barbell','rack','bench','dumbbell','machine','cable','pullup_bar'],excludedExerciseIds:[],limitations:[],seedWorkingSets:[],createdAt:new Date().toISOString()};
+const catalog=RUNTIME_EXERCISES;
+let input={text:'',interpretedText:'',settings:initial,draft:{...emptyDraft(),days:valueOf(3)}};
+let state=saveRoutineEditor(emptyRuntimeState(),input,catalog);
+assert.equal(state.source.daysPerWeek,3);assert.equal(state.block,null);
+input={...input,text:'Push: bench press 3 x 8 at 40 kg'};
+state=saveRoutineEditor(state,input,catalog);
+assert.equal(state.block,null);
+assert.equal(fromStoredTraining(toStoredTraining(state)).source.routineEditor.text,input.text);
+input={...input,interpretedText:input.text,draft:mergeRoutineInput(input.draft,interpretLocally(input.text,catalog))};
+state=saveRoutineEditor(state,input,catalog);
+assert.equal(state.block.slots.length,1);assert.equal(state.source.routine.workouts[0].exercises[0].startingLoadKg,40);
+const saved=JSON.stringify(state),blockId=state.block.id;
+input={...input,text:'Push: unknown lift 3 x 8',interpretedText:'Push: unknown lift 3 x 8',draft:mergeRoutineInput(input.draft,interpretLocally('Push: unknown lift 3 x 8',catalog))};
+let incomplete=saveRoutineEditor(state,input,catalog);
+assert.equal(incomplete.block.id,blockId);assert.equal(JSON.stringify(state),saved);
+assert.equal(incomplete.source.routine.workouts[0].exercises.length,1);
+assert.equal(incomplete.source.routineEditor.draft.workouts[0].exercises.length,2);
+assert.deepEqual(fromStoredTraining(toStoredTraining(incomplete)).source.routineEditor,incomplete.source.routineEditor);
+input={...input,text:'Push: bench press 3 x 8 at 40 kg',interpretedText:'Push: bench press 3 x 8 at 40 kg',draft:state.source.routineEditor.draft};
+const twice=saveRoutineEditor(state,input,catalog);assert.equal(twice.block.id,blockId);
+const added=mergeRoutineInput(input.draft,interpretLocally('Pull: cable row 3 x 10',catalog));
+const merged=mergeRoutineInput(added,interpretLocally('Push: bench press 4 x 10',catalog));
+assert.equal(merged.workouts.length,2);assert.equal(merged.workouts[0].id,added.workouts[0].id);
+assert.equal(merged.workouts[0].exercises.length,1);assert.equal(merged.workouts[0].exercises[0].sets.value,4);
+input={...input,draft:merged};
+const active=solveTrainingSession(state,{date:state.block.startedOn,minutesAvailable:60,recovery:'yes',unavailableEquipment:[],unavailableExerciseIds:[]});
+const deferred=saveRoutineEditor(active,input,catalog);assert.deepEqual(deferred.activeSession,active.activeSession);assert.equal(deferred.block.id,active.block.id);
+assert.equal(deferred.source.routineEditor.draft.workouts.length,2);
+const applied=saveRoutineEditor({...deferred,activeSession:null,sessions:[]},input,catalog);
+assert.equal(applied.block.slots.length,2);
+const removed=saveRoutineEditor(applied,{...input,draft:{...input.draft,workouts:[]}},catalog);
+assert.equal(removed.block,null);assert(removed.blockHistory.some(plan=>plan.id===applied.block.id));
+assert.equal(removed.source.routine.workouts.length,0);
+console.log('Unified autosave: preferences, raw input, invalid drafts, stable plans, merged workouts, active-session deferral and persisted recovery passed.');
+}

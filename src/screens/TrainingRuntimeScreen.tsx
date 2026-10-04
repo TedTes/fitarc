@@ -1,10 +1,11 @@
+import { saveRoutineEditor, type RoutineEditorInput } from '../routineSetup/editor';
 import { editableRoutine } from '../runtime/routine';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User } from '../types/domain';
-import { compileNextRuntimeBlock, compileTrainingBlock, createRuntimeId, getRuntimeWeekView } from '../runtime';
+import { compileNextRuntimeBlock, createRuntimeId, getRuntimeWeekView } from '../runtime';
 import type { TrainingSource } from '../runtime';
 import { colors, space } from './runtime/theme';
 import { Banner, Button, ChromeContext, ScreenBrand, Txt } from './runtime/ui';
@@ -193,24 +194,10 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     if (next === 'solver') setWorkoutTabsVisible(false);
   }, []);
 
-  const compile = useCallback((source: TrainingSource) => {
-    const first = !state.source;
-    const outcome = apply((current) => compileTrainingBlock(current, source));
-    if (!outcome.ok) {
-      const problem = describeRuntimeError(outcome.error);
-      notify({ tone: 'error', title: first ? `Plan update failed · ${problem.message}` : `Plan update failed · ${problem.message}`, sticky: true });
-      return false;
-    }
-    setEditingSource(false);
-    setSurface('block');
-    notify({
-      tone: 'success',
-      title: first ? 'Your training plan is ready' : 'Your training plan was updated',
-      message: first ? 'Your routine is ready. Review a workout in Today before starting.' : outcome.state.lastBlockDiff.join(' · '),
-      action: { label: 'Today', run: () => setSurface('solver') },
-    });
-    return true;
-  }, [apply, notify, state.source]);
+  const saveEditor = useCallback((editor:RoutineEditorInput) => {
+    const outcome=apply(current=>saveRoutineEditor(current,editor,[...new Map([...(current.catalog??[]),...(current.block?.catalog??[])].map(item=>[item.id,item])).values()]));
+    return outcome.ok?undefined:describeRuntimeError(outcome.error).message;
+  },[apply]);
 
 
   const nextBlock = useCallback(() => {
@@ -314,7 +301,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           style={[styles.surfaceLayer, surface === 'account' && styles.surfaceActive, { opacity: surfaceOpacity.account, transform: [{ translateX: surfaceOffset.account }] }]}
         >
           {editingSource ? (
-            <SourceIntake user={user} initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} blockVersion={state.block?.version ?? 0} sessionActive={inSession} onSubmit={compile} onCancel={() => setEditingSource(false)} />
+            <SourceIntake initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} sessionActive={Boolean(state.activeSession)} sync={sync} onSave={saveEditor} onClose={() => setEditingSource(false)} />
           ) : (
             <AccountSurface
               user={user} state={state} sync={sync}

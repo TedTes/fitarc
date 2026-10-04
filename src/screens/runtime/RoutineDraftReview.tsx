@@ -30,7 +30,7 @@ const ExerciseEditor=({item,catalog,onChange,onPrivate}:{item:DraftExercise;cata
   </View>;
 };
 
-export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChange,scheduleRequest=0}:{draft:RoutineDraft;initial:TrainingSource;catalog:ExerciseDefinition[];onChange:(draft:RoutineDraft)=>void;onSettingsChange:(source:TrainingSource)=>void;scheduleRequest?:number})=>{
+export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChange,scheduleRequest=0,embedded=false}:{draft:RoutineDraft;initial:TrainingSource;catalog:ExerciseDefinition[];onChange:(draft:RoutineDraft)=>void;onSettingsChange:(source:TrainingSource)=>void;scheduleRequest?:number;embedded?:boolean})=>{
   const all=draftCatalog(draft,catalog),{animate}=usePlanMotion();
   const [open,setOpen]=useState<string|null>(null),[newWorkout,setNewWorkout]=useState(false),[pickerFor,setPickerFor]=useState<string|null>(null),[noteOpen,setNoteOpen]=useState(Boolean(draft.limitationNote));
   const defaults=draft.setDefaults??DEFAULT_SET_TARGETS;
@@ -46,12 +46,13 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
   const equipmentSummary=equipment.map(value=>EQUIPMENT_OPTIONS.find(option=>option.value===value)?.label.toLowerCase()??value.replaceAll('_',' ')).join(', ');
   const advancedSummary=[equipmentSummary,draft.limitationNote?.trim()?'note added':'',progression.mode==='manual'?'manual':'auto'].filter(Boolean).join(' · ');
   return <View style={planStyles.root}>
-    <PlanText kind="overline">PLAN</PlanText>
+    {!embedded?<><PlanText kind="overline">PLAN</PlanText>
     <PlanPanel title="Schedule & goal" summary={`${days} days/week · ${minutes} min · ${GOAL_OPTIONS.find(option=>option.value===focus)?.label.toLowerCase()}`} open={open==='schedule'} onToggle={()=>toggle('schedule')}>
       <PlanGroup label="DAYS/WEEK"><PlanOptions segments options={numberOptions([...new Set([3,4,5,6,days])].sort((a,b)=>a-b))} value={days} onChange={days=>onChange({...draft,days:valueOf(days)})}/></PlanGroup>
       <PlanGroup label="SESSION LENGTH"><PlanOptions segments options={[...new Set([45,60,75,90,minutes])].sort((a,b)=>a-b).map(value=>({value,label:`${value}m`}))} value={minutes} onChange={minutes=>onChange({...draft,minutes:valueOf(minutes)})}/></PlanGroup>
       <PlanGroup label="GOAL"><PlanOptions options={GOAL_OPTIONS} value={focus} onChange={focus=>onChange({...draft,focus,goal:valueOf(focus==='strength'?'strength':'hypertrophy')})}/></PlanGroup>
     </PlanPanel>
+    </>:null}
     <PlanPanel title="Set defaults" summary={`${defaults.sets} sets · ${defaults.minReps}–${defaults.maxReps} reps · ${defaults.targetRir} rir`} open={open==='defaults'} onToggle={()=>toggle('defaults')}>
       <SetTargetControls value={defaults} onChange={setDefaults=>onChange({...draft,setDefaults})}/>
     </PlanPanel>
@@ -75,7 +76,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
       {index>0?<PlanButton label="Move workout up" variant="ghost" onPress={()=>onChange({...draft,workouts:move(draft.workouts,index)})} />:null}
       <PlanButton label="Remove workout" variant="ghost" onPress={()=>onChange({...draft,workouts:draft.workouts.filter(w=>w.id!==workout.id)})} />
     </PlanPanel>)}
-    <PlanButton label="Add another workout" variant="dashed" disabled={draft.workouts.length>=14} onPress={()=>setNewWorkout(true)}/>
+    <PlanButton label="Add workout" variant="dashed" disabled={draft.workouts.length>=14} onPress={()=>setNewWorkout(true)}/>
     {newWorkout?<RoutineWorkoutSheet catalog={all} defaults={defaults} position={draft.workouts.length} onCancel={()=>setNewWorkout(false)} onAdd={workout=>{onChange({...draft,workouts:[...draft.workouts,workout]});setNewWorkout(false);setOpen(null);}}/>:null}
   </View>;
 };

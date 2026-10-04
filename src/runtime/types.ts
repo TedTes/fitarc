@@ -65,6 +65,8 @@ export type RoutineDefinition = {
 };
 
 export type TrainingSource = {
+  /** Autosaved editor input, including incomplete work; separate from the applied routine. */
+  routineEditor?: import('../routineSetup/editor').RoutineEditorSnapshot;
   id: string;
   userId: string;
   version: number;

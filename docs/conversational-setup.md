@@ -6,7 +6,7 @@ Workout setup is optional. After profile setup, the user enters Today, including
 
 New workout opens Start workout with Routine / Previous / Empty segments and a preview. A dated workout takes priority; undated routines use their next workout in sequence. If today has no scheduled workout, the default is the most recent performed workout, then Empty. Switching sources or dismissing never saves anything. The single Start action prepares the selected workout; Empty creates a blank logger with Add exercise. The clock still starts on the first logged set. Routine and previous previews retain the exercises' muscle images, and the footer stays visible while long previews scroll.
 
-Profile → Training preferences opens Your routine: description and microphone input, compact split/days/time controls, optional starter chips, and Build manually / Generate routine actions. Existing routine text is prefilled. Both actions lead to Review routine; nothing is saved until Save changes. Review has one open Plan accordion at a time (Schedule & goal, Set defaults, Advanced) and expandable workout rows. Add another workout opens a separate local draft with a name, target muscles, and a searchable exercise picker. Cancel discards it; Add to routine confirms it into the still-unsaved routine draft.
+Profile → Training preferences is a standard account row. It opens one Your routine editor: text/voice, split/days/time controls, optional starter chips, set defaults, advanced settings, and editable workout rows. Generate routine, Build manually and Save changes are removed. Edits autosave after a short pause; leaving flushes pending changes. Text is interpreted when the field loses focus, when voice transcription returns, or when closing. Text updates and directly added workouts share one list; matched workouts keep their IDs and manual additions are retained. Add workout opens a staged name/exercise sheet; Add to routine adds it to the list and autosaves it. Cancelling that new-workout sheet discards only that staged addition.
 
 Set defaults seed new exercises without rewriting existing prescriptions. Focus, defaults, target muscles and the limitations note persist in the existing routine JSON. Strength uses the existing strength engine; the other focus labels use the existing hypertrophy engine. A free-text limitations note is stored context, not an interpreted contraindication. Existing structured limitations and excluded exercises are preserved. No new SQL migration is required.
 
@@ -14,7 +14,7 @@ Finish saves the session and opens a read-only Workout complete sheet over Today
 
 Orange marks selection/readiness; green marks completion and validity. Shared tokens, selectors, rows, buttons and reduced-motion-aware transitions are in PlanKit and useLayoutMotion. Profile has compact body measurements, training settings, and a read-only Workout log of finished sessions.
 
-Configured hosted voice retains recording controls; local-mode voice reports missing configuration when tapped. Neither transcription nor drafting creates completed sets. Unsaved draft state lasts only while the setup screen is mounted.
+Configured hosted voice retains recording controls; local-mode voice reports missing configuration when tapped. Neither transcription nor drafting creates completed sets. The editor snapshot (raw text, draft, and settings) persists with training preferences through the existing device/cloud outbox. Incomplete inputs do not replace a valid routine. Edits during an active workout remain a draft and are applied when the editor is open again without an active session. Saved/Saving/Draft saved/device/failure status reflects persistence; close is not cancellation. Template chips seed an empty workout list; existing workout lists are retained.
 
 ## Earlier implementation history (superseded by the current flow above)
 
@@ -40,7 +40,7 @@ Configured hosted voice retains recording controls; local-mode voice reports mis
 
 Missing targets are disclosed as proposed defaults (3 sets, 8–12 reps, 2 reps left). Missing weights remain unset. Availability and goal fall back to the current source values shown in review. Guided targets are marked as suggestions. Combined dumbbell weights are converted to the runtime's per-dumbbell kilograms after explicit confirmation of unit and basis.
 
-Draft text lives only in the mounted setup screen. Back navigation and failed requests preserve it; cancelling setup, signing out or restarting the app discards unsaved drafts. Confirmed routines use the existing offline-capable persistence and seven-table model. No SQL migration is needed. Routine description/audio is not written to the training database.
+Routine text and incomplete structured drafts autosave in the editor snapshot within training preferences, surviving navigation and restart. Valid routines use the existing offline-capable persistence and seven-table model. No SQL migration is needed. Audio files are not written to the training database; the edited transcript is saved as routine input.
 
 Per-set pyramids, supersets and timed/distance-only exercises remain outside the existing routine model. Unsupported timed/distance clauses are called out for review rather than converted into invented strength prescriptions. This input adapter is not a trainer or exercise-recommendation model.
 

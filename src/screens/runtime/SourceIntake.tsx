@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import type { ExerciseDefinition, TrainingSource } from '../../runtime/types';
-import type { User } from '../../types/domain';
 import { RUNTIME_EXERCISES } from '../../runtime/exerciseCatalog';
-import { draftFromRoutine, draftIssues, emptyDraft, sourceFromDraft, valueOf, type RoutineDraft } from '../../routineSetup/draft';
+import { draftFromRoutine, draftIssues, emptyDraft, sourceFromDraft, valueOf } from '../../routineSetup/draft';
+import { editorSettings, mergeRoutineInput, type RoutineEditorInput } from '../../routineSetup/editor';
 import { interpretLocally } from '../../routineSetup/localInterpretation';
 import { hostedRoutineInputEnabled, interpretRoutine } from '../../services/routineInputService';
 import { defaultRoutine, editableRoutine } from '../../runtime/routine';
@@ -12,108 +13,92 @@ import { applyInputContext, type RoutineInputContext } from '../../routineSetup/
 import { RoutineContextChips } from './RoutineContextChips';
 import { RoutineDescription, type RoutineStarter } from './RoutineDescription';
 import { RoutineDraftReview } from './RoutineDraftReview';
-import { PlanFooter, PlanText, planStyles } from './PlanKit';
 import { RoutineVoiceInput } from './RoutineVoiceInput';
 import { Txt } from './ui';
 import { colors, planTokens as t } from './theme';
-import { Ionicons } from '@expo/vector-icons';
 import { compileBlock } from '../../runtime/blockCompiler';
+import type { SyncStatus } from './useRuntimeController';
 
-type Props={user:User;catalog?:ExerciseDefinition[];firstRun?:boolean;initial:TrainingSource;blockVersion:number;sessionActive?:boolean;onSubmit:(source:TrainingSource)=>boolean|void;onCancel:()=>void};
-type Page='describe'|'review';
-export const SourceIntake=({user,initial,sessionActive,onSubmit,onCancel,firstRun=false,catalog=RUNTIME_EXERCISES}:Props)=>{
+type Props={catalog?:ExerciseDefinition[];initial:TrainingSource;sessionActive?:boolean;sync:SyncStatus;onSave:(editor:RoutineEditorInput)=>string|undefined;onClose:()=>void};
+export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RUNTIME_EXERCISES}:Props)=>{
   const insets=useSafeAreaInsets();
-  const reviewScroll=useRef<ScrollView>(null);
-  const [scheduleRequest,setScheduleRequest]=useState(0);
-  const [inputContext,setInputContext]=useState<RoutineInputContext>({split:initial.routine?.preferredSplit??(initial.routine?.split!=='custom'?initial.routine?.split:undefined)});
-  const [goalStarter,setGoalStarter]=useState<'muscle'|'fat_loss'|null>(null);
-  const existing=initial.routine?.split==='custom'&&initial.routine.workouts.length?initial.routine:null;
-  const [page,setPage]=useState<Page>('describe');
-  const [text,setText]=useState(()=>existing?existing.workouts.map(workout=>`${workout.name}: ${workout.exercises.map(item=>`${catalog.find(e=>e.id===item.exerciseId)?.name??item.exerciseId} ${item.sets} x ${item.minReps}–${item.maxReps}${item.startingLoadKg===undefined?'':` at ${item.startingLoadKg} kg`} RIR ${item.targetRir}`).join(', ')}`).join('\n') : ''),[draft,setDraft]=useState<RoutineDraft|null>(()=>!firstRun&&existing?draftFromRoutine(existing,initial,catalog):null);
-  const [settings,setSettings]=useState(initial),[busy,setBusy]=useState(false),[error,setError]=useState(''),[voiceBusy,setVoiceBusy]=useState(false);
-  const originalText=useRef(text);
-  const request=useRef<AbortController|null>(null);
-  useEffect(()=>()=>request.current?.abort(),[]);
-  const navigate=(next:Page)=>{request.current?.abort();request.current=null;setBusy(false);setError('');setPage(next);};
-  const adopt=(next:RoutineDraft)=>{
-    Keyboard.dismiss();
-    // Keep definitions for the user's existing private exercises available on save.
-    next={...next,...(goalStarter?{focus:goalStarter==='muscle'?'build_muscle' as const:'lose_fat' as const,goal:valueOf('hypertrophy' as const)}:{}),notes:[...new Set([...next.notes,...(goalStarter==='fat_loss'?['Focus: fat loss.']:[])])],customExercises:[...new Map([...(initial.routine?.customExercises??[]),...next.customExercises].map(e=>[e.id,e])).values()]};
-    setDraft(next);setError('');setPage('review');
+  const [editor,setEditor]=useState<RoutineEditorInput>(()=>{
+    const saved=initial.routineEditor;
+    if(saved?.version===1&&saved.baseVersion===initial.version)return saved;
+    const routine=initial.routine;
+    return {settings:editorSettings(initial),text:'',interpretedText:'',draft:routine?.split==='custom'&&routine.workouts.length?draftFromRoutine(routine,initial,catalog):emptyDraft()};
+  });
+  const latest=useRef(editor),saveCallback=useRef(onSave),lastSaved=useRef(JSON.stringify(editor)),dirty=useRef(false),request=useRef<AbortController|null>(null),mounted=useRef(true);
+  saveCallback.current=onSave;
+  const [busy,setBusy]=useState(false),[voiceBusy,setVoiceBusy]=useState(false),[error,setError]=useState(''),[pending,setPending]=useState(false);
+  const flush=(value=latest.current)=>{
+    if(!dirty.current)return;
+    if(JSON.stringify(value)===lastSaved.current){dirty.current=false;if(mounted.current)setPending(false);return;}
+    const failure=saveCallback.current(value);
+    if(failure){if(mounted.current)setError(failure);return;}
+    dirty.current=false;lastSaved.current=JSON.stringify(value);if(mounted.current)setPending(false);
   };
+  const update=(next:RoutineEditorInput)=>{
+    request.current?.abort();request.current=null;
+    latest.current=next;dirty.current=true;setEditor(next);setPending(true);setError('');setBusy(false);
+  };
+  useEffect(()=>{const timer=setTimeout(()=>flush(),450);return()=>clearTimeout(timer);},[editor]);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;request.current?.abort();flush();};},[]);
+  useEffect(()=>{
+    if(!sessionActive&&initial.routineEditor){dirty.current=true;lastSaved.current='';flush();}
+  },[sessionActive]);
+  const context:RoutineInputContext={split:editor.draft.preferredSplit,days:(editor.draft.days.value??editor.settings.daysPerWeek) as TrainingSource['daysPerWeek'],minutes:editor.draft.minutes.value??editor.settings.sessionMinutes};
   const interpret=async(local=false)=>{
+    const input=latest.current;
+    if(input.text===input.interpretedText)return;
+    if(!input.text.trim()){update({...input,interpretedText:input.text});flush();return;}
     request.current?.abort();const controller=new AbortController();request.current=controller;setBusy(true);setError('');
     const timeout=setTimeout(()=>controller.abort(),60000);
-    try{const next=local?interpretLocally(text,catalog):await interpretRoutine(text,catalog,controller.signal);if(!controller.signal.aborted&&request.current===controller){const contextual=applyInputContext(next,inputContext);adopt(contextual.workouts.length?contextual:generateDraft(contextual));}}
-    catch(e){if(request.current===controller)setError(controller.signal.aborted?'This is taking too long. Your text is preserved; try again.':e instanceof Error?e.message:'Could not prepare a draft. Your text is preserved.');}
-    finally{clearTimeout(timeout);if(request.current===controller){setBusy(false);request.current=null;}}
-  };
-  const save=()=>{
-    if(!draft||sessionActive)return;
     try{
-      const source=sourceFromDraft(draft,{...settings,userId:user.id},catalog);
-      if(onSubmit(source)===false)setError('Could not apply every workout. Check equipment, limitations and excluded exercises in Advanced settings.');
-      else setError('');
-    }catch(e){setError(e instanceof Error?e.message:'Check your routine before saving.');}
+      const all=[...new Map([...catalog,...input.draft.customExercises].map(item=>[item.id,item])).values()];
+      const parsed=local?interpretLocally(input.text,all):await interpretRoutine(input.text,all,controller.signal);
+      if(!mounted.current||controller.signal.aborted||request.current!==controller||latest.current!==input)return;
+      const next={...input,interpretedText:input.text,draft:mergeRoutineInput(input.draft,applyInputContext(parsed,input.context??{}))};
+      update(next);flush(next);
+    }catch(problem){if(mounted.current&&request.current===controller)setError(controller.signal.aborted?'Could not update workouts. Your input is saved.':problem instanceof Error?problem.message:'Could not read your routine.');}
+    finally{clearTimeout(timeout);if(mounted.current&&request.current===controller){request.current=null;setBusy(false);}}
   };
-  const generateDraft=(parsed?:RoutineDraft):RoutineDraft=>{
-    const selected=inputContext.split??parsed?.preferredSplit??settings.routine?.preferredSplit??settings.routine?.split??'auto';
-    const split=selected==='custom'?'auto':selected;
-    const proposed:TrainingSource={...settings,goal:parsed?.goal.value??settings.goal,
-      daysPerWeek:inputContext.days??(parsed?.days.value as TrainingSource['daysPerWeek']|undefined)??settings.daysPerWeek,
-      sessionMinutes:inputContext.minutes??parsed?.minutes.value??settings.sessionMinutes,equipment:parsed?.equipment??settings.equipment,
-      routine:{...defaultRoutine(),progression:settings.routine?.progression??defaultRoutine().progression,split,preferredSplit:split}};
-    const plan=compileBlock(proposed,undefined,undefined,catalog);
-    if(!plan.slots.length||plan.slots.some(slot=>!slot.plannedExercises.length))throw Error('No routine fits these constraints. Adjust your preferences or build manually.');
-    const generated=draftFromRoutine(editableRoutine(plan),proposed,catalog,'guided');
-    return {...generated,originalText:text,notes:[...(parsed?.notes??[]),...(goalStarter==='fat_loss'?['Focus: fat loss.']:[])]};
-  };
-  const generate=()=>{
-    if(existing&&text===originalText.current&&draft?.method==='saved'){adopt(applyInputContext(draft,inputContext));return;}
-    if(text.trim()){void interpret();return;}
-    try{adopt(generateDraft());}catch(e){setError(e instanceof Error?e.message:'Could not generate a routine.');}
-  };
+  const close=async()=>{if(voiceBusy)return;await interpret();flush();if(mounted.current)onClose();};
   const selectStarter=(starter:RoutineStarter)=>{
-    setError('');
-    if(starter==='muscle'||starter==='fat_loss'){
-      setGoalStarter(starter);
-      if(starter==='muscle')setSettings(current=>({...current,goal:'hypertrophy'}));
-    }else setInputContext(current=>({...current,split:starter,...(starter==='full_body'?{days:3 as const}:{})}));
+    const input=latest.current;
+    let draft=input.draft;
+    if(starter==='muscle'||starter==='fat_loss')draft={...draft,focus:starter==='muscle'?'build_muscle':'lose_fat',goal:valueOf('hypertrophy')};
+    else{
+      draft=applyInputContext(draft,{split:starter,...(starter==='full_body'?{days:3 as const}:{})});
+      if(!draft.workouts.length){
+        try{
+          const source={...input.settings,daysPerWeek:(draft.days.value??input.settings.daysPerWeek) as TrainingSource['daysPerWeek'],sessionMinutes:draft.minutes.value??input.settings.sessionMinutes,
+            goal:draft.goal.value??input.settings.goal,routine:{...defaultRoutine(),split:starter}};
+          const plan=compileBlock(source,undefined,undefined,catalog);
+          const generated=draftFromRoutine(editableRoutine(plan),source,catalog,'guided');
+          draft={...generated,focus:draft.focus,originalText:input.text,preferredSplit:starter};
+        }catch(problem){setError(problem instanceof Error?problem.message:'Could not add this template');return;}
+      }
+    }
+    update({...input,draft,...(starter==='muscle'||starter==='fat_loss'?{}:{context:{...input.context,split:starter,...(starter==='full_body'?{days:3 as const}:{})}})});
   };
-  const manual=()=>adopt(applyInputContext(draft??emptyDraft(text),inputContext));
-  const selectedStarters:RoutineStarter[]=[...(goalStarter?[goalStarter]:[]),...(inputContext.split&&['full_body','upper_lower','push_pull_legs'].includes(inputContext.split)?[inputContext.split as RoutineStarter]:[])];
-  const issues=draft?draftIssues(draft,catalog):[];
-  const exitAction = <Pressable accessibilityRole="button" accessibilityLabel={firstRun?'Sign out':'Cancel and discard changes'}
-    onPress={()=>{request.current?.abort();onCancel();}} style={({pressed})=>[styles.exitLink,pressed&&styles.pressed]}>
-    <Txt variant="caption" tone="muted">{firstRun?'Sign out':'Cancel'}</Txt>
-  </Pressable>;
-  return <KeyboardAvoidingView style={styles.flex} enabled={firstRun} behavior={Platform.OS==='ios'?'padding':undefined}>
-    {page==='describe'?<RoutineDescription text={text} onChange={value=>{setText(value);setError('');}} busy={busy||voiceBusy}
-      onGenerate={generate} onManual={manual} onStarter={selectStarter} selectedStarters={selectedStarters}
-      onLocalReview={hostedRoutineInputEnabled&&text.trim()?()=>void interpret(true):undefined}
-      error={error} headerAction={exitAction}
-      contextControls={<RoutineContextChips value={inputContext} initial={settings} disabled={busy||voiceBusy} onChange={next=>{setInputContext(next);setError('');}}/>}
-      bottomInset={firstRun?insets.bottom:0}
-      voiceControl={<RoutineVoiceInput disabled={busy} onBusy={setVoiceBusy} onError={setError} onTranscript={transcript=>setText(previous=>previous.trim()?`${previous.trim()}\n${transcript}`:transcript)} />} />:null}
-    {page==='review'&&draft?<View style={styles.flex}>
-      <View style={planStyles.header}>
-        <View style={styles.flex}><PlanText kind="overline">TRAINING PREFERENCES</PlanText><PlanText kind="title">Review routine</PlanText></View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Edit schedule" onPress={()=>{setScheduleRequest(value=>value+1);reviewScroll.current?.scrollTo({y:0,animated:true});}} style={styles.calendar}><Ionicons name="calendar-outline" size={t.icon} color={colors.textMuted}/></Pressable>
-        {exitAction}
-      </View>
-      <ScrollView ref={reviewScroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={planStyles.content}>
-        <RoutineDraftReview draft={draft} initial={settings} catalog={catalog} scheduleRequest={scheduleRequest} onChange={next=>{setDraft(next);setError('');}}
-          onSettingsChange={next=>{setSettings(next);setError('');}}/>
-        {error?<PlanText kind="meta">{error}</PlanText>:null}
-        {sessionActive?<Txt variant="caption" tone="warning">Finish or discard your active workout before updating your routine.</Txt>:null}
-      </ScrollView>
-      <View style={{paddingBottom:firstRun?insets.bottom:0}}><PlanFooter secondary="Edit input" primary="Save changes" disabled={Boolean(sessionActive)||issues.length>0} onSecondary={()=>{setInputContext({split:draft.preferredSplit,days:(draft.days.value??settings.daysPerWeek) as TrainingSource['daysPerWeek'],minutes:draft.minutes.value??settings.sessionMinutes});navigate('describe');}} onPrimary={save}/></View>
-    </View>:null}
-
+  const selectedStarters:RoutineStarter[]=[...(editor.draft.focus==='build_muscle'?['muscle' as const]:editor.draft.focus==='lose_fat'?['fat_loss' as const]:[]),...(['full_body','upper_lower','push_pull_legs'].includes(editor.draft.preferredSplit??'')?[editor.draft.preferredSplit as RoutineStarter]:[])];
+  let issue=editor.draft.workouts.length?draftIssues(editor.draft,catalog)[0]:undefined;
+  if(!issue&&editor.draft.workouts.length){try{sourceFromDraft(editor.draft,editor.settings,catalog);}catch(problem){issue=problem instanceof Error?problem.message:'Check your routine';}}
+  const status=busy?'Updating…':pending||sync==='saving'?'Saving…':sync==='failed'?'Not saved':sync==='conflict'?'Sync conflict':sync==='device'?'Saved on device':sessionActive||issue||editor.text!==editor.interpretedText?'Draft saved':'Saved';
+  return <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS==='ios'?'padding':undefined}>
+    <RoutineDescription text={editor.text} onChange={text=>update({...latest.current,text})} onBlur={()=>void interpret()} busy={voiceBusy}
+      onStarter={selectStarter} selectedStarters={selectedStarters} error={error||issue}
+      onLocalReview={hostedRoutineInputEnabled&&error?()=>void interpret(true):undefined}
+      status={<Txt variant="mono" tone="muted" style={styles.status} accessibilityLiveRegion="polite">{status}</Txt>}
+      headerAction={<Pressable accessibilityRole="button" accessibilityLabel="Close routine" onPress={()=>void close()} disabled={voiceBusy} style={styles.close}><Ionicons name="close" size={22} color={colors.textMuted}/></Pressable>}
+      contextControls={<RoutineContextChips value={context} initial={editor.settings} disabled={voiceBusy} onChange={next=>{update({...latest.current,context:next,draft:applyInputContext(latest.current.draft,next)});void interpret();}}/>}
+      bottomInset={insets.bottom}
+      voiceControl={<RoutineVoiceInput disabled={busy} onBusy={setVoiceBusy} onError={setError} onTranscript={transcript=>{const input=latest.current;update({...input,text:input.text.trim()?`${input.text.trim()}\n${transcript}`:transcript});void interpret();}}/>}>
+      <RoutineDraftReview embedded draft={editor.draft} initial={editor.settings} catalog={catalog}
+        onChange={draft=>update({...latest.current,draft})} onSettingsChange={settings=>update({...latest.current,settings:editorSettings(settings)})}/>
+      {sessionActive?<Txt variant="caption" tone="muted">Finish your workout to apply changes.</Txt>:null}
+    </RoutineDescription>
   </KeyboardAvoidingView>;
 };
-const styles=StyleSheet.create({
-  flex:{flex:1},calendar:{width:t.touch,height:t.touch,alignItems:'center',justifyContent:'center',borderWidth:t.border,borderColor:colors.border,borderRadius:t.radius.segment},
-  exitLink:{minHeight:t.touch,paddingHorizontal:t.pad.small,justifyContent:'center'},
-  pressed:{opacity:t.pressed},
-});
+const styles=StyleSheet.create({flex:{flex:1},status:{fontSize:10},close:{width:t.touch,height:t.touch,alignItems:'center',justifyContent:'center'}});
