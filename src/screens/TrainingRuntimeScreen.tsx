@@ -444,8 +444,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
         </Animated.View>
       </Animated.View>
       {quickWorkoutOpen?<NewWorkoutSheet state={state} defaults={defaultSource} apply={apply}
-        onClose={()=>setQuickWorkoutOpen(false)} onStarted={()=>{setQuickWorkoutOpen(false);go('solver');}}
-        onAddRoutine={()=>{setQuickWorkoutOpen(false);setEditingSource(true);go('account');}}/>:null}
+        onClose={()=>setQuickWorkoutOpen(false)} onStarted={()=>{setQuickWorkoutOpen(false);go('solver');}}/>:null}
     </KeyboardAvoidingView>
     </ChromeContext.Provider>
   );

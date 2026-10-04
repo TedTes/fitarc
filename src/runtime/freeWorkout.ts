@@ -1,8 +1,10 @@
 import { addRuntimeExercise, commitRuntimeSession, compileTrainingBlock, solveTrainingSession } from './runtimeService';
-import { defaultRoutine, editableRoutine } from './routine';
+import { defaultRoutine, editableRoutine, routineCatalog } from './routine';
 import { createRuntimeId } from './id';
 import { localDate, planWeek } from './planDates';
-import type { RuntimeState, TrainingSource } from './types';
+import { RUNTIME_EXERCISES } from './exerciseCatalog';
+import { MUSCLES, phasesFor, RULE_VERSION, weeklyTargetsFor } from './trainingPolicy';
+import type { Muscle, RuntimeState, TrainingSource } from './types';
 
 /** Start only on explicit acceptance. Store the snapshot needed by the logger, without a recurring plan. */
 export const startUnplannedWorkout = (state: RuntimeState, defaults: TrainingSource, exerciseId: string, date = localDate()): RuntimeState => {
@@ -25,15 +27,26 @@ export const startAdditionalWorkout = (
   name = 'Workout', date = localDate(),
 ): RuntimeState => {
   if (state.activeSession) throw Error('Finish your active workout first.');
-  if (!exercises.length) throw Error('Choose at least one exercise.');
   if (new Set(exercises.map(item => item.exerciseId)).size !== exercises.length) throw Error('Choose each exercise once.');
   let ready = state;
   if (!ready.block || !ready.source) {
-    const source: TrainingSource = { ...defaults,
+    const source: TrainingSource = { ...(state.source ?? defaults),
       routine: { ...defaultRoutine(), split: 'custom', workouts: [{id:createRuntimeId(),name,exercises}] },
     };
-    ready = compileTrainingBlock(ready,source);
-    ready = {...ready,block:{...ready.block!,kind:'workout'}};
+    if (exercises.length) {
+      ready = compileTrainingBlock(ready,source);
+      ready = {...ready,block:{...ready.block!,kind:'workout'}};
+    } else {
+      // A blank logger needs a persistence snapshot, not an invented recurring routine.
+      source.routine = { ...defaultRoutine(), customExercises: (state.source ?? defaults).routine?.customExercises };
+      const id=createRuntimeId();
+      ready={...ready,source,block:{id,groupId:id,kind:'workout',userId:source.userId,version:1,
+        sourceId:source.id,sourceVersion:source.version,preferences:source,ruleVersion:RULE_VERSION,
+        catalog:routineCatalog(source,state.catalog??RUNTIME_EXERCISES),goal:source.goal,
+        startedOn:date,durationWeeks:6,currentWeek:1,scheduling:'sequence',phases:phasesFor(source.goal),slots:[],
+        weeklySetBudget:Object.fromEntries(MUSCLES.map(muscle=>[muscle,0])) as Record<Muscle,number>,
+        weeklyTargets:weeklyTargetsFor(source.goal,source.experience),createdAt:new Date().toISOString()}};
+    }
   }
   const block={...ready.block!,currentWeek:planWeek(ready.block!,date)},source=ready.source!;
   ready={...ready,block};

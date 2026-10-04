@@ -197,7 +197,10 @@ assert.notEqual(repeated.activeSession.id,finishedExtra.id);
 assert(repeated.activeSession.exercises.every(e=>e.sets.every(s=>s.status==='pending'&&!s.result)));
 assert.deepEqual(repeated.setResults,additional.setResults);
 assert.equal(fromStoredTraining(toStoredTraining(repeated)).activeSession.name,'Extra push');
-assert.throws(()=>startAdditionalWorkout(plannedState,source,[]));
+const blankWithPlan=startAdditionalWorkout(plannedState,source,[]);
+assert.equal(blankWithPlan.activeSession.exercises.length,0);
+assert.deepEqual(blankWithPlan.source,plannedState.source);
+assert.deepEqual(blankWithPlan.block,plannedState.block);
 assert.throws(()=>startAdditionalWorkout(plannedState,source,[{exerciseId:'missing',sets:3,minReps:8,maxReps:12,targetRir:2}]));
 assert.throws(()=>startAdditionalWorkout({...plannedState,source:{...customSource,excludedExerciseIds:['bench_press']}},source,repeatItems));
 const freshAdditional=startAdditionalWorkout(emptyRuntimeState(),source,repeatItems);
@@ -216,4 +219,44 @@ assert.equal(savedFirst.source.routine.workouts.length,1);
 assert.equal(fromStoredTraining(toStoredTraining(savedFirst)).sessions.length,1);
 console.log('Additional/repeated workouts preserve saved routines, sequence, history and fresh pending set IDs; constraints and restart verified.');
 
+}
+
+{
+const {startAdditionalWorkout}=require('../src/runtime/freeWorkout.ts');
+const {workoutStartChoices}=require('../src/runtime/workoutStart.ts');
+const {addRuntimeExercise,discardRuntimeSession}=require('../src/runtime/runtimeService.ts');
+const {computeWeeklyStatus}=require('../src/runtime/status.ts');
+const empty=emptyRuntimeState();
+assert.equal(workoutStartChoices(empty).source,'empty');
+let blank=startAdditionalWorkout(empty,source,[]);
+assert.equal(blank.activeSession.exercises.length,0);
+assert.equal(blank.activeSession.startedAt,undefined);
+assert.equal(blank.setResults.length,0);
+assert.equal(blank.block.kind,'workout');
+assert.equal(blank.block.slots.length,0);
+assert.equal(blank.source.routine.workouts.length,0);
+blank=fromStoredTraining(toStoredTraining(blank));
+assert.equal(blank.activeSession.exercises.length,0);
+computeWeeklyStatus(blank.block,blank.sessions,blank.setResults);
+assert.equal(discardRuntimeSession(blank).activeSession,null);
+blank=addRuntimeExercise(blank,{exerciseId:'bench_press',sets:3,minReps:8,maxReps:12,targetRir:2});
+assert.equal(blank.activeSession.exercises.length,1);
+assert.equal(blank.activeSession.startedAt,undefined);
+blank=recordRuntimeSet(blank,resultFor(blank,10,40));
+assert(blank.activeSession.startedAt);
+blank=commitRuntimeSession(skipRemainingRuntimeSets(blank));
+assert.equal(workoutStartChoices(blank).source,'previous');
+assert.equal(workoutStartChoices(blank).previous[0].id,blank.sessions[0].id);
+const date='2026-09-21';
+let planned={...emptyRuntimeState(),source:customSource,block:{...custom,startedOn:date}};
+assert.equal(workoutStartChoices(planned,date).source,'routine');
+assert.equal(workoutStartChoices(planned,date).scheduled.id,custom.slots[0].id);
+const forecast=previewRemainingWeek(planned,[{...ctx,date:'2026-09-23'}],date);
+planned={...planned,block:forecast.plan};
+assert.equal(workoutStartChoices(planned,date).source,'empty');
+assert.equal(workoutStartChoices(planned,'2026-09-23').source,'routine');
+planned={...planned,sessions:blank.sessions};
+assert.equal(workoutStartChoices(planned,date).source,'previous');
+const before=JSON.stringify(planned);workoutStartChoices(planned,date);assert.equal(JSON.stringify(planned),before);
+console.log('Start defaults, no-write selection, true empty workouts, persistence, first-set timing and add/log/finish passed.');
 }

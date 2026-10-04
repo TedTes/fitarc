@@ -14,6 +14,7 @@ import { describeRuntimeError, formatKg, muscleList, setsWord } from './copy';
 import { ExerciseDetailsSheet, ExerciseMuscleDetails, ExerciseTargetPreview } from './ExerciseMuscles';
 import { useLayoutMotion } from './useLayoutMotion';
 import { ExerciseSectionHeader } from './ExerciseCard';
+import { EmptyWorkoutLogger } from './EmptyWorkoutLogger';
 import { sessionProgress } from './selectors';
 import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
@@ -83,6 +84,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   useEffect(()=>{const timer=setInterval(()=>setClockNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
   useEffect(()=>{if(rest&&clockNow>=rest.until)setRest(null);},[clockNow,rest]);
   const progress=sessionProgress(state);
+  if(session&&!session.exercises.length)return <EmptyWorkoutLogger state={state} apply={apply}/>;
   if(!session||!entry||!set||!progress)return null;
   const exercise=entry.exercise;
   const lastOfExercise=[...results].reverse().find(result=>result.exerciseId===exercise.id);
