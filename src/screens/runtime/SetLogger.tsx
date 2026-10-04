@@ -1,18 +1,20 @@
 import { exerciseAlternatives } from '../../runtime/recommendations';
 import { suggestWorkoutLoad } from '../../runtime/progression';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  addRuntimeExercise, discardRuntimeSession, getSwapCandidates, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise,
+  addRuntimeExercise, commitRuntimeSession, discardRuntimeSession, getSwapCandidates, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise,
   restSecondsFor, substituteRuntimeExercise, undoLastRuntimeSet,
 } from '../../runtime';
 import type { ExerciseDefinition, RuntimeState, SessionPrescription } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
 import { Button, Divider, IconButton, Sheet, Txt } from './ui';
-import { describeRuntimeError, formatKg, muscleList, setsWord, slotPlain } from './copy';
-import { ExerciseMuscleDetails, ExerciseTargetPreview } from './ExerciseMuscles';
-import { nextPendingSet, pendingSetForExercise, sessionProgress } from './selectors';
+import { describeRuntimeError, formatKg, muscleList, setsWord } from './copy';
+import { ExerciseDetailsSheet, ExerciseMuscleDetails, ExerciseTargetPreview } from './ExerciseMuscles';
+import { useLayoutMotion } from './useLayoutMotion';
+import { ExerciseSectionHeader } from './ExerciseCard';
+import { sessionProgress } from './selectors';
 import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
 
@@ -31,33 +33,7 @@ export type WorkoutDockState = {
   onReset: () => void;
 };
 
-type RestState = {
-  until: number;
-  durationSeconds: number;
-  nextSetId: string;
-  fromExerciseId: string;
-  nextExerciseId: string;
-};
-
-const DockBridge = ({ phase, seconds, primaryDisabled, onPrimary, onReset, onChange }: WorkoutDockState & {
-  onChange: (dock: WorkoutDockState | null) => void;
-}) => {
-  const actions = useRef({ onPrimary, onReset });
-  actions.current = { onPrimary, onReset };
-
-  useEffect(() => {
-    onChange({
-      phase,
-      seconds,
-      primaryDisabled,
-      onPrimary: () => actions.current.onPrimary(),
-      onReset: () => actions.current.onReset(),
-    });
-  }, [onChange, phase, primaryDisabled, seconds]);
-
-  useEffect(() => () => onChange(null), [onChange]);
-  return null;
-};
+type RestState = { until:number; durationSeconds:number };
 
 /** What the engine uses as a replacement's first load. Mirrors substituteRuntimeExercise. */
 const startingLoad = (state: RuntimeState, exercise: ExerciseDefinition, target: SessionPrescription['exercises'][number]) => {
@@ -66,108 +42,66 @@ const startingLoad = (state: RuntimeState, exercise: ExerciseDefinition, target:
   return state.workingSets[exercise.id]?.loadKg ?? state.source?.seedWorkingSets.find(item=>item.exerciseId===exercise.id)?.loadKg ?? (exercise.compound?20:10);
 };
 
-const SolverHeader = ({ state, session, now }: { state: RuntimeState; session: SessionPrescription; now: number }) => {
-  const slot = state.block?.slots.find((candidate) => candidate.id === session.slotId);
-  const startedAt = new Date(session.createdAt).getTime();
-  const elapsedMinutes = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 60000)) : 0;
-  const minutesLeft = Math.max(0, session.context.minutesAvailable - elapsedMinutes);
-  const recovery = session.context.recovery === 'yes' ? 'recovered' : session.context.recovery === 'meh' ? 'tired' : 'very tired';
-  const target = slot?.targetMuscles[0] ?? session.exercises[0]?.exercise.primaryMuscles[0] ?? 'training';
-  return (
-    <View style={styles.solverHead}>
-      <View style={styles.solverHeadRow}>
-        <Txt variant="label" style={styles.solverBrand}>Today<Txt variant="label" tone="accent">.</Txt></Txt>
-        <Txt variant="mono" tone="secondary" numberOfLines={1}>{slotPlain(slot)} · {minutesLeft}m left · {recovery}</Txt>
-      </View>
-      <Txt variant="code" tone="accent">Focus: {target} · {state.block?.goal === 'strength' ? 'strength' : 'building muscle'}</Txt>
-    </View>
-  );
-};
-
 /** set.log: one prescription, one signal, the runtime's reply. Everything else is behind the menu. */
 export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
-  const stackRowHeight = Math.round(Math.max(54, Math.min(76, windowHeight * 0.085)));
-  const visibleStackRows = windowHeight < 620 ? 1 : windowHeight < 740 ? 2 : 3;
-  const frameLabelStyle = [styles.frameLabel, windowWidth < 360 && styles.frameLabelCompact];
-  const [addQuery, setAddQuery] = useState('');
-  const [reps, setReps] = useState('');
-  const [load, setLoad] = useState('');
-  const [rir, setRir] = useState<number | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [sheet, setSheet] = useState<null | 'menu' | 'swap' | 'details' | 'swapDetails' | 'add'>(null);
-  const [swapPreview, setSwapPreview] = useState<ExerciseDefinition | null>(null);
-  const [rest, setRest] = useState<RestState | null>(null);
-  const [clockNow, setClockNow] = useState(() => Date.now());
-  const [setStartedAt, setSetStartedAt] = useState<number | null>(null);
-  const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
-  const [ordering, setOrdering] = useState(false);
-  const stackScroll = useRef<ScrollView>(null);
-  const frameScroll = useRef<ScrollView>(null);
-  const defaultPending = nextPendingSet(state);
-  const selectedPending = selectedExerciseId ? pendingSetForExercise(state, selectedExerciseId) : null;
-  const pending = selectedPending ?? defaultPending;
-  const progress = sessionProgress(state);
-  const setId = pending?.set.id;
-  const maxReps = pending?.set.maxReps;
-  const targetLoad = pending?.set.loadKg;
-  const needsBaseline = Boolean(pending?.entry.needsBaseline && !pending.entry.sets.some(set=>set.status==='completed'));
-
-  useEffect(() => {
-    if (maxReps !== undefined) {
-      setLoad(needsBaseline ? '' : `${targetLoad ?? 0}`); setReps(`${maxReps}`); setRir(3); setSubmitting(false); setSetStartedAt(null);
-      frameScroll.current?.scrollTo({ y: 0, animated: true });
-    }
-  }, [setId, maxReps, targetLoad, needsBaseline]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setClockNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!rest && !selectedPending && defaultPending) setSelectedExerciseId(defaultPending.entry.exercise.id);
-  }, [defaultPending?.set.id, selectedPending?.set.id, selectedExerciseId, rest]);
-
-  useEffect(() => {
-    if (rest && setId && rest.nextSetId !== setId) setRest(null);
-  }, [rest, setId]);
-
-  const session = state.activeSession;
-  const visibleExerciseId = rest?.fromExerciseId ?? pending?.entry.exercise.id;
-  const selectedIndex = session?.exercises.findIndex((item) => item.exercise.id === visibleExerciseId) ?? -1;
-
-  useEffect(() => {
-    if (selectedIndex < 0) return;
-    const frame = requestAnimationFrame(() => {
-      stackScroll.current?.scrollTo({ y: selectedIndex * stackRowHeight, animated: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [selectedIndex, stackRowHeight]);
-
-  useEffect(() => {
-    if (rest && clockNow >= rest.until) {
-      setSelectedExerciseId(rest.nextExerciseId);
-      setRest(null);
-    }
-  }, [clockNow, rest]);
-
-  const results = useMemo(() => session ? state.setResults.filter((result) => result.prescriptionId === session.id) : [], [state.setResults, session]);
-  if (!session || !pending || !progress) return null;
-
-  const { entry, set, exerciseIndex, exerciseCount } = pending;
-  const exercise = entry.exercise;
-  const lastResult = results[results.length - 1];
-  const lastOfExercise = [...results].reverse().find((result) => result.exerciseId === exercise.id);
-  const canUndo = Boolean(lastOfExercise && lastResult?.setId === lastOfExercise.setId);
-  const remainingHere = entry.sets.filter((item) => item.status === 'pending').length;
-  const repsValue = reps.trim() === '' ? null : Number.parseInt(reps, 10);
-  const loadValue = Number(load);
-  const loadValid = load.trim() !== '' && Number.isFinite(loadValue) && loadValue >= 0;
-  const repsValid = repsValue !== null && Number.isFinite(repsValue) && repsValue >= 0 && repsValue <= 99;
-
-  // What to beat: the most recent result for this lift from an earlier session, the same reference the diff uses.
-  const beat = [...state.setResults].reverse().find((item) => item.exerciseId === exercise.id && item.prescriptionId !== session.id);
+  useEffect(() => { onDockChange(null); }, [onDockChange]);
+  const { animate } = useLayoutMotion();
+  const session=state.activeSession;
+  const results=useMemo(()=>session?state.setResults.filter(result=>result.prescriptionId===session.id):[],[state.setResults,session]);
+  const lastResult=results[results.length-1];
+  const [selectedExerciseId,setSelectedExerciseId]=useState<string|null>(()=>lastResult?.exerciseId??null);
+  const [addQuery,setAddQuery]=useState('');
+  const [reps,setReps]=useState('');
+  const [load,setLoad]=useState('');
+  const [rir,setRir]=useState<number|null>(null);
+  const [submitting,setSubmitting]=useState(false);
+  const [sheet,setSheet]=useState<null|'menu'|'swap'|'details'|'swapDetails'|'add'|'order'>(null);
+  const [inspectedExercise,setInspectedExercise]=useState<ExerciseDefinition|null>(null);
+  const [swapPreview,setSwapPreview]=useState<ExerciseDefinition|null>(null);
+  const [clockNow,setClockNow]=useState(Date.now);
+  const [availableHeight,setAvailableHeight]=useState(600);
+  const [rest,setRest]=useState<RestState|null>(()=>{
+    if(!lastResult)return null;
+    const lift=session?.exercises.find(item=>item.exercise.id===lastResult.exerciseId);
+    const duration=restSecondsFor(state.source?.goal??'hypertrophy',lift?.exercise.compound??false);
+    const until=Date.parse(lastResult.completedAt)+duration*1000;
+    return until>Date.now()?{until,durationSeconds:duration}:null;
+  });
+  const drafts=useRef<Record<string,{load:string;reps:string;rir:number|null}>>({});
+  const chosen=session?.exercises.find(item=>item.exercise.id===selectedExerciseId);
+  const entry=chosen??session?.exercises[0];
+  const pendingSet=entry?.sets.find(item=>item.status==='pending');
+  const set=pendingSet??entry?.sets[entry.sets.length-1];
+  const needsBaseline=Boolean(entry?.needsBaseline&&!entry.sets.some(item=>item.status==='completed'));
+  const setId=set?.id;
+  useEffect(()=>{
+    if(!set)return;
+    const saved=drafts.current[set.id];
+    setLoad(saved?.load??(needsBaseline?'':String(set.loadKg)));
+    setReps(saved?.reps??String(set.maxReps));setRir(saved?saved.rir:set.targetRir);setSubmitting(false);
+  },[setId,set?.loadKg,set?.maxReps,set?.targetRir,needsBaseline]);
+  useEffect(()=>{const timer=setInterval(()=>setClockNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
+  useEffect(()=>{if(rest&&clockNow>=rest.until)setRest(null);},[clockNow,rest]);
+  const progress=sessionProgress(state);
+  if(!session||!entry||!set||!progress)return null;
+  const exercise=entry.exercise;
+  const lastOfExercise=[...results].reverse().find(result=>result.exerciseId===exercise.id);
+  const canUndo=Boolean(lastOfExercise&&lastResult?.setId===lastOfExercise.setId);
+  const remainingHere=entry.sets.filter(item=>item.status==='pending').length;
+  const repsValue=reps.trim()===''?null:Number(reps);
+  const loadValue=Number(load);
+  const loadValid=load.trim()!==''&&Number.isFinite(loadValue)&&loadValue>=0;
+  const repsValid=repsValue!==null&&Number.isInteger(repsValue)&&repsValue>=0&&repsValue<=99;
+  const selectExercise=(id:string|null)=>{
+    if(chosen&&pendingSet)drafts.current[set.id]={load,reps,rir};
+    animate();
+    setSelectedExerciseId(id);
+  };
+  const resting=Boolean(rest&&rest.until>clockNow);
+  const secondsLeft=rest?Math.max(0,Math.ceil((rest.until-clockNow)/1000)):0;
+  const skipRest=()=>setRest(null);
+  const beat=[...state.setResults].reverse().find(item=>item.exerciseId===exercise.id&&item.prescriptionId!==session.id);
+  const previousSets=beat?state.setResults.filter(item=>item.exerciseId===exercise.id&&item.prescriptionId===beat.prescriptionId):[];
 
   const candidateResult = () => ({
     prescriptionId: session.id, setId: set.id, exerciseId: exercise.id,
@@ -197,31 +131,21 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       if (!latest) throw new Error('nothing_to_undo');
       return undoLastRuntimeSet(current);
     });
-    report(outcome, () => notify({ tone: 'info', title: 'Last set undone', message: 'Its decision and working weight are rolled back.' }));
+    report(outcome, () => { setRest(null); if(lastResult)setSelectedExerciseId(lastResult.exerciseId); });
   };
 
   const submit = () => {
-    if (submitting || rir === null || !repsValid || !loadValid) return;
+    if (!pendingSet || resting || submitting || rir === null || !repsValid || !loadValid) return;
     setSubmitting(true);
     const result = candidateResult();
     const outcome = apply((current) => recordRuntimeSet(current, result));
     const ok = report(outcome, () => {
       if (!outcome.ok) return;
-      setSetStartedAt(null);
-      const decision = outcome.state.decisions[outcome.state.decisions.length - 1];
-      const next = pendingSetForExercise(outcome.state, exercise.id) ?? nextPendingSet(outcome.state);
-      notify({ tone: 'info', title: next ? `Next: ${next.entry.exercise.name}` : 'Workout ready to finish', message: next ? `${formatKg(next.set.loadKg)} · ${next.set.minReps}–${next.set.maxReps} reps after your rest.` : 'Review your completed work and finish the workout.' });
-      if (next && decision) {
-        const duration = restSecondsFor(outcome.state.source?.goal ?? 'hypertrophy', exercise.compound);
-        setOrdering(false);
-        setRest({
-          until: Date.now() + duration * 1000,
-          durationSeconds: duration,
-          nextSetId: next.set.id,
-          fromExerciseId: exercise.id,
-          nextExerciseId: next.entry.exercise.id,
-        });
-      }
+      delete drafts.current[set.id];
+      const duration=restSecondsFor(outcome.state.source?.goal??'hypertrophy',exercise.compound);
+      setClockNow(Date.now());
+      setRest({until:Date.now()+duration*1000,durationSeconds:duration});
+      setSubmitting(false);
     });
     if (!ok) setSubmitting(false);
   };
@@ -264,16 +188,12 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     }]
   );
 
-  const finishEarly = () => Alert.alert(
-    'Finish now and review?',
-    `Skips the ${setsWord(progress.pending)} still pending and opens the workout summary. Finish the workout to include it in your completed workout history.`,
-    [{ text: 'Keep training', style: 'cancel' }, {
-      text: 'Finish and review', onPress: () => {
-        setSheet(null);
-        report(apply(skipRemainingRuntimeSets), () => notify({ tone: 'info', title: `finished early · ${setsWord(progress.pending)} skipped` }));
-      },
-    }]
-  );
+  const finishEarly = () => {
+    if(!results.length)return;
+    report(apply(current=>commitRuntimeSession(skipRemainingRuntimeSets(current))),()=>{
+      setSheet(null);setRest(null);notify({tone:'success',title:'Workout finished'});
+    });
+  };
 
   const discard = () => Alert.alert(
     'Discard this session?',
@@ -287,243 +207,136 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   );
 
   const candidates = sheet === 'swap' ? getSwapCandidates(state, exercise.id, 4) : [];
-  const closeSheet = () => setSheet(sheet === 'swapDetails' ? 'swap' : sheet === 'swap' ? 'menu' : null);
-  const sheetTitle = sheet === 'swap' ? `Swap ${exercise.name}` : sheet === 'swapDetails' && swapPreview ? swapPreview.name : exercise.name;
-  const priorDose = lastOfExercise ?? beat;
-  const loadChange = priorDose ? Number((set.loadKg - (priorDose.actualLoadKg ?? priorDose.prescribedLoadKg)).toFixed(2)) : 0;
-  const frameRule = priorDose
-    ? `${priorDose.completedReps >= priorDose.prescribedMinReps ? 'last reps hit' : 'last reps missed'} + RIR${priorDose.reportedRir} → ${loadChange > 0 ? `+${formatKg(loadChange)}` : loadChange < 0 ? `−${formatKg(Math.abs(loadChange))}` : 'hold'}`
-    : 'no prior signal → establish baseline';
-
-  const resting = rest?.nextSetId === set.id;
-  const secondsLeft = resting ? Math.max(0, Math.ceil((rest.until - clockNow) / 1000)) : 0;
-  const setSeconds = setStartedAt === null ? 0 : Math.max(0, Math.floor((clockNow - setStartedAt) / 1000));
-  const dockPhase: WorkoutDockState['phase'] = resting ? 'rest' : setStartedAt === null ? 'ready' : 'set';
-  const resetDockTimer = () => {
-    if (resting) {
-      setRest((value) => value ? { ...value, until: Date.now() + value.durationSeconds * 1000 } : null);
-    } else {
-      setSetStartedAt(null);
-    }
-  };
-  const runDockPrimary = () => {
-    if (resting) {
-      setRest((value) => value ? { ...value, until: Date.now() } : null);
-    } else if (setStartedAt === null) {
-      setSetStartedAt(Date.now());
-    } else {
-      submit();
-    }
-  };
-
-  return (
-    <View style={styles.flex}>
-      <DockBridge
-        phase={dockPhase}
-        seconds={resting ? secondsLeft : setSeconds}
-        primaryDisabled={dockPhase === 'set' && (rir === null || !repsValid || !loadValid || submitting)}
-        onPrimary={runDockPrimary}
-        onReset={resetDockTimer}
-        onChange={onDockChange}
-      />
-      <View style={styles.page}>
-        <SolverHeader state={state} session={session} now={clockNow} />
-
-        <View style={styles.workspace}>
-          <View style={styles.runtimeSection}>
-          <View style={styles.sectionHeader}>
-            <Txt variant="label" tone="muted">EXERCISES</Txt>
-            <View style={styles.stackHeaderActions}>
-              <Txt variant="mono" tone="secondary">{exerciseIndex + 1} / {exerciseCount} lifts</Txt>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={ordering ? 'Finish ordering exercises' : 'Change exercise order'}
-                onPress={() => setOrdering((value) => !value)}
-                style={({ pressed }) => [styles.orderToggle, ordering && styles.orderToggleActive, pressed && styles.pressed]}
-              >
-                <Ionicons name={ordering ? 'checkmark' : 'reorder-three'} size={18} color={ordering ? colors.accent : colors.textSecondary} />
-                <Txt variant="label" tone={ordering ? 'accent' : 'secondary'}>{ordering ? 'done' : 'order'}</Txt>
-              </Pressable>
-            </View>
-          </View>
-          <ScrollView
-            ref={stackScroll}
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled
-            style={[styles.stackViewport, { height: Math.min(visibleStackRows, session.exercises.length) * stackRowHeight }]}
-            contentContainerStyle={styles.stackTrack}
-            decelerationRate="fast"
-            snapToInterval={stackRowHeight}
-            keyboardShouldPersistTaps="handled"
-          >
-            {session.exercises.map((stackEntry) => {
-              const pendingSets = stackEntry.sets.filter((candidate) => candidate.status === 'pending');
-              const completedSets = stackEntry.sets.filter((candidate) => candidate.status === 'completed').length;
-              const skippedSets = stackEntry.sets.filter((candidate) => candidate.status === 'skipped').length;
-              const selected = stackEntry.exercise.id === visibleExerciseId;
-              const done = pendingSets.length === 0;
-              const nextSet = pendingSets[0];
-              const stateLabel = done ? (completedSets ? 'done' : 'skip') : selected ? '▶ now' : 'next';
-              const stateTone = done ? (completedSets ? 'success' : 'muted') : selected ? 'accent' : 'secondary';
-              const progressLabel = done
-                ? `${completedSets}/${stackEntry.sets.length}`
-                : `set ${nextSet.setNumber}/${stackEntry.sets.length}`;
-              const stackIndex = session.exercises.indexOf(stackEntry);
-              return (
-                <View key={stackEntry.id} style={[styles.stackRow, { height: stackRowHeight }, selected && styles.stackRowSelected]}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${stateLabel}, ${stackEntry.exercise.name}, ${progressLabel}${skippedSets ? `, ${skippedSets} skipped` : ''}`}
-                    accessibilityState={{ selected, disabled: done || resting }}
-                    disabled={done || resting || ordering}
-                    onPress={() => { setSetStartedAt(null); setSelectedExerciseId(stackEntry.exercise.id); }}
-                    style={({ pressed }) => [styles.stackRowBody, pressed && styles.pressed]}
-                  >
-                    <Txt variant="label" tone={stateTone} style={styles.stackState}>{stateLabel}</Txt>
-                    <Txt variant="caption" tone={done ? 'muted' : 'primary'} style={styles.stackName} numberOfLines={1}>{stackEntry.exercise.name}</Txt>
-                    <Txt variant="mono" tone="muted">{progressLabel}</Txt>
-                  </Pressable>
-                  {ordering ? (
-                    <View style={styles.orderControls}>
-                      <Pressable
-                        accessibilityRole="button" accessibilityLabel={`Move ${stackEntry.exercise.name} earlier`}
-                        disabled={stackIndex === 0} onPress={() => moveExercise(stackEntry.exercise.id, -1)}
-                        style={({ pressed }) => [styles.orderButton, stackIndex === 0 && styles.stepDisabled, pressed && styles.pressed]}
-                      ><Ionicons name="arrow-back" size={18} color={colors.textSecondary} /></Pressable>
-                      <Pressable
-                        accessibilityRole="button" accessibilityLabel={`Move ${stackEntry.exercise.name} later`}
-                        disabled={stackIndex === exerciseCount - 1} onPress={() => moveExercise(stackEntry.exercise.id, 1)}
-                        style={({ pressed }) => [styles.orderButton, stackIndex === exerciseCount - 1 && styles.stepDisabled, pressed && styles.pressed]}
-                      ><Ionicons name="arrow-forward" size={18} color={colors.textSecondary} /></Pressable>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })}
-          </ScrollView>
-          </View>
-
-          <Divider />
-
-          <View style={[styles.runtimeSection, styles.frameSection]}>
-          <View style={styles.sectionHeader}>
-            <Txt variant="label" tone={resting ? 'accent' : 'muted'}>{resting ? 'NEXT SET' : 'CURRENT SET'}</Txt>
-            <View style={styles.frameIdentity}>
-              <Txt variant="mono" tone="secondary" numberOfLines={1}>{exercise.name}</Txt>
-              <IconButton icon="ellipsis-horizontal" label="Menu: swap, skip, pain, finish, discard" onPress={() => setSheet('menu')} />
-            </View>
-          </View>
-
-          <ScrollView
-            ref={frameScroll}
-            style={styles.frameViewport}
-            contentContainerStyle={styles.frameContent}
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-          >
-          <ExerciseTargetPreview exercise={exercise} compact={windowHeight < 740} label={resting ? 'Next lift · muscles' : 'Muscles worked'} onPress={() => setSheet('details')} />
-          {needsBaseline ? <Txt variant="caption" tone="warning">Enter your chosen starting weight. No recorded baseline exists for this exercise. Use 0 for no external load.</Txt> : null}
-          <View style={styles.frameFacts}>
-            <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={frameLabelStyle}>Weight used</Txt>
-              <TextInput style={[styles.inlineRepsInput, { width: 80 }]} value={load} onChangeText={setLoad}
-                inputMode="decimal" keyboardType="decimal-pad" accessibilityLabel="Actual weight in kilograms" selectTextOnFocus />
-              <Txt variant="caption">kg</Txt>
-            </View>
-            <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={frameLabelStyle}>this set</Txt>
-              <Txt variant="code" style={styles.frameValue}>{formatKg(set.loadKg)} × {set.maxReps} @ RIR{set.targetRir}</Txt>
-            </View>
-            <View style={[styles.frameAdjustRow, resting && styles.controlsResting]} pointerEvents={resting ? 'none' : 'auto'}>
-              <Txt variant="label" tone="muted" style={frameLabelStyle}>reps done</Txt>
-              <View style={styles.inlineValue}>
-                <TextInput
-                  style={styles.inlineRepsInput} value={reps} onChangeText={(value) => setReps(value.replace(/[^0-9]/g, '').slice(0, 2))}
-                  inputMode="numeric" keyboardType="number-pad" selectTextOnFocus maxFontSizeMultiplier={1.3}
-                  accessibilityLabel="Reps completed" accessibilityHint={`Prescribed ${set.minReps} to ${set.maxReps}`}
-                />
-                <Txt variant="mono" tone="muted">/ {set.minReps === set.maxReps ? set.maxReps : `${set.minReps}–${set.maxReps}`}</Txt>
-              </View>
-              <View style={styles.inlineAdjustButtons}>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="One fewer rep" disabled={!repsValid || repsValue === 0}
-                  onPress={() => setReps(`${Math.max(0, (repsValue ?? 0) - 1)}`)}
-                  style={({ pressed }) => [styles.inlineAdjustButton, pressed && styles.pressed, (!repsValid || repsValue === 0) && styles.stepDisabled]}
-                ><Ionicons name="remove" size={16} color={colors.text} /></Pressable>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="One more rep" disabled={repsValue !== null && repsValue >= 99}
-                  onPress={() => setReps(`${Math.min(99, (repsValue ?? 0) + 1)}`)}
-                  style={({ pressed }) => [styles.inlineAdjustButton, pressed && styles.pressed]}
-                ><Ionicons name="add" size={16} color={colors.text} /></Pressable>
-              </View>
-            </View>
-            <View style={[styles.frameAdjustRow, resting && styles.controlsResting]} pointerEvents={resting ? 'none' : 'auto'}>
-              <Txt variant="label" tone="muted" style={frameLabelStyle}>RIR</Txt>
-              <View style={styles.inlineValue} accessible accessibilityLabel={`RIR ${rir ?? 3}, target ${set.targetRir}`}>
-                <Txt variant="number" tone="accent">{rir === 4 ? '4+' : rir ?? 3}</Txt>
-                <Txt variant="mono" tone="muted">/ target {set.targetRir}</Txt>
-              </View>
-              <View style={styles.inlineAdjustButtons}>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="Decrease RIR"
-                  disabled={rir === 0}
-                  onPress={() => setRir(rir === null ? Math.max(0, set.targetRir - 1) : Math.max(0, rir - 1))}
-                  style={({ pressed }) => [styles.inlineAdjustButton, rir === 0 && styles.stepDisabled, pressed && styles.pressed]}
-                ><Ionicons name="remove" size={16} color={colors.text} /></Pressable>
-                <Pressable
-                  accessibilityRole="button" accessibilityLabel="Increase RIR"
-                  disabled={rir === 4}
-                  onPress={() => setRir(rir === null ? Math.min(4, set.targetRir + 1) : Math.min(4, rir + 1))}
-                  style={({ pressed }) => [styles.inlineAdjustButton, rir === 4 && styles.stepDisabled, pressed && styles.pressed]}
-                ><Ionicons name="add" size={16} color={colors.text} /></Pressable>
-              </View>
-            </View>
-            <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={frameLabelStyle}>{lastOfExercise ? 'last recorded' : 'last session'}</Txt>
-              <Txt variant="code" tone={priorDose ? 'secondary' : 'muted'} style={styles.frameValue}>
-                {priorDose ? `${formatKg((priorDose.actualLoadKg ?? priorDose.prescribedLoadKg))} × ${priorDose.completedReps} @ RIR${priorDose.reportedRir}` : 'none · establishes baseline'}
-              </Txt>
-            </View>
-            <View style={styles.frameRow}>
-              <Txt variant="label" tone="muted" style={frameLabelStyle}>rule</Txt>
-              <Txt variant="mono" tone="accent" style={styles.frameValue}>{frameRule}</Txt>
-            </View>
-          </View>
-
-          {canUndo ? (
-            <Pressable accessibilityRole="button" accessibilityLabel="Undo last recorded set" onPress={undoSet} style={styles.undoInline}>
-              <Ionicons name="arrow-undo" size={16} color={colors.textMuted} />
-              <Txt variant="mono" tone="muted">undo last recorded set</Txt>
-            </Pressable>
-          ) : null}
-            </ScrollView>
-          </View>
-        </View>
-        {dockPhase === 'ready' ? (
-          <Button label="Start set" icon="play" onPress={runDockPrimary} hint={`Start the timer for ${exercise.name}`} />
-        ) : null}
+  const closeSheet = () => setSheet(sheet === 'swapDetails' ? 'swap' : sheet === 'swap' || sheet === 'order' ? 'menu' : null);
+  const sheetTitle = sheet === 'add' ? 'Add exercise' : sheet === 'order' ? 'Exercise order' : sheet === 'swap' ? `Swap ${exercise.name}` : sheet === 'swapDetails' && swapPreview ? swapPreview.name : exercise.name;
+  const allSets=session.exercises.flatMap(item=>item.sets);
+  const completed=allSets.filter(item=>item.status==='completed').length;
+  const startedAt=session.startedAt??results[0]?.completedAt;
+  const elapsed=startedAt?Math.max(0,Math.floor((clockNow-Date.parse(startedAt))/1000)):0;
+  const upcoming=session.exercises.filter(item=>item.exercise.id!==selectedExerciseId&&item.sets.some(s=>s.status==='pending'));
+  const logged=entry.sets.filter(item=>item.result);
+  const cardMinimum=Math.min(330,Math.max(190,availableHeight-130));
+  const targetRest=restSecondsFor(state.source?.goal??'hypertrophy',exercise.compound);
+  const canConfirm=Boolean(pendingSet&&!resting&&loadValid&&repsValid&&rir!==null&&!submitting);
+  return (<View style={styles.page} onLayout={event=>setAvailableHeight(event.nativeEvent.layout.height)}>
+    <View style={styles.workoutHeader}>
+      <View style={styles.titleRow}>
+        <Txt variant="heading" style={styles.flex}>Today’s workout</Txt>
+        {startedAt?<Pressable accessibilityRole="button" accessibilityLabel="Finish workout" disabled={!results.length} onPress={finishEarly} style={styles.finish}>
+          <Txt variant="caption" style={styles.finishText}>Finish</Txt>
+        </Pressable>:<IconButton icon="add" label="Add exercise" onPress={()=>setSheet('add')}/>}
       </View>
+      <Txt variant="mono" tone="muted" style={styles.meta}>
+        <Txt variant="mono" style={[styles.meta,{color:startedAt?colors.success:colors.accent}]}>{startedAt?`● ${formatTime(elapsed).padStart(5,'0')} elapsed`:'Ready'}</Txt>{` · ${completed} of ${allSets.length} sets`}
+      </Txt>
+      <View style={styles.progressRow} accessibilityLabel={`${completed} of ${allSets.length} sets completed`}>
+        {allSets.map(item=><View key={item.id} style={[styles.segment,item.status==='completed'&&styles.segmentDone]}/>)}
+      </View>
+    </View>
+    {upcoming.length?<View style={[styles.upcoming,chosen?{maxHeight:Math.max(52,availableHeight-cardMinimum-120)}:styles.flex]}>
+      {chosen&&upcoming.length?<Txt variant="label" tone="muted" style={styles.meta}>UP NEXT</Txt>:null}
+      <ScrollView style={styles.queueScroll} contentContainerStyle={styles.queue} keyboardShouldPersistTaps="handled">
+        {upcoming.map(item=><View key={item.id} style={styles.queueCard}>
+          <ExerciseSectionHeader entry={item} active={false} expanded={false} onPress={()=>selectExercise(item.exercise.id)} onMusclePress={()=>setInspectedExercise(item.exercise)}/>
+        </View>)}
+      </ScrollView>
+    </View>:null}
+    {chosen?<>
+      <View style={[styles.activeCard,{minHeight:cardMinimum}]}>
+        <View style={styles.activeHeader}>
+          <View style={styles.flex}><ExerciseSectionHeader entry={entry} active={true} ready={!startedAt} expanded onPress={()=>selectExercise(null)} onMusclePress={()=>setInspectedExercise(exercise)}/></View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Collapse current exercise" onPress={()=>selectExercise(null)} style={styles.smallAction}><Ionicons name="chevron-up" size={16} color={colors.textMuted}/></Pressable>
+        </View>
+        <ScrollView style={styles.history} contentContainerStyle={styles.historyContent} keyboardShouldPersistTaps="handled">
+          <View style={styles.targets}>
+            <View style={styles.targetCell}><Txt variant="label" tone="muted" style={styles.meta}>SETS</Txt><Txt variant="code">{entry.sets.length}</Txt></View>
+            <View style={styles.targetCell}><Txt variant="label" tone="muted" style={styles.meta}>TARGET REPS</Txt><Txt variant="code">{set.minReps===set.maxReps?set.maxReps:`${set.minReps}–${set.maxReps}`}</Txt></View>
+            <View style={styles.targetCell}><Txt variant="label" tone="muted" style={styles.meta}>REST</Txt><Txt variant="code">{formatTime(targetRest)}</Txt></View>
+          </View>
+          {previousSets.length?<View style={styles.lastTime}>
+            <Txt variant="label" tone="muted" style={styles.meta}>LAST TIME</Txt>
+            <Txt variant="mono" tone="secondary" style={styles.reference}>{previousSets.every(result=>(result.actualLoadKg??result.prescribedLoadKg)===(previousSets[0].actualLoadKg??previousSets[0].prescribedLoadKg))
+              ?`${formatKg(previousSets[0].actualLoadKg??previousSets[0].prescribedLoadKg)} · ${previousSets.map(result=>result.completedReps).join(' · ')}`
+              :previousSets.map(result=>`${formatKg(result.actualLoadKg??result.prescribedLoadKg)} × ${result.completedReps}`).join(' · ')}</Txt>
+          </View>:null}
+          <View style={styles.setsHeading}><Txt variant="label" tone="muted" style={styles.meta}>THIS WORKOUT</Txt><Txt variant="mono" tone="muted" style={styles.meta}>{logged.length}/{entry.sets.length}</Txt></View>
+          {entry.sets.map(item=>{
+            const result=item.result;
+            const current=item.id===pendingSet?.id;
+            return <View key={item.id} style={[styles.historySet,current&&styles.nextHistorySet]}>
+              <Txt variant="code" tone={result?'success':current?'accent':'muted'} style={styles.setNumber}>{item.setNumber}</Txt>
+              {item.status==='skipped'?<Txt variant="mono" tone="muted" style={styles.flex}>Skipped</Txt>:<>
+                <Txt variant="code" tone={result?'primary':'muted'} style={styles.historyValue}>{result?formatKg(result.actualLoadKg??result.prescribedLoadKg):needsBaseline||(entry.needsBaseline&&item.id!==pendingSet?.id)?'—':formatKg(item.loadKg)}</Txt>
+                <Txt variant="code" tone={result?'primary':'muted'} style={styles.historyValue}>{result?result.completedReps:item.minReps===item.maxReps?item.maxReps:`${item.minReps}–${item.maxReps}`} reps</Txt>
+                <Txt variant="mono" tone={result?'secondary':'muted'} style={styles.meta}>RIR {result?result.reportedRir:item.targetRir}</Txt>
+              </>}
+              <Ionicons name={result?'checkmark':current?'ellipse-outline':'remove-outline'} size={14} color={result?colors.success:colors.textMuted}/>
+            </View>;
+          })}
+          <View style={styles.historyFooter}>
+            {logged.length?<Txt variant="mono" tone="muted" style={styles.meta}>{remainingHere?`${remainingHere} sets left`:'All sets logged'}</Txt>:null}
+            {canUndo?<Pressable accessibilityRole="button" accessibilityLabel="Undo last recorded set" onPress={undoSet} style={styles.smallAction}><Ionicons name="arrow-undo" size={15} color={colors.textMuted}/></Pressable>:null}
+            <Pressable accessibilityRole="button" accessibilityLabel="Workout options" onPress={()=>setSheet('menu')} style={styles.smallAction}><Ionicons name="ellipsis-horizontal" size={18} color={colors.textMuted}/></Pressable>
+          </View>
+        </ScrollView>
+        <View style={styles.controlSlot}>
+          {resting?<Pressable accessibilityRole="button" accessibilityLabel="Skip rest" onPress={skipRest} style={styles.timerPanel}>
+            <Txt variant="mono" tone="muted" style={styles.meta}>{pendingSet?`NEXT · set ${pendingSet.setNumber} of ${entry.sets.length} · target ${pendingSet.minReps}–${pendingSet.maxReps}`:'Exercise complete'}</Txt>
+            <View style={styles.timerRow}>
+              <Ionicons name="timer-outline" size={20} color={colors.accent}/>
+              <Txt variant="number" tone="accent" style={styles.countdown}>{formatTime(secondsLeft)}</Txt>
+              <Txt variant="mono" tone="secondary" style={[styles.meta,styles.flex]}>resting</Txt>
+              <View style={styles.confirm}><Txt variant="code" tone="accent" style={styles.skipText}>skip ›</Txt></View>
+            </View>
+            <View style={styles.timerTrack}><View style={[styles.timerFill,{width:`${Math.min(100,secondsLeft/Math.max(1,rest!.durationSeconds)*100)}%`}]}/></View>
+          </Pressable>:pendingSet?<View style={styles.inputPanel}>
+            <View style={styles.inputHead}>
+              <Txt variant="label" tone="muted" style={[styles.meta,styles.setNumber]}>SET</Txt>
+              <Txt variant="label" tone="muted" style={[styles.meta,styles.flex]}>KG</Txt>
+              <Txt variant="label" tone="muted" style={[styles.meta,styles.flex]}>REPS</Txt><View style={styles.confirmSpace}/>
+            </View>
+            <View style={styles.inputRow}>
+              <Txt variant="code" style={[styles.setNumber,{color:startedAt?colors.success:colors.accent}]}>{set.setNumber}</Txt>
+              <TextInput value={load} onChangeText={setLoad} style={styles.cellInput} inputMode="decimal" keyboardType="decimal-pad" selectTextOnFocus accessibilityLabel={`Set ${set.setNumber} weight in kilograms`}/>
+              <TextInput value={reps} onChangeText={value=>setReps(value.replace(/[^0-9]/g,'').slice(0,2))} style={styles.cellInput} inputMode="numeric" keyboardType="number-pad" selectTextOnFocus accessibilityLabel={`Set ${set.setNumber} reps`}/>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Log set ${set.setNumber}`} accessibilityState={{disabled:!canConfirm}} aria-disabled={!canConfirm} disabled={!canConfirm} onPress={submit} style={[styles.confirm,styles.confirmButton,!canConfirm&&styles.disabled]}><Ionicons name="checkmark" size={24} color={colors.ground}/></Pressable>
+            </View>
+            <View style={styles.rirRow} accessibilityRole="radiogroup" accessibilityLabel="Reps in reserve">
+              <Txt variant="label" tone="muted" style={[styles.meta,styles.setNumber]}>RIR</Txt>
+              {[0,1,2,3,4].map(value=><Pressable key={value} accessibilityRole="radio" accessibilityLabel={`${value===4?'4 or more':value} reps in reserve`} aria-checked={rir===value} accessibilityState={{checked:rir===value}} onPress={()=>setRir(value)} style={[styles.rirPill,rir===value&&styles.rirSelected]}>
+                <Txt variant="mono" style={[styles.meta,rir===value&&{color:colors.success}]}>{value===4?'4+':value}</Txt>
+              </Pressable>)}
+            </View>
+          </View>:<View style={styles.completePanel}>
+            <Ionicons name="checkmark-circle-outline" size={26} color={colors.success}/>
+            <Txt variant="heading">{upcoming.length?'Exercise complete':'All sets logged'}</Txt>
+          </View>}
+        </View>
+      </View>
+    </>:null}
 
+      <ExerciseDetailsSheet exercise={inspectedExercise} onClose={()=>setInspectedExercise(null)}/>
       <Sheet visible={sheet !== null} onClose={closeSheet} title={sheetTitle}>
         {sheet === 'menu' ? <>
         <Txt variant="label" tone="muted">this lift</Txt>
-        <OptionRow icon="body-outline" title="Muscles & exercise details" onPress={() => setSheet('details')} />
         <OptionRow icon="swap-horizontal" title="Swap lift" onPress={() => setSheet('swap')} />
+        <OptionRow icon="reorder-three" title="Exercise order" onPress={() => setSheet('order')} />
         <OptionRow icon="play-skip-forward" title="Skip exercise" onPress={skipExercise} />
         <OptionRow icon="bandage" tone="danger" title="Report pain" onPress={reportPain} />
         <Divider />
         <Txt variant="label" tone="muted">session · {results.length} logged · {progress.pending} pending</Txt>
         <OptionRow icon="add" title="Add exercise for today" onPress={()=>setSheet('add')} />
-        <OptionRow icon="flag" title="Finish early and review" disabled={results.length === 0} onPress={finishEarly} />
+        <OptionRow icon="flag" title="Finish workout" disabled={results.length === 0} onPress={finishEarly} />
         <OptionRow icon="trash" tone="danger" title="Discard session" onPress={discard} />
         </> : null}
+        {sheet === 'order' ? session.exercises.map((item, index) => <View key={item.id} style={styles.exerciseHeader}>
+          <Txt variant="caption" style={styles.flex}>{item.exercise.name}</Txt>
+          <IconButton icon="chevron-up" label={`Move ${item.exercise.name} earlier`} disabled={index === 0} onPress={() => moveExercise(item.exercise.id, -1)} />
+          <IconButton icon="chevron-down" label={`Move ${item.exercise.name} later`} disabled={index === session.exercises.length - 1} onPress={() => moveExercise(item.exercise.id, 1)} />
+        </View>) : null}
         {sheet === 'add' ? <>
-          <Txt variant="heading">Add an exercise for today</Txt>
-          <Txt variant="caption">Adds 3 sets of 8–12 reps. This extends today’s workout; your usual routine stays unchanged. Edit the routine for different targets.</Txt>
           <TextInput value={addQuery} onChangeText={setAddQuery} placeholder="Search exercises" placeholderTextColor={colors.textMuted} style={{color:colors.text,minHeight:44}} accessibilityLabel="Search exercises to add today" />
-          {(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && x.name.toLowerCase().includes(addQuery.toLowerCase())).map(x=><Button key={x.id} variant="ghost" label={x.name} onPress={()=>{
+          {(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq)) && x.name.toLowerCase().includes(addQuery.toLowerCase())).map(x=><Button key={x.id} variant="ghost" label={x.name} onPress={()=>{
             report(apply(current=>addRuntimeExercise(current,{exerciseId:x.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${x.name} added for today`});});
           }} />)}
         </> : null}
@@ -558,6 +371,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   );
 };
 
+const formatTime = (seconds: number) => `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
+
 const OptionRow = ({ icon, title, detail, onPress, tone, disabled }: {
   icon: keyof typeof Ionicons.glyphMap; title: string; detail?: string; onPress: () => void; tone?: 'danger'; disabled?: boolean;
 }) => (
@@ -575,45 +390,24 @@ const OptionRow = ({ icon, title, detail, onPress, tone, disabled }: {
 );
 
 const styles = StyleSheet.create({
-  solverHead: { gap: space.sm },
-  solverHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
-  solverBrand: { fontSize: 18, lineHeight: 24, color: colors.text },
-  workspace: { flex: 1, minHeight: 0 },
-  runtimeSection: { gap: space.md },
-  sectionHeader: { minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
-  stackHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  orderToggle: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: space.xs, paddingHorizontal: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
-  orderToggleActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  stackViewport: { backgroundColor: colors.surface },
-  stackTrack: { paddingHorizontal: 0 },
-  stackRow: { flexDirection: 'row', alignItems: 'stretch', borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
-  stackRowSelected: { backgroundColor: colors.accentSoft, borderLeftWidth: 3, borderLeftColor: colors.accent },
-  stackRowBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.md },
-  stackState: { width: 48 },
-  stackName: { flex: 1 },
-  orderControls: { width: 82, flexDirection: 'row', borderLeftWidth: 1, borderLeftColor: colors.border },
-  orderButton: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRightWidth: 1, borderRightColor: colors.border },
-  frameIdentity: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: space.xs },
-  frameSection: { flex: 1, minHeight: 0 },
-  frameViewport: { flex: 1 },
-  frameContent: { flexGrow: 1, gap: space.md, paddingBottom: space.md },
-  frameFacts: { flexGrow: 1, minHeight: 240, justifyContent: 'space-evenly', gap: space.sm },
-  frameRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
-  frameAdjustRow: { minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: space.md },
-  frameLabel: { width: 112 },
-  frameLabelCompact: { width: 84 },
-  frameValue: { flex: 1 },
-  inlineValue: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: space.xs },
-  inlineRepsInput: { width: 34, minHeight: 34, color: colors.text, fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'], textAlign: 'center', borderBottomWidth: 1, borderBottomColor: colors.accent, paddingVertical: 0 },
-  inlineAdjustButtons: { flexDirection: 'row', gap: space.xs },
-  inlineAdjustButton: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
-  controlsResting: { opacity: 0.42 },
-  undoInline: { alignSelf: 'flex-end', minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: space.xs, paddingHorizontal: space.sm },
-  flex: { flex: 1 },
-  page: { flex: 1, minHeight: 0, padding: space.lg, paddingBottom: space.md, gap: space.lg },
-  stepDisabled: { opacity: 0.4 },
-  pressed: { opacity: 0.7 },
-  option: { flexDirection: 'row', gap: space.md, alignItems: 'center', padding: space.lg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, minHeight: TOUCH },
-  optionDanger: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
-  optionDisabled: { opacity: 0.5 },
+  flex:{flex:1,minWidth:0},page:{flex:1,minHeight:0,paddingHorizontal:16,paddingTop:8,paddingBottom:8,gap:10},
+  workoutHeader:{gap:7},titleRow:{flexDirection:'row',alignItems:'center',gap:8,minHeight:36},
+  finish:{borderWidth:1,borderColor:colors.borderStrong,borderRadius:20,paddingHorizontal:14,minHeight:36,justifyContent:'center'},finishText:{fontSize:12},
+  meta:{fontSize:10,lineHeight:15,letterSpacing:0.3},progressRow:{flexDirection:'row',gap:3},segment:{flex:1,height:4,borderRadius:3,backgroundColor:colors.border},segmentDone:{backgroundColor:colors.success},
+  upcoming:{flexShrink:1,gap:5},queueScroll:{flexGrow:0,flexShrink:1},queue:{gap:6},queueCard:{paddingHorizontal:8,paddingVertical:7,borderWidth:1,borderColor:colors.border,borderRadius:12,backgroundColor:colors.surface},
+  activeCard:{flex:1,minHeight:205,borderWidth:1,borderColor:colors.borderStrong,borderRadius:16,padding:12,backgroundColor:colors.surface},
+  activeHeader:{flexDirection:'row',alignItems:'center',gap:3},smallAction:{width:32,height:32,alignItems:'center',justifyContent:'center'},
+  history:{flex:1,minHeight:0},historyContent:{paddingTop:8,gap:5},lastTime:{flexDirection:'row',flexWrap:'wrap',gap:8,alignItems:'center',justifyContent:'space-between'},reference:{fontSize:11,lineHeight:17,flexShrink:1},
+  targets:{flexDirection:'row',gap:8,paddingVertical:6,marginBottom:4,borderTopWidth:1,borderBottomWidth:1,borderColor:colors.border},targetCell:{flex:1,gap:1},
+  setsHeading:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingTop:4,paddingBottom:2},nextHistorySet:{backgroundColor:colors.surfaceRaised,borderRadius:6},
+  historySet:{flexDirection:'row',alignItems:'center',gap:8,minHeight:32},historyValue:{flex:1,fontSize:12,lineHeight:18},setNumber:{width:24,textAlign:'center'},
+  historyFooter:{flexDirection:'row',alignItems:'center',justifyContent:'flex-end',gap:8},
+  controlSlot:{height:142,flexShrink:0,paddingTop:8},inputPanel:{flex:1,gap:8},inputHead:{flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:6},inputRow:{flexDirection:'row',alignItems:'center',gap:8,padding:6,backgroundColor:colors.successSoft,borderRadius:10},
+  cellInput:{flex:1,minWidth:0,height:42,textAlign:'center',color:colors.text,fontSize:16,fontFamily:'JetBrainsMono-SemiBold',backgroundColor:colors.ground,borderWidth:1,borderColor:colors.borderStrong,borderRadius:7,padding:0},
+  confirm:{width:44,height:42,alignItems:'center',justifyContent:'center'},confirmSpace:{width:44},confirmButton:{borderRadius:8,backgroundColor:colors.success},disabled:{opacity:0.35},
+  rirRow:{flexDirection:'row',alignItems:'center',gap:5},rirPill:{flex:1,height:36,borderWidth:1,borderColor:colors.borderStrong,borderRadius:8,alignItems:'center',justifyContent:'center'},rirSelected:{borderColor:colors.success,backgroundColor:colors.successSoft},
+  timerPanel:{flex:1,paddingHorizontal:6,gap:8},timerRow:{flexDirection:'row',alignItems:'center',gap:8,height:54},countdown:{fontSize:28,lineHeight:36},skipText:{fontSize:12},timerTrack:{height:4,borderRadius:2,backgroundColor:colors.border,overflow:'hidden'},timerFill:{height:4,backgroundColor:colors.accent},
+  completePanel:{flex:1,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8},
+  exerciseHeader:{flexDirection:'row',alignItems:'center',gap:8},pressed:{opacity:0.7},
+  option:{flexDirection:'row',gap:space.md,alignItems:'center',padding:space.lg,borderWidth:1,borderColor:colors.border,borderRadius:radius.md,backgroundColor:colors.surface,minHeight:TOUCH},optionDanger:{borderColor:colors.danger,backgroundColor:colors.dangerSoft},optionDisabled:{opacity:0.5},
 });

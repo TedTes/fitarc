@@ -172,7 +172,7 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
           <Choice key={item.value} {...item} selected={primaryGoal === item.value} onPress={() => setPrimaryGoal(item.value)} />)}</View>
       </>;
       case 'schedule': return <>
-        <StepHeading eyebrow="FREQUENCY" title="How often can you train?" detail="We will choose the split from your weekly availability." />
+        <StepHeading eyebrow="FREQUENCY" title="How often can you train?" detail="You can change this later." />
         <View style={styles.dayGrid}>{([3, 4, 5] as const).map((days) =>
           <TouchableOpacity key={days} style={[styles.dayChoice, daysPerWeek === days && styles.dayChoiceSelected]}
             onPress={() => setDaysPerWeek(days)}>
@@ -185,10 +185,6 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
             onPress={() => setSessionMinutes(minutes)}>
             <Text style={[styles.timeText, sessionMinutes === minutes && styles.timeTextSelected]}>{minutes}m</Text>
           </TouchableOpacity>)}</View>
-        <View style={styles.runtimeNote}>
-          <Text style={styles.runtimePrompt}>Your plan</Text>
-          <Text style={styles.runtimeNoteText}>uses a {splitForDays(daysPerWeek).replaceAll('_', ' ')} rotation</Text>
-        </View>
       </>;
       case 'context': return <>
         <StepHeading eyebrow="TRAINING CONTEXT" title="Match the starting dose." detail="Choose your experience and available equipment." />
@@ -286,7 +282,6 @@ const styles = StyleSheet.create({
   dayGrid: { flexDirection: 'row', gap: space.sm }, dayChoice: { flex: 1, minHeight: 92, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
   dayChoiceSelected: { borderColor: colors.accent, backgroundColor: colors.accentSoft }, dayNumber: { color: colors.textSecondary, fontFamily: monoFace('700') ?? mono, fontSize: 26 }, dayNumberSelected: { color: colors.accent }, dayLabel: { color: colors.textMuted, fontFamily: monoFace('400') ?? mono, fontSize: 9, marginTop: 3 },
   timeGrid: { flexDirection: 'row', gap: space.sm }, timeChoice: { flex: 1, minHeight: TOUCH, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 2, borderBottomColor: colors.border }, timeChoiceSelected: { borderBottomColor: colors.accent, backgroundColor: colors.accentSoft }, timeText: { color: colors.textMuted, fontFamily: monoFace('600') ?? mono, fontSize: 12 }, timeTextSelected: { color: colors.accent },
-  runtimeNote: { marginTop: space.xl, borderLeftWidth: 2, borderLeftColor: colors.accent, paddingLeft: space.md, gap: 3 }, runtimePrompt: { color: colors.accent, fontFamily: monoFace('700') ?? mono, fontSize: 12 }, runtimeNoteText: { color: colors.textSecondary, fontFamily: monoFace('400') ?? mono, fontSize: 12, lineHeight: 18 },
   metricsCard: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, paddingHorizontal: space.lg }, metricRow: { minHeight: 76, flexDirection: 'row', alignItems: 'center' }, metricLabel: { color: colors.textSecondary, fontFamily: monoFace('600') ?? mono, fontSize: 13, width: 72 },
   metricControl: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' }, iconTouch: { width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center' }, metricIcon: { color: colors.textSecondary, fontFamily: monoFace('400') ?? mono, fontSize: 24 },
   metricValueWrap: { minWidth: 88, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 5 }, metricValue: { color: colors.text, fontFamily: monoFace('700') ?? mono, fontSize: 22 }, metricUnit: { color: colors.textMuted, fontFamily: monoFace('400') ?? mono, fontSize: 11 }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },

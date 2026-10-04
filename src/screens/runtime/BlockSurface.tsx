@@ -15,13 +15,14 @@ type Props = {
   block: TrainingBlock;
   sessionActive: boolean;
   onNextBlock: () => void;
+  onEditRoutine: () => void;
 };
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
 const PHASE_SHORT = { accumulate: 'Build', intensify: 'Load', peak: 'Challenge', deload: 'Recover' } as const;
 
 /** My plan: the compiled artifact. Inspectable, versioned, never edited by hand. */
-export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props) => {
+export const BlockSurface = ({ state, block, sessionActive, onNextBlock, onEditRoutine }: Props) => {
   const { height: windowHeight } = useWindowDimensions();
   const slotReel = useRef<ScrollView>(null);
   const details = useRef<ScrollView>(null);
@@ -71,6 +72,7 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock }: Props
   return (
     <View style={styles.page}>
       <ScreenBrand name="My plan" />
+      <Button label="Edit routine" variant="secondary" onPress={onEditRoutine} disabled={sessionActive} />
       {block.remainingWeek?.week === block.currentWeek ? <Txt variant="caption" tone="secondary">Your usual weekly schedule is shown here. See Progress for the changes you accepted for this week.</Txt> : null}
 
       {block.scheduling ? <Txt variant="caption">Your workout sequence continues across weeks. Availability does not change its order.</Txt> : <View style={styles.phaseStrip}>

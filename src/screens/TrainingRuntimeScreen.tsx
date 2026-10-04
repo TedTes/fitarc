@@ -1,3 +1,4 @@
+import { editableRoutine } from '../runtime/routine';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,7 +7,9 @@ import type { User } from '../types/domain';
 import { compileNextRuntimeBlock, compileTrainingBlock, createRuntimeId, getRuntimeWeekView } from '../runtime';
 import type { TrainingSource } from '../runtime';
 import { colors, space } from './runtime/theme';
-import { Banner, Button, ChromeContext, Txt } from './runtime/ui';
+import { Banner, Button, ChromeContext, ScreenBrand, Txt } from './runtime/ui';
+import { EmptyToday } from './runtime/EmptyToday';
+import { NewWorkoutSheet } from './runtime/NewWorkoutSheet';
 import { describeRuntimeError, goalLabel } from './runtime/copy';
 import { DUMBBELLS, FULL_GYM, Notify, Surface } from './runtime/constants';
 import { EventLine, RuntimeEvent } from './runtime/EventLog';
@@ -30,12 +33,19 @@ type Props = {
 
 const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typeof Ionicons.glyphMap; iconOn: keyof typeof Ionicons.glyphMap; hint: string }> = [
   { key: 'solver', label: 'Today', spoken: 'Today’s workout', icon: 'barbell-outline', iconOn: 'barbell', hint: "Today's workout, fitted to current conditions" },
-  { key: 'block', label: 'My plan', spoken: 'My training plan', icon: 'layers-outline', iconOn: 'layers', hint: 'The six-week training plan' },
+  { key: 'block', label: 'My plan', spoken: 'My training plan', icon: 'layers-outline', iconOn: 'layers', hint: 'Your training plan' },
   { key: 'week', label: 'Progress', spoken: 'Training progress', icon: 'stats-chart-outline', iconOn: 'stats-chart', hint: "This week's dose and fatigue" },
   { key: 'account', label: 'Profile', spoken: 'Profile settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Profile, training preferences, and account controls' },
 ];
 const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, account: 3 };
 const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
+const EmptyTrainingSurface = ({ title, message }: { title: string; message: string }) => (
+  <View style={{ flex: 1, padding: space.lg, gap: space.lg }}>
+    <ScreenBrand name={title} />
+    <Txt tone="muted">{message}</Txt>
+  </View>
+);
 
 export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const insets = useSafeAreaInsets();
@@ -44,13 +54,16 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const loading = stateLoading || !fontsReady;
   const [surface, setSurface] = useState<Surface>('solver');
   const [editingSource, setEditingSource] = useState(false);
+  const [quickWorkoutOpen, setQuickWorkoutOpen] = useState(false);
+  const hasSavedPlan = Boolean(state.source && state.block?.slots.length && state.block.kind !== 'workout');
+  const hasProgress = Boolean(state.block && (hasSavedPlan || state.sessions.length || state.setResults.length));
+  const visibleTabs = useMemo(() => TABS.filter(tab => tab.key !== 'block'), [hasSavedPlan, hasProgress]);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [fresh, setFresh] = useState<{ id: number; action?: { label: string; run: () => void } } | null>(null);
   const [dismissedId, setDismissedId] = useState<number | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [workoutTabsVisible, setWorkoutTabsVisible] = useState(false);
   const [workoutDock, setWorkoutDock] = useState<WorkoutDockState | null>(null);
-  const [autoCompileError, setAutoCompileError] = useState<string | null>(null);
   const [tabBarWidth, setTabBarWidth] = useState(0);
   const tabReveal = useRef(new Animated.Value(1)).current;
   const dockTransition = useRef(new Animated.Value(0)).current;
@@ -64,8 +77,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   }).current;
   const eventId = useRef(0);
   const restoredNotice = useRef(false);
-  const autoCompileAttempted = useRef(false);
-  const onboardingSource = useMemo<TrainingSource>(() => {
+  const defaultSource = useMemo<TrainingSource>(() => {
     if (user.trainingPreferences) return user.trainingPreferences;
     const preferences = user.planPreferences;
     const preferredDays = preferences?.daysPerWeek;
@@ -108,10 +120,14 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   }, [fresh]);
 
   const progress = sessionProgress(state);
-  const inSession = Boolean(progress);
+  const inSession = Boolean(state.activeSession?.startedAt || state.activeSession?.exercises.some(entry=>entry.sets.some(set=>set.result)));
   const timerRunning = workoutDock?.phase === 'set' || workoutDock?.phase === 'rest';
   const showDock = !keyboardOpen && surface === 'solver' && Boolean(progress?.pending) && timerRunning && !workoutTabsVisible;
   const bottomVisible = !keyboardOpen;
+
+  useEffect(() => {
+    if (!visibleTabs.some(tab => tab.key === surface)) setSurface('solver');
+  }, [surface, visibleTabs]);
 
   useEffect(() => {
     if (!timerRunning) setWorkoutTabsVisible(false);
@@ -140,7 +156,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     const direction = SURFACE_INDEX[surface] >= SURFACE_INDEX[previous] ? 1 : -1;
 
     Animated.timing(tabPosition, {
-      toValue: SURFACE_INDEX[surface], duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      toValue: Math.max(0,visibleTabs.findIndex(tab=>tab.key===surface)) / (visibleTabs.length-1), duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
     }).start();
 
     if (previous === surface) return;
@@ -158,7 +174,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
       Animated.timing(surfaceOffset[surface], { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start(() => surfaceOffset[previous].setValue(0));
     previousSurface.current = surface;
-  }, [surface, surfaceOffset, surfaceOpacity, tabPosition]);
+  }, [surface, surfaceOffset, surfaceOpacity, tabPosition, visibleTabs]);
 
   // An active session survives restarts. A completed session needs an explicit reminder because
   // the next action is commit/discard; an in-progress session already identifies itself in set.log.
@@ -190,21 +206,12 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     notify({
       tone: 'success',
       title: first ? 'Your training plan is ready' : 'Your training plan was updated',
-      message: first ? 'Your first six weeks are ready.' : outcome.state.lastBlockDiff.join(' · '),
+      message: first ? 'Your routine is ready. Review a workout in Today before starting.' : outcome.state.lastBlockDiff.join(' · '),
       action: { label: 'Today', run: () => setSurface('solver') },
     });
     return true;
   }, [apply, notify, state.source]);
 
-  useEffect(() => {
-    if (loading || loadError || state.source || state.block || autoCompileAttempted.current) return;
-    autoCompileAttempted.current = true;
-    if (compile(onboardingSource)) {
-      setSurface('solver');
-    } else {
-      setAutoCompileError('The saved constraints do not leave enough compatible exercises to build every session.');
-    }
-  }, [compile, loadError, loading, onboardingSource, state.block, state.source]);
 
   const nextBlock = useCallback(() => {
     const outcome = apply(compileNextRuntimeBlock);
@@ -261,20 +268,10 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     );
   }
 
-  // ── First launch: no runtime yet ──
-  if (!state.source || !state.block) {
-    if (!autoCompileError) return <AthleteLoadingScreen message="Creating your training plan…" />;
-    return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <Banner tone="error" title="Could not create your plan" message={autoCompileError} />
-        <Button label="Sign out" variant="secondary" onPress={() => void onLogout()} />
-      </View>
-    );
-  }
-
   const block = weekView?.block ?? state.block;
   const status = weekView?.status;
-  const chip = `${goalLabel(state.source.goal)} · Week ${block.currentWeek}${block.scheduling ? "" : ` of ${block.durationWeeks}`}`;
+  const hasTraining = Boolean(state.source && block);
+  const chip = state.source && block ? block.kind === 'workout' ? 'Workout log' : `${goalLabel(state.source.goal)} · Week ${block.currentWeek}${block.scheduling ? "" : ` of ${block.durationWeeks}`}` : null;
 
   return (
     <ChromeContext.Provider value={{ chip, sync, onSyncPress }}>
@@ -288,11 +285,11 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           style={[styles.surfaceLayer, surface === 'solver' && styles.surfaceActive, { opacity: surfaceOpacity.solver, transform: [{ translateX: surfaceOffset.solver }] }]}
         >
           {line}
-          <TodaySurface
+          {hasTraining ? <TodaySurface
             state={state} apply={apply} notify={notify} active={surface === 'solver'}
-            onDockChange={setWorkoutDock}
+            onDockChange={setWorkoutDock} onNewWorkout={()=>setQuickWorkoutOpen(true)}
             onOpenSource={() => { setEditingSource(true); go('account'); }} onOpenWeek={() => go('week')}
-          />
+          /> : <EmptyToday onAddRoutine={()=>{setEditingSource(true);go('account');}} onLogWorkout={()=>setQuickWorkoutOpen(true)} />}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'block' ? 'auto' : 'none'}
@@ -300,7 +297,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'block' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'block' && styles.surfaceActive, { opacity: surfaceOpacity.block, transform: [{ translateX: surfaceOffset.block }] }]}
         >
-          <BlockSurface state={state} block={block} sessionActive={inSession} onNextBlock={nextBlock} />
+          {hasSavedPlan && block ? <BlockSurface state={state} block={block} sessionActive={inSession} onNextBlock={nextBlock} onEditRoutine={() => { setEditingSource(true); go('account'); }} /> : <EmptyTrainingSurface title="My plan" message="No plan yet" />}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'week' ? 'auto' : 'none'}
@@ -308,7 +305,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'week' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'week' && styles.surfaceActive, { opacity: surfaceOpacity.week, transform: [{ translateX: surfaceOffset.week }] }]}
         >
-          {status ? <WeekSurface state={state} block={block} status={status} apply={apply} notify={notify} /> : null}
+          {status && block ? <WeekSurface state={state} block={block} status={status} apply={apply} notify={notify} /> : <EmptyTrainingSurface title="Progress" message="No workouts logged" />}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'account' ? 'auto' : 'none'}
@@ -317,7 +314,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           style={[styles.surfaceLayer, surface === 'account' && styles.surfaceActive, { opacity: surfaceOpacity.account, transform: [{ translateX: surfaceOffset.account }] }]}
         >
           {editingSource ? (
-            <SourceIntake user={user} initial={state.source} blockVersion={state.block.version} sessionActive={inSession} onSubmit={compile} onCancel={() => setEditingSource(false)} />
+            <SourceIntake user={user} initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} blockVersion={state.block?.version ?? 0} sessionActive={inSession} onSubmit={compile} onCancel={() => setEditingSource(false)} />
           ) : (
             <AccountSurface
               user={user} state={state} sync={sync}
@@ -342,6 +339,9 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
       >
         <Animated.View
           accessibilityRole="tablist"
+          aria-hidden={showDock}
+          accessibilityElementsHidden={showDock}
+          importantForAccessibility={showDock ? 'no-hide-descendants' : 'auto'}
           pointerEvents={showDock ? 'none' : 'auto'}
           onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
           style={[
@@ -360,18 +360,18 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
               style={[
                 styles.tabIndicator,
                 {
-                  width: tabBarWidth / TABS.length,
+                  width: tabBarWidth / visibleTabs.length,
                   transform: [{
                     translateX: tabPosition.interpolate({
-                      inputRange: [0, TABS.length - 1],
-                      outputRange: [0, (tabBarWidth / TABS.length) * (TABS.length - 1)],
+                      inputRange: [0, 1],
+                      outputRange: [0, tabBarWidth - tabBarWidth / visibleTabs.length],
                     }),
                   }],
                 },
               ]}
             />
           ) : null}
-          {TABS.map((tab) => {
+          {visibleTabs.map((tab) => {
             const selected = surface === tab.key;
             return (
               <Pressable
@@ -394,6 +394,9 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
         </Animated.View>
 
         <Animated.View
+          aria-hidden={!showDock}
+          accessibilityElementsHidden={!showDock}
+          importantForAccessibility={showDock ? 'auto' : 'no-hide-descendants'}
           pointerEvents={showDock ? 'auto' : 'none'}
           style={[
             styles.bottomLayer,
@@ -425,20 +428,24 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={workoutDock?.phase === 'rest' ? 'Skip rest' : 'Finish set and start rest'}
+            accessibilityLabel={workoutDock?.phase === 'rest' ? 'Continue to next set' : 'Record set and continue'}
             accessibilityState={{ disabled: Boolean(workoutDock?.primaryDisabled) }}
+            aria-disabled={Boolean(workoutDock?.primaryDisabled)}
             disabled={workoutDock?.primaryDisabled}
             onPress={workoutDock?.onPrimary}
             style={({ pressed }) => [styles.dockAction, workoutDock?.primaryDisabled && styles.dockActionDisabled, pressed && styles.pressed]}
           >
             <Ionicons
-              name={workoutDock?.phase === 'rest' ? 'play-skip-forward' : 'checkmark'}
+              name="chevron-forward"
               size={30}
               color={colors.accent}
             />
           </Pressable>
         </Animated.View>
       </Animated.View>
+      {quickWorkoutOpen?<NewWorkoutSheet state={state} defaults={defaultSource} apply={apply}
+        onClose={()=>setQuickWorkoutOpen(false)} onStarted={()=>{setQuickWorkoutOpen(false);go('solver');}}
+        onAddRoutine={()=>{setQuickWorkoutOpen(false);setEditingSource(true);go('account');}}/>:null}
     </KeyboardAvoidingView>
     </ChromeContext.Provider>
   );
