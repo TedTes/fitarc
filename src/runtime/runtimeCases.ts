@@ -1,7 +1,7 @@
 import { arbitratePrescription } from './arbitration';
 import { compileBlock, validateBlock } from './blockCompiler';
 import { solveSession } from './sessionSolver';
-import { commitRuntimeSession, getSwapCandidates, previewTrainingSessionDetailed, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise, solveTrainingSession, substituteRuntimeExercise } from './runtimeService';
+import { commitRuntimeSession, getSwapCandidates, previewTrainingSessionDetailed, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise, solveTrainingSession, substituteRuntimeExercise, undoLastRuntimeSet } from './runtimeService';
 import { solveNextSet } from './setSolver';
 import { computeWeeklyStatus } from './status';
 import { restSecondsFor } from './trainingPolicy';
@@ -99,6 +99,7 @@ export const runRuntimeContractChecks = () => {
   const detailed = previewTrainingSessionDetailed(fresh0, context);
   expect(detailed.slot !== null && detailed.weekNumber === 1, 'a preview must expose its slot and calendar week');
   const started = solveTrainingSession(fresh0, context);
+  expect(!started.activeSession!.startedAt, 'preparing a workout must not start its elapsed clock');
   const originalOrder = started.activeSession!.exercises.map((entry) => entry.exercise.id);
   const reversedOrder = [...originalOrder].reverse();
   const reordered = reorderRuntimeExercises(started, reversedOrder);
@@ -120,9 +121,19 @@ export const runRuntimeContractChecks = () => {
     targetRir: logged.sets[0].targetRir, completedReps: logged.sets[0].maxReps, reportedRir: 2, completedAt: new Date().toISOString(),
   });
   const finished = skipRemainingRuntimeSets(withSet);
+  const firstTimestamp = withSet.setResults[withSet.setResults.length - 1].completedAt;
+  expect(withSet.activeSession!.startedAt === firstTimestamp, 'the first logged set starts the session clock');
+  const undone = undoLastRuntimeSet(withSet);
+  expect(undone.activeSession!.startedAt === firstTimestamp, 'undo must not reset an already started session clock');
+  const relogged = recordRuntimeSet(undone, {
+    ...withSet.setResults[withSet.setResults.length - 1], completedAt: new Date(Date.parse(firstTimestamp) + 60000).toISOString(),
+  });
+  expect(relogged.activeSession!.startedAt === firstTimestamp, 'later confirmations must retain the original session start');
   expect(finished.activeSession!.exercises.every((entry) => entry.sets.every((set) => set.status !== 'pending')), 'finishing early must leave no pending sets');
   expect(finished.activeSession!.exercises.some((entry) => entry.sets.some((set) => set.status === 'completed')), 'finishing early must keep logged sets');
   expect(skipRuntimeExercise(finished, logged.exercise.id, true).source!.excludedExerciseIds.includes(logged.exercise.id), 'pain must persist in the source');
   expect(commitRuntimeSession(finished).activeSession === null, 'commit must clear the active session');
+  const banked = commitRuntimeSession(finished).sessions.find(item => item.id === finished.activeSession!.id)!;
+  expect(Boolean(banked.finishedAt) && banked.startedAt === firstTimestamp, 'finished sessions retain both clock boundaries');
   return true;
 };

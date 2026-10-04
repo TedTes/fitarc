@@ -21,6 +21,10 @@ export const scheduledOccurrences = (block: TrainingBlock, sessions: SessionPres
   const inWeek = sessions.filter(s=>belongsToPlan(s,block) && s.context.date>=start && s.context.date<end);
   const finished = inWeek.filter(s=>s.status==='committed');
   const open = inWeek.filter(s=>s.status!=='committed');
+  if (block.kind === 'workout') return open.flatMap(workout => {
+    const slot = block.slots.find(s => s.id === workout.slotId);
+    return slot ? [{ slot, workout }] : [];
+  });
   const remaining = block.remainingWeek?.week===week ? block.remainingWeek : undefined;
   if (remaining) {
     const planned = remaining.windows.filter(w=>!finished.some(s=>s.context.date===w.date) && !open.some(s=>s.context.date===w.date))

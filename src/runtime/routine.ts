@@ -1,5 +1,6 @@
 import { validateCatalog } from './catalogValidation';
 import { createRuntimeId } from './id';
+import { MUSCLES } from './trainingPolicy';
 import type { ExerciseDefinition, ProgressionSettings, RoutineDefinition, TrainingBlock, TrainingSource } from './types';
 
 export const defaultProgression = (): ProgressionSettings => ({
@@ -10,15 +11,22 @@ export const defaultRoutine = (): RoutineDefinition => ({ split: 'auto', workout
 
 /** Convert only when the user explicitly edits a legacy/generated routine. No historical rewrite. */
 export const editableRoutine = (plan: TrainingBlock): RoutineDefinition => ({
+  focus:plan.preferences?.routine?.focus,
+  setDefaults:plan.preferences?.routine?.setDefaults,
+  limitationNote:plan.preferences?.routine?.limitationNote,
   customExercises: plan.preferences?.routine?.customExercises,
+  preferredSplit: plan.preferences?.routine?.preferredSplit ?? plan.preferences?.routine?.split,
   split: 'custom', progression: plan.preferences?.routine?.progression ?? defaultProgression(),
-  workouts: plan.slots.map(slot => ({ id: slot.id, name: slot.label, exercises: slot.plannedExercises.map(item => ({
+  workouts: plan.slots.map(slot => {
+    const targetMuscles = plan.preferences?.routine?.workouts.find(workout=>workout.id===slot.id)?.targetMuscles;
+    return { id: slot.id, name: slot.label, ...(targetMuscles ? { targetMuscles } : {}), exercises: slot.plannedExercises.map(item => ({
     exerciseId: item.exerciseId, sets: item.sets,
     minReps: item.prescription?.minReps ?? plan.phases[0].minReps,
     maxReps: item.prescription?.maxReps ?? plan.phases[0].maxReps,
     targetRir: item.prescription?.targetRir ?? plan.phases[0].targetRir,
     startingLoadKg: item.prescription?.startingLoadKg,
-  })) })),
+    })) };
+  }),
 });
 export const emptyWorkout = () => ({ id: createRuntimeId(), name: 'My workout', exercises: [] });
 
@@ -27,7 +35,14 @@ export const validateRoutineSource = (source: TrainingSource, catalog: ExerciseD
   catalog = routineCatalog(source,catalog);
   const routine = source.routine;
   if (!routine) return;
+  if (routine.focus !== undefined && !['build_muscle','lose_fat','strength','maintain'].includes(routine.focus)) throw Error('Choose a training goal.');
+  if (routine.limitationNote !== undefined && (typeof routine.limitationNote !== 'string' || routine.limitationNote.length > 1000)) throw Error('Keep your limitations note under 1,000 characters.');
+  const defaults = routine.setDefaults;
+  if (defaults && (!Number.isInteger(defaults.sets) || defaults.sets < 1 || defaults.sets > 20
+    || !Number.isInteger(defaults.minReps) || defaults.minReps < 1 || !Number.isInteger(defaults.maxReps) || defaults.maxReps < defaults.minReps || defaults.maxReps > 99
+    || !Number.isInteger(defaults.targetRir) || defaults.targetRir < 0 || defaults.targetRir > 5)) throw Error('Check your set defaults.');
   if (!['auto','full_body','upper_lower','push_pull_legs','custom'].includes(routine.split)) throw Error('Choose a workout structure.');
+  if (routine.preferredSplit !== undefined && !['auto','full_body','upper_lower','push_pull_legs','custom'].includes(routine.preferredSplit)) throw Error('Choose a workout structure.');
   const settings = routine.progression;
   if (!settings || !['manual','double_progression'].includes(settings.mode)
     || !Number.isInteger(settings.successfulSessions) || settings.successfulSessions < 1 || settings.successfulSessions > 5
@@ -38,6 +53,7 @@ export const validateRoutineSource = (source: TrainingSource, catalog: ExerciseD
   if (!routine.workouts.length || routine.workouts.length > 14) throw Error('Add 1–14 workouts to your routine.');
   const ids = new Set<string>();
   for (const workout of routine.workouts) {
+    if (workout.targetMuscles !== undefined && (!Array.isArray(workout.targetMuscles) || workout.targetMuscles.some(muscle=>!MUSCLES.includes(muscle)))) throw Error('Choose valid target muscles.');
     if (!workout.id || ids.has(workout.id)) throw Error('Workout IDs must be unique.');
     ids.add(workout.id);
     if (!workout.name.trim() || workout.name.length > 80) throw Error('Give each workout a name of up to 80 characters.');

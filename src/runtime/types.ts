@@ -48,9 +48,16 @@ export type RoutineExercise = {
   /** User-reported baseline, never a completed set. */
   startingLoadKg?: number;
 };
-export type RoutineWorkout = { id: string; name: string; exercises: RoutineExercise[] };
+export type RoutineSetDefaults = Pick<RoutineExercise, 'sets' | 'minReps' | 'maxReps' | 'targetRir'>;
+export type RoutineFocus = 'build_muscle' | 'lose_fat' | 'strength' | 'maintain';
+export type RoutineWorkout = { id: string; name: string; targetMuscles?: Muscle[]; exercises: RoutineExercise[] };
 export type RoutineDefinition = {
+  focus?: RoutineFocus;
+  setDefaults?: RoutineSetDefaults;
+  limitationNote?: string;
   split: 'auto' | 'full_body' | 'upper_lower' | 'push_pull_legs' | 'custom';
+  /** User-selected structure context; explicit workouts still compile as custom. */
+  preferredSplit?: 'auto' | 'full_body' | 'upper_lower' | 'push_pull_legs' | 'custom';
   workouts: RoutineWorkout[];
   /** Private exercise definitions, stored with the routine rather than in the shared catalog. */
   customExercises?: ExerciseDefinition[];
@@ -114,6 +121,8 @@ export type PlannedExercise = {
 };
 
 export type TrainingBlock = {
+  /** A one-off workout snapshot supports logging without a recurring plan. */
+  kind?: 'workout';
   id: string;
   userId: string;
   version: number;
@@ -202,6 +211,10 @@ export type PrescribedExercise = {
 };
 
 export type SessionPrescription = {
+  /** First confirmed set, independent of when the prescription was prepared. */
+  startedAt?: string;
+  finishedAt?: string;
+  name?: string;
   id: string;
   blockId: string | null;
   planGroupId?: string;

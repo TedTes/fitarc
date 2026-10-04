@@ -150,6 +150,7 @@ export const recordRuntimeSet = (
   if (following?.status === 'pending') applied.decision.previousNextSet = { id: following.id, loadKg: following.loadKg, minReps: following.minReps, maxReps: following.maxReps };
   const updatedSession = {
     ...state.activeSession,
+    startedAt: state.activeSession.startedAt ?? state.setResults.find(item => item.prescriptionId === state.activeSession!.id)?.completedAt ?? result.completedAt,
     exercises: state.activeSession.exercises.map((entry) => {
       if (entry.exercise.id !== result.exerciseId) return entry;
       return {
@@ -203,7 +204,7 @@ export const reorderRuntimeExercises = (
 
 export const commitRuntimeSession = (state: RuntimeState): RuntimeState => {
   if (!state.activeSession) throw new Error('active_session_required');
-  const completed = { ...state.activeSession, status: 'committed' as const };
+  const completed = { ...state.activeSession, status: 'committed' as const, finishedAt: new Date().toISOString() };
   return {
     ...state,
     activeSession: null,
