@@ -65,6 +65,8 @@ export type RoutineDefinition = {
 };
 
 export type TrainingSource = {
+  weightUnit?: import('./weights').WeightUnit;
+  weightRanges?: Record<string,import('./weights').WeightRange>;
   /** Autosaved editor input, including incomplete work; separate from the applied routine. */
   routineEditor?: import('../routineSetup/editor').RoutineEditorSnapshot;
   id: string;

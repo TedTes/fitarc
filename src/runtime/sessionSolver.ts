@@ -1,3 +1,4 @@
+import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
 import { suggestWorkoutLoad } from './progression';
 import { MUSCLES, secondaryMuscleCredit } from './trainingPolicy';
@@ -72,13 +73,14 @@ export const solveSession = (input: {
     const suggestion = input.source.routine ? suggestWorkoutLoad(exercise, prescription ?? {
       exerciseId:exercise.id,sets:plannedSets,minReps:phase.minReps,maxReps:phase.maxReps,targetRir:phase.targetRir,
     },input.source,input.sessions ?? [],input.context.date) : undefined;
+    const range=input.source.weightRanges?.[exercise.id];
     const loadKg = suggestion?.loadKg ?? seed?.loadKg ?? prescription?.startingLoadKg ?? (exercise.compound ? 20 : 10);
     return {
       id: createRuntimeId(), exercise, priority: index + 1,
-      ...(suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
+      ...(range?{needsBaseline:false}:suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
       reason: `${reason} · ${{within_constraints:'Fits your current preferences',recovery_meh:'Fewer sets for today’s recovery',recovery_no:'Reduced work for today’s recovery',deload_override:'Reduced work for recovery',weekly_volume_cap:'Adjusted for this week’s completed work'}[arbitration.reasonCode] ?? 'Adjusted for today'}${suggestion ? ` · ${suggestion.explanation}` : ''}`,
       sets: Array.from({ length: allowedSets }, (_, setIndex) => ({
-        id: createRuntimeId(), setNumber: setIndex + 1, loadKg,
+        id: createRuntimeId(), setNumber: setIndex + 1, loadKg:range?rangeLoad(range,setIndex,allowedSets):loadKg,
         minReps: prescription?.minReps ?? phase.minReps, maxReps: prescription?.maxReps ?? phase.maxReps,
         targetRir: prescription?.targetRir ?? phase.targetRir, status: 'pending' as const,
       })),

@@ -1,7 +1,7 @@
 import type { SessionPrescription } from './types';
 
-export type WorkoutUnit = 'kg' | 'lb';
-export const displayedLoad = (kg: number, unit: WorkoutUnit) => kg * (unit === 'lb' ? 2.2046226218 : 1);
+export type { WeightUnit as WorkoutUnit } from './weights';
+export { fromKg as displayedLoad } from './weights';
 const recorded = (session: SessionPrescription) => session.exercises.flatMap(entry => entry.sets
   .filter(set => set.status === 'completed' && set.result)
   .map(set => ({ entry, set, result: set.result! })));

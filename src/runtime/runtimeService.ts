@@ -1,3 +1,4 @@
+import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
 import { suggestWorkoutLoad } from './progression';
 import { defaultProgression, editableRoutine, validateRoutineSource } from './routine';
@@ -12,7 +13,7 @@ import { applySetResult } from './runtimeReducers';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
 import { selectExercises } from './exerciseSelector';
 import { createRuntimeId } from './id';
-import type { ExerciseDefinition, Muscle, RuntimeState, SessionContext, SetResult, TrainingBlock, TrainingSource, WeeklyStatus } from './types';
+import type { ExerciseDefinition, Muscle, RuntimeState, SessionContext, SessionPrescription, SetResult, TrainingBlock, TrainingSource, WeeklyStatus } from './types';
 
 export const compileTrainingBlock = (state: RuntimeState, source: TrainingSource): RuntimeState => {
   if (state.activeSession) throw new Error('finish_active_session_before_recompile');
@@ -161,7 +162,7 @@ export const recordRuntimeSet = (
           if (index === resultIndex + 1 && set.status === 'pending') {
             return {
               ...set,
-              loadKg: applied.decision.nextLoadKg,
+              loadKg: state.source?.weightRanges?.[entry.exercise.id]?set.loadKg:applied.decision.nextLoadKg,
               minReps: applied.decision.nextMinReps,
               maxReps: applied.decision.nextMaxReps,
             };
@@ -176,6 +177,32 @@ export const recordRuntimeSet = (
     activeSession: updatedSession,
     sessions: applied.state.sessions.map((session) => session.id === updatedSession.id ? updatedSession : session),
   });
+};
+
+/** Correct an existing result without adding a set or changing its clock/order. */
+export const correctRuntimeSet = (state: RuntimeState, setId: string, values: {
+  actualLoadKg: number; completedReps: number; reportedRir: number;
+}): RuntimeState => {
+  const session=state.activeSession;
+  if(!session)throw new Error('active_session_required');
+  const target=session.exercises.flatMap(entry=>entry.sets).find(set=>set.id===setId);
+  if(target?.status!=='completed'||!target.result)throw new Error('Recorded set required.');
+  if(!Number.isFinite(values.actualLoadKg)||values.actualLoadKg<0||!Number.isInteger(values.completedReps)||values.completedReps<0
+    ||!Number.isFinite(values.reportedRir)||values.reportedRir<0||values.reportedRir>5)throw new Error('Check weight, repetitions and effort.');
+  const records=state.setResults.filter(result=>result.prescriptionId===session.id).map(result=>result.setId===setId?{...result,...values}:result);
+  const originalSets=new Map(session.exercises.flatMap(entry=>entry.sets).map(set=>[set.id,set]));
+  let rebuilt:SessionPrescription={...session,exercises:session.exercises.map(entry=>({...entry,sets:entry.sets.map(set=>set.result?{...set,status:'pending' as const,result:undefined,decision:undefined}:set)}))};
+  let next=projectTrainingState({...state,sessions:state.sessions.map(item=>item.id===session.id?rebuilt:item)});
+  // Recompute derived effort/load history in recorded order, retaining all prescriptions.
+  for(const result of records){
+    const {decision}=applySetResult({state:next,session:rebuilt,result});
+    const previousNextSet=originalSets.get(result.setId)?.decision?.previousNextSet;
+    rebuilt={...rebuilt,exercises:rebuilt.exercises.map(entry=>({...entry,sets:entry.sets.map(set=>set.id===result.setId?{
+      ...set,status:'completed' as const,result,decision:{...decision,...(previousNextSet?{previousNextSet}:{})},
+    }:set)}))};
+    next=projectTrainingState({...next,sessions:next.sessions.map(item=>item.id===session.id?rebuilt:item)});
+  }
+  return next;
 };
 
 /** Reorders the active session without changing its prescribed work. */
@@ -363,13 +390,14 @@ export const substituteRuntimeExercise = (
   const first = pending[0];
   if (!first) throw Error('No pending sets to replace.');
   const suggestion = state.source.routine ? suggestWorkoutLoad(replacement,{exerciseId:replacement.id,sets:pending.length,minReps:first.minReps,maxReps:first.maxReps,targetRir:first.targetRir},state.source,state.sessions,state.activeSession.context.date) : undefined;
+  const replacementRange=state.source.weightRanges?.[replacement.id];
   const replacementEntry = {
     id: createRuntimeId(), exercise: replacement, priority: target.priority,
-    ...(suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
+    ...(replacementRange?{needsBaseline:false}:suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
     reason: `Your replacement for ${target.exercise.name}, today only. ${suggestion?.explanation ?? ""}`,
     sets: pending.map((set, index) => ({
       ...set, id: createRuntimeId(), setNumber: index + 1,
-      loadKg: suggestion?.loadKg ?? seed?.loadKg ?? (replacement.compound ? 20 : 10),
+      loadKg: replacementRange?rangeLoad(replacementRange,index,pending.length):suggestion?.loadKg ?? seed?.loadKg ?? (replacement.compound ? 20 : 10),
     })),
   };
   const exercises = state.activeSession.exercises.flatMap((entry) => {
@@ -395,11 +423,12 @@ export const addRuntimeExercise = (state: RuntimeState, item: import('./types').
     || state.activeSession.context.unavailableExerciseIds.includes(exercise.id)
     || exercise.equipment.some(x=>!state.source!.equipment.includes(x) || state.activeSession!.context.unavailableEquipment.includes(x))) throw Error('This exercise does not fit today’s equipment or limitations.');
   const suggestion = state.source.routine ? suggestWorkoutLoad(exercise,item,state.source,state.sessions,state.activeSession.context.date) : undefined;
+  const range=state.source.weightRanges?.[item.exerciseId];
   const load = item.startingLoadKg ?? suggestion?.loadKg ?? state.workingSets[item.exerciseId]?.loadKg ?? 0;
   const entry = { id: createRuntimeId(), exercise, priority: state.activeSession.exercises.length+1,
-    needsBaseline: item.startingLoadKg === undefined && !(suggestion?.baselineKnown ?? state.workingSets[item.exerciseId]),
+    needsBaseline: !range && item.startingLoadKg === undefined && !(suggestion?.baselineKnown ?? state.workingSets[item.exerciseId]),
     reason: `Added by you for today only. ${suggestion?.explanation ?? 'Enter your actual weight.'}`,
-    sets: Array.from({length:item.sets},(_,i)=>({id:createRuntimeId(),setNumber:i+1,loadKg:load,minReps:item.minReps,maxReps:item.maxReps,targetRir:item.targetRir,status:'pending' as const})) };
+    sets: Array.from({length:item.sets},(_,i)=>({id:createRuntimeId(),setNumber:i+1,loadKg:range?rangeLoad(range,i,item.sets):load,minReps:item.minReps,maxReps:item.maxReps,targetRir:item.targetRir,status:'pending' as const})) };
   const session = { ...state.activeSession, exercises: [...state.activeSession.exercises,entry], estimatedMinutes: Math.ceil(state.activeSession.estimatedMinutes+exercise.setupMinutes+item.sets*(exercise.compound?3.5:2.5)) };
   return {...state,activeSession:session,sessions:state.sessions.map(x=>x.id===session.id?session:x)};
 };

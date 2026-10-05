@@ -1,10 +1,12 @@
 import { arbitratePrescription } from './arbitration';
 import { compileBlock, validateBlock } from './blockCompiler';
 import { solveSession } from './sessionSolver';
-import { commitRuntimeSession, getSwapCandidates, previewTrainingSessionDetailed, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise, solveTrainingSession, substituteRuntimeExercise, undoLastRuntimeSet } from './runtimeService';
+import { correctRuntimeSet, commitRuntimeSession, getSwapCandidates, previewTrainingSessionDetailed, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise, solveTrainingSession, substituteRuntimeExercise, undoLastRuntimeSet } from './runtimeService';
 import { solveNextSet } from './setSolver';
 import { computeWeeklyStatus } from './status';
 import { restSecondsFor } from './trainingPolicy';
+import { rangeLoad, saveWeightSettings, toKg, weightText } from './weights';
+import { fromStoredTraining, toStoredTraining } from './trainingState';
 import type { Muscle, RuntimeState, SetResult, TrainingSource } from './types';
 
 const expect = (condition: boolean, message: string) => {
@@ -106,6 +108,27 @@ export const runRuntimeContractChecks = () => {
   expect(reordered.activeSession!.exercises.map((entry) => entry.exercise.id).join('|') === reversedOrder.join('|'), 'active exercises must follow the user order');
   expect(reordered.sessions[reordered.sessions.length - 1].exercises.map((entry) => entry.exercise.id).join('|') === reversedOrder.join('|'), 'saved active session must keep the user order');
   const first = started.activeSession!.exercises[0];
+  expect(weightText(toKg(100,'lb'),'lb')==='100', 'unit conversion must preserve entered pounds');
+  expect(weightText(77,'lb')==='170'&&weightText(77,'kg')==='77','converted pounds must round to whole-pound values without changing stored kg');
+  const range={minKg:40,maxKg:60};
+  expect(rangeLoad(range,1,3)===50&&rangeLoad(range,0,1)===40,'ranges must fill evenly, including single sets');
+  const configured=saveWeightSettings(started,source,{exerciseId:first.exercise.id,range});
+  const ranged=configured.activeSession!.exercises[0];
+  expect(ranged.sets[0].loadKg===40&&ranged.sets.at(-1)!.loadKg===60&&!ranged.needsBaseline,'saved range must fill pending sets');
+  expect(!configured.activeSession!.startedAt&&configured.setResults.length===0,'saving a range must not start or log a workout');
+  const rangeLogged=recordRuntimeSet(configured,{prescriptionId:configured.activeSession!.id,setId:ranged.sets[0].id,exerciseId:ranged.exercise.id,prescribedLoadKg:40,actualLoadKg:42,prescribedMinReps:ranged.sets[0].minReps,prescribedMaxReps:ranged.sets[0].maxReps,targetRir:2,completedReps:12,reportedRir:2,completedAt:new Date().toISOString()});
+  expect(rangeLogged.activeSession!.exercises[0].sets[1].loadKg===ranged.sets[1].loadKg,'logging must retain range for following sets');
+  const changedRange=saveWeightSettings(rangeLogged,source,{exerciseId:first.exercise.id,range:{minKg:60,maxKg:80}});
+  expect(changedRange.activeSession!.exercises[0].sets[0].result?.actualLoadKg===42&&changedRange.activeSession!.exercises[0].sets.at(-1)!.loadKg===80,'range changes must preserve recorded actual weights');
+  const pounds=saveWeightSettings(changedRange,source,{weightUnit:'lb'});
+  expect(pounds.activeSession===changedRange.activeSession&&pounds.setResults===changedRange.setResults,'switching units must not alter prescriptions or results');
+  const restored=fromStoredTraining(JSON.parse(JSON.stringify(toStoredTraining(pounds))));
+  expect(restored.source?.weightUnit==='lb'&&restored.source.weightRanges?.[first.exercise.id].maxKg===80&&restored.setResults[0].actualLoadKg===42,'units, ranges and actual weights must survive storage round trips');
+  const future=solveTrainingSession({...fresh0,source:configured.source},context).activeSession!.exercises.find(entry=>entry.exercise.id===first.exercise.id)!;
+  expect(future.sets[0].loadKg===40&&future.sets.at(-1)!.loadKg===60,'future sessions must reuse the saved exercise range');
+  let invalidRange=false;try{saveWeightSettings(started,source,{exerciseId:first.exercise.id,range:{minKg:60,maxKg:40}});}catch{invalidRange=true;}
+  expect(invalidRange,'reversed ranges must be rejected');
+  expect(!saveWeightSettings(configured,source,{exerciseId:first.exercise.id,range:null}).source!.weightRanges![first.exercise.id],'range removal must clear the saved preference');
   const candidates = getSwapCandidates(started, first.exercise.id, 3);
   expect(candidates.length > 0 && candidates.every((item) => item.id !== first.exercise.id), 'swap candidates must exclude the current lift');
   const chosen = candidates[candidates.length - 1];
@@ -120,6 +143,28 @@ export const runRuntimeContractChecks = () => {
     prescribedLoadKg: logged.sets[0].loadKg, prescribedMinReps: logged.sets[0].minReps, prescribedMaxReps: logged.sets[0].maxReps,
     targetRir: logged.sets[0].targetRir, completedReps: logged.sets[0].maxReps, reportedRir: 2, completedAt: new Date().toISOString(),
   });
+  const laterSet=logged.sets[2];
+  const outOfOrder=recordRuntimeSet(withSet,{
+    ...withSet.setResults[0],setId:laterSet.id,actualLoadKg:25,completedReps:10,reportedRir:3,
+    completedAt:new Date(Date.parse(withSet.setResults[0].completedAt)+60000).toISOString(),
+  });
+  const correction=correctRuntimeSet(outOfOrder,logged.sets[0].id,{actualLoadKg:30,completedReps:9,reportedRir:1});
+  expect(correction.setResults.length===2,'correcting a set must not duplicate it');
+  expect(correction.setResults[0].actualLoadKg===30&&correction.setResults[0].completedReps===9&&correction.setResults[0].reportedRir===1,'corrections update all logged fields');
+  expect(correction.activeSession!.startedAt===outOfOrder.activeSession!.startedAt,'correction preserves the session clock');
+  expect(correction.setResults.every((result,index)=>result.completedAt===outOfOrder.setResults[index].completedAt&&result.recordedOrder===outOfOrder.setResults[index].recordedOrder),'correction preserves timestamps and recorded order');
+  expect(correction.setResults[1].actualLoadKg===25&&correction.setResults[1].completedReps===10,'correction preserves later actual results');
+  expect(correction.decisions.length===2&&correction.workingSets[logged.exercise.id].reps===10,'correction rebuilds the derived history');
+  const correctedUndo=undoLastRuntimeSet(correction);
+  expect(correctedUndo.setResults.length===1&&correctedUndo.setResults[0].actualLoadKg===30,'undo after correction removes the latest logged set, retaining corrections');
+  expect(correctedUndo.workingSets[logged.exercise.id].reps===9,'undo projects corrected performance');
+  let rejectedCorrection=false;
+  try{correctRuntimeSet(correction,logged.sets[1].id,{actualLoadKg:10,completedReps:10,reportedRir:2});}catch{rejectedCorrection=true;}
+  expect(rejectedCorrection,'unlogged sets cannot be corrected as completed');
+  for(const invalid of [{actualLoadKg:-1,completedReps:9,reportedRir:2},{actualLoadKg:30,completedReps:1.5,reportedRir:2},{actualLoadKg:30,completedReps:9,reportedRir:6}]){
+    let rejected=false;try{correctRuntimeSet(correction,logged.sets[0].id,invalid);}catch{rejected=true;}
+    expect(rejected,'invalid correction values are rejected');
+  }
   const finished = skipRemainingRuntimeSets(withSet);
   const firstTimestamp = withSet.setResults[withSet.setResults.length - 1].completedAt;
   expect(withSet.activeSession!.startedAt === firstTimestamp, 'the first logged set starts the session clock');
