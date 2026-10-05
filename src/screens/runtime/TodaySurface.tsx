@@ -6,7 +6,8 @@ import type { ExerciseDefinition, RecoveryState, RuntimeState, SessionContext } 
 import { nextRoutineSlot } from '../../runtime/sequence';
 import { colors, radius, space, TOUCH } from './theme';
 import { Banner, Button, Choice, IconButton, ScreenBrand, Sheet, Txt } from './ui';
-import { describeRuntimeError, equipmentLabel, formatKg, slotPlain } from './copy';
+import { describeRuntimeError, equipmentLabel, slotPlain } from './copy';
+import { weightText } from '../../runtime/weights';
 import { todayISO } from './selectors';
 import { SetLogger, type WorkoutDockState } from './SetLogger';
 import { ExerciseCardHeader, ExerciseSetRows } from './ExerciseCard';
@@ -26,6 +27,7 @@ type Props = {
 type Panel='conditions'|'workout'|'omitted'|'more'|null;
 
 export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpenSource, onOpenWeek, onNewWorkout }: Props) => {
+  const formatKg=(kg:number)=>`${weightText(kg,state.source?.weightUnit??'kg')} ${state.source?.weightUnit??'kg'}`;
   const { animate } = useLayoutMotion();
   const [minutes, setMinutes] = useState<SessionContext['minutesAvailable']>(state.source?.sessionMinutes ?? 60);
   const [recovery, setRecovery] = useState<RecoveryState>('yes');
@@ -48,7 +50,7 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
   },[session?.id,state.sessions]);
   const completed=state.sessions.find(item=>item.id===completedId);
   const completedPlan=completed?[...(state.blockHistory??[]),...(state.block?[state.block]:[])].find(plan=>plan.id===completed.blockId):null;
-  const completion=completed&&active?<WorkoutCompleteSheet session={completed} history={state.sessions} name={completed.name??slotPlain(completedPlan?.slots.find(slot=>slot.id===completed.slotId))} onDismiss={()=>setCompletedId(null)} onProgress={onOpenWeek}/>:null;
+  const completion=completed&&active?<WorkoutCompleteSheet unit={state.source?.weightUnit??'kg'} session={completed} history={state.sessions} name={completed.name??slotPlain(completedPlan?.slots.find(slot=>slot.id===completed.slotId))} onDismiss={()=>setCompletedId(null)} onProgress={onOpenWeek}/>:null;
   useEffect(() => {
     const window = state.block?.remainingWeek?.windows.find((item) => item.date === date);
     setReplacements({}); setWorkoutId(undefined); setExtraWorkout(false);

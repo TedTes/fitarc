@@ -1,9 +1,11 @@
+import { useWeightSettings } from './WeightSettings';
+import { weightText } from '../../runtime/weights';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { PrescribedExercise } from '../../runtime/types';
 import { MuscleMap } from './MuscleMap';
 import { preferredTargetView } from './muscleTargeting';
-import { formatKg, muscleList } from './copy';
+import { muscleList } from './copy';
 import { colors, radius, space } from './theme';
 import { Txt } from './ui';
 import Svg, { Circle } from 'react-native-svg';
@@ -81,15 +83,15 @@ export const ExerciseSectionHeader=({entry,active,expanded,ready=false,onMuscleP
 };
 
 /** Read-only sets for previews and completed or temporarily inactive cards. */
-export const ExerciseSetRows=({entry}:{entry:PrescribedExercise})=><View style={styles.sets}>
+export const ExerciseSetRows=({entry}:{entry:PrescribedExercise})=>{const {unit}=useWeightSettings();const formatLoad=(kg:number)=>`${weightText(kg,unit)} ${unit}`;return <View style={styles.sets}>
   {entry.sets.map(set=><View key={set.id} style={styles.set}>
     <Txt variant="caption" tone="muted">Set {set.setNumber}</Txt>
     <Txt variant="caption" tone={set.status==='skipped'?'muted':'primary'}>{set.result
-      ?`${formatKg(set.result.actualLoadKg??set.result.prescribedLoadKg)} × ${set.result.completedReps}`
-      :set.status==='skipped'?'Skipped':`${entry.needsBaseline?'— kg':formatKg(set.loadKg)} × ${set.minReps===set.maxReps?set.maxReps:`${set.minReps}–${set.maxReps}`}`}</Txt>
+      ?`${formatLoad(set.result.actualLoadKg??set.result.prescribedLoadKg)} × ${set.result.completedReps}`
+      :set.status==='skipped'?'Skipped':`${entry.needsBaseline?`— ${unit}`:formatLoad(set.loadKg)} × ${set.minReps===set.maxReps?set.maxReps:`${set.minReps}–${set.maxReps}`}`}</Txt>
     {set.result?<Ionicons name="checkmark" size={16} color={colors.success}/>:<Txt variant="caption" tone="muted">{set.status==='pending'?`RIR ${set.targetRir}`:'—'}</Txt>}
   </View>)}
-</View>;
+</View>;};
 const styles=StyleSheet.create({
   header:{minHeight:84,flexDirection:'row',alignItems:'center',gap:space.md,padding:space.md},
   sectionHeader:{flexDirection:'row',alignItems:'center',gap:space.sm},

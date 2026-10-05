@@ -1,3 +1,5 @@
+import { saveWeightSettings } from '../runtime/weights';
+import { WeightSettingsContext } from './runtime/WeightSettings';
 import { saveRoutineEditor, type RoutineEditorInput } from '../routineSetup/editor';
 import { editableRoutine } from '../runtime/routine';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,6 +25,7 @@ import { TodaySurface } from './runtime/TodaySurface';
 import type { WorkoutDockState } from './runtime/SetLogger';
 import { WeekSurface } from './runtime/WeekSurface';
 import { useMonoFonts } from './runtime/fonts';
+import { useLayoutMotion } from './runtime/useLayoutMotion';
 import { AthleteLoadingScreen } from '../components/AthleteBackdrop';
 
 type Props = {
@@ -51,6 +54,7 @@ const EmptyTrainingSurface = ({ title, message }: { title: string; message: stri
 export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const insets = useSafeAreaInsets();
   const fontsReady = useMonoFonts();
+  const { reduced } = useLayoutMotion();
   const { state, loading: stateLoading, loadError, reload, sync, apply, retrySync, restoreCloud } = useRuntimeController(user.id);
   const loading = stateLoading || !fontsReady;
   const [surface, setSurface] = useState<Surface>('solver');
@@ -63,12 +67,9 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const [fresh, setFresh] = useState<{ id: number; action?: { label: string; run: () => void } } | null>(null);
   const [dismissedId, setDismissedId] = useState<number | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const [workoutTabsVisible, setWorkoutTabsVisible] = useState(false);
   const [workoutDock, setWorkoutDock] = useState<WorkoutDockState | null>(null);
-  const [tabBarWidth, setTabBarWidth] = useState(0);
   const tabReveal = useRef(new Animated.Value(1)).current;
   const dockTransition = useRef(new Animated.Value(0)).current;
-  const tabPosition = useRef(new Animated.Value(0)).current;
   const previousSurface = useRef<Surface>('solver');
   const surfaceOpacity = useRef<Record<Surface, Animated.Value>>({
     solver: new Animated.Value(1), block: new Animated.Value(0), week: new Animated.Value(0), account: new Animated.Value(0),
@@ -122,17 +123,12 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
 
   const progress = sessionProgress(state);
   const inSession = Boolean(state.activeSession?.startedAt || state.activeSession?.exercises.some(entry=>entry.sets.some(set=>set.result)));
-  const timerRunning = workoutDock?.phase === 'set' || workoutDock?.phase === 'rest';
-  const showDock = !keyboardOpen && surface === 'solver' && Boolean(progress?.pending) && timerRunning && !workoutTabsVisible;
+  const showDock = !keyboardOpen && surface === 'solver' && inSession && Boolean(workoutDock);
   const bottomVisible = !keyboardOpen;
 
   useEffect(() => {
     if (!visibleTabs.some(tab => tab.key === surface)) setSurface('solver');
   }, [surface, visibleTabs]);
-
-  useEffect(() => {
-    if (!timerRunning) setWorkoutTabsVisible(false);
-  }, [timerRunning]);
 
   useEffect(() => {
     Animated.timing(tabReveal, {
@@ -146,19 +142,15 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   useEffect(() => {
     Animated.timing(dockTransition, {
       toValue: showDock ? 1 : 0,
-      duration: 220,
+      duration: reduced ? 0 : 220,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
-  }, [dockTransition, showDock]);
+  }, [dockTransition, showDock, reduced]);
 
   useEffect(() => {
     const previous = previousSurface.current;
     const direction = SURFACE_INDEX[surface] >= SURFACE_INDEX[previous] ? 1 : -1;
-
-    Animated.timing(tabPosition, {
-      toValue: Math.max(0,visibleTabs.findIndex(tab=>tab.key===surface)) / (visibleTabs.length-1), duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true,
-    }).start();
 
     if (previous === surface) return;
     surfaceOpacity[surface].stopAnimation();
@@ -175,7 +167,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
       Animated.timing(surfaceOffset[surface], { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start(() => surfaceOffset[previous].setValue(0));
     previousSurface.current = surface;
-  }, [surface, surfaceOffset, surfaceOpacity, tabPosition, visibleTabs]);
+  }, [surface, surfaceOffset, surfaceOpacity]);
 
   // An active session survives restarts. A completed session needs an explicit reminder because
   // the next action is commit/discard; an in-progress session already identifies itself in set.log.
@@ -191,7 +183,6 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const weekView = useMemo(() => (loading ? null : getRuntimeWeekView(state)), [loading, state]);
   const go = useCallback((next: Surface) => {
     setSurface(next);
-    if (next === 'solver') setWorkoutTabsVisible(false);
   }, []);
 
   const saveEditor = useCallback((editor:RoutineEditorInput) => {
@@ -261,6 +252,10 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const chip = state.source && block ? block.kind === 'workout' ? 'Workout log' : `${goalLabel(state.source.goal)} · Week ${block.currentWeek}${block.scheduling ? "" : ` of ${block.durationWeeks}`}` : null;
 
   return (
+    <WeightSettingsContext.Provider value={{unit:state.source?.weightUnit??'kg',ranges:state.source?.weightRanges??{},save:patch=>{
+      const outcome=apply(current=>saveWeightSettings(current,defaultSource,patch));
+      return outcome.ok?undefined:describeRuntimeError(outcome.error).message;
+    }}}>
     <ChromeContext.Provider value={{ chip, sync, onSyncPress }}>
     <KeyboardAvoidingView style={[styles.root, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Every surface stays mounted so a half-entered set or an open form survives a look at another destination. */}
@@ -330,7 +325,6 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           accessibilityElementsHidden={showDock}
           importantForAccessibility={showDock ? 'no-hide-descendants' : 'auto'}
           pointerEvents={showDock ? 'none' : 'auto'}
-          onLayout={(event) => setTabBarWidth(event.nativeEvent.layout.width)}
           style={[
             styles.bottomLayer,
             styles.tabsLayer,
@@ -341,23 +335,6 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
             },
           ]}
         >
-          {tabBarWidth > 0 ? (
-            <Animated.View
-              pointerEvents="none"
-              style={[
-                styles.tabIndicator,
-                {
-                  width: tabBarWidth / visibleTabs.length,
-                  transform: [{
-                    translateX: tabPosition.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, tabBarWidth - tabBarWidth / visibleTabs.length],
-                    }),
-                  }],
-                },
-              ]}
-            />
-          ) : null}
           {visibleTabs.map((tab) => {
             const selected = surface === tab.key;
             return (
@@ -395,45 +372,25 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
             },
           ]}
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={workoutDock?.phase === 'rest' ? 'Restart rest timer' : 'Reset set timer'}
-            onPress={workoutDock?.onReset}
-            style={({ pressed }) => [styles.dockAction, pressed && styles.pressed]}
-          >
-            <Ionicons name="refresh" size={27} color={colors.textSecondary} />
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${workoutDock?.phase === 'rest' ? 'Rest' : 'Set'} timer ${formatClock(workoutDock?.seconds ?? 0)}. Show navigation tabs`}
-            accessibilityHint="Shows the app navigation while the timer continues"
-            onPress={() => setWorkoutTabsVisible(true)}
-            style={({ pressed }) => [styles.dockReadout, pressed && styles.pressed]}
-          >
-            <Txt variant="label" tone="accent" style={styles.dockLabel}>{workoutDock?.phase === 'rest' ? 'REST' : 'SET'}</Txt>
-            <Txt style={styles.dockTime}>{formatClock(workoutDock?.seconds ?? 0)}</Txt>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={workoutDock?.phase === 'rest' ? 'Continue to next set' : 'Record set and continue'}
-            accessibilityState={{ disabled: Boolean(workoutDock?.primaryDisabled) }}
-            aria-disabled={Boolean(workoutDock?.primaryDisabled)}
-            disabled={workoutDock?.primaryDisabled}
-            onPress={workoutDock?.onPrimary}
-            style={({ pressed }) => [styles.dockAction, workoutDock?.primaryDisabled && styles.dockActionDisabled, pressed && styles.pressed]}
-          >
-            <Ionicons
-              name="chevron-forward"
-              size={30}
-              color={colors.accent}
-            />
-          </Pressable>
+          <View style={styles.dockRow}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Rest timer ${formatClock(workoutDock?.seconds ?? 0)}. Skip rest`} onPress={workoutDock?.onSkip} style={({pressed})=>[styles.dockReadout,pressed&&styles.pressed]}>
+              <Ionicons name="timer-outline" size={22} color={colors.accent}/>
+              <Txt variant="code" style={styles.dockTime}>{formatClock(workoutDock?.seconds ?? 0)}</Txt>
+              <Txt variant="mono" tone="secondary" style={styles.dockLabel}>resting</Txt>
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Skip rest" onPress={workoutDock?.onSkip} style={({pressed})=>[styles.dockAction,pressed&&styles.pressed]}>
+              <Txt variant="code" tone="accent">skip</Txt>
+              <Ionicons name="chevron-forward" size={18} color={colors.accent}/>
+            </Pressable>
+          </View>
+          <View style={styles.dockTrack}><View style={[styles.dockFill,{width:`${Math.min(100,(workoutDock?.seconds??0)/Math.max(1,workoutDock?.durationSeconds??1)*100)}%`}]}/></View>
         </Animated.View>
       </Animated.View>
       {quickWorkoutOpen?<NewWorkoutSheet state={state} defaults={defaultSource} apply={apply}
         onClose={()=>setQuickWorkoutOpen(false)} onStarted={()=>{setQuickWorkoutOpen(false);go('solver');}}/>:null}
     </KeyboardAvoidingView>
     </ChromeContext.Provider>
+    </WeightSettingsContext.Provider>
   );
 };
 
@@ -447,14 +404,15 @@ const styles = StyleSheet.create({
   bottomStage: { position: 'relative', borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
   bottomLayer: { ...StyleSheet.absoluteFillObject },
   tabsLayer: { flexDirection: 'row', backgroundColor: colors.surface },
-  dockLayer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, paddingHorizontal: space.lg },
-  tabIndicator: { position: 'absolute', zIndex: 2, top: 0, left: 0, height: 3, backgroundColor: colors.accent },
+  dockLayer: { justifyContent: 'center', backgroundColor: colors.surface, paddingHorizontal: space.lg },
+  dockRow: { flexDirection: 'row', alignItems: 'center', minHeight: 52 },
+  dockTrack: { height: 3, borderRadius: 2, overflow: 'hidden', backgroundColor: colors.border },
+  dockFill: { height: 3, backgroundColor: colors.accent },
   tab: { zIndex: 1, flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: 2, paddingTop: space.sm },
   pressed: { opacity: 0.7 },
   liveDot: { position: 'absolute', top: -2, right: -6, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.warning, borderWidth: 1, borderColor: colors.surface },
-  dockReadout: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  dockReadout: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
   dockLabel: { fontSize: 11, lineHeight: 14 },
-  dockTime: { color: colors.text, fontSize: 27, lineHeight: 31, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  dockAction: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
-  dockActionDisabled: { opacity: 0.3 },
+  dockTime: { color: colors.accent, fontSize: 27, lineHeight: 31, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  dockAction: { minWidth: 64, minHeight: 44, flexDirection: 'row', gap: 4, alignItems: 'center', justifyContent: 'flex-end' },
 });

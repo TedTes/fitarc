@@ -4,7 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SessionPrescription } from '../../runtime/types';
 import { localDate } from '../../runtime/planDates';
-import { displayedLoad, workoutSummary, type WorkoutUnit } from '../../runtime/workoutSummary';
+import { workoutSummary, type WorkoutUnit } from '../../runtime/workoutSummary';
+import { weightText } from '../../runtime/weights';
 import { colors, completeTokens as c, planTokens as t } from './theme';
 import { Txt } from './ui';
 import { useLayoutMotion } from './useLayoutMotion';
@@ -15,7 +16,7 @@ export const WorkoutCompleteSheet = ({session,history,name,unit='kg',onDismiss,o
   const position=useRef(new Animated.Value(height)).current,opacity=useRef(new Animated.Value(0)).current;
   const sheetHeight=useRef(height*c.heightFraction),closing=useRef(false);
   const summary=useMemo(()=>workoutSummary(session,history),[session,history]);
-  const load=(kg:number)=>displayedLoad(kg,unit).toLocaleString(undefined,{maximumFractionDigits:1});
+  const load=(kg:number)=>Number(weightText(kg,unit)).toLocaleString();
   const close=(progress=false)=>{
     if(closing.current)return;
     closing.current=true;

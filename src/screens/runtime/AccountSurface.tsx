@@ -1,3 +1,5 @@
+import { WeightUnitOptions, useWeightSettings } from './WeightSettings';
+import { toKg, weightText } from '../../runtime/weights';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -67,6 +69,7 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
 
 export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const { animate } = useLayoutMotion();
+  const {unit}=useWeightSettings();
   const [logOpen,setLogOpen] = useState(false);
   const [openSession,setOpenSession] = useState<string|null>(null);
   const [editingProfile, setEditingProfile] = useState(false);
@@ -78,7 +81,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   const [experience, setExperience] = useState<User['experienceLevel']>(user.experienceLevel);
   const [age, setAge] = useState(String(user.age));
   const [height, setHeight] = useState(String(user.heightCm));
-  const [weight, setWeight] = useState(user.weightKg ? String(user.weightKg) : '');
+  const [weight, setWeight] = useState(user.weightKg ? weightText(user.weightKg,unit) : '');
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
   const [avatarPath, setAvatarPath] = useState(user.avatarPath);
   const source = state.source;
@@ -95,10 +98,10 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
     setExperience(user.experienceLevel);
     setAge(String(user.age));
     setHeight(String(user.heightCm));
-    setWeight(user.weightKg ? String(user.weightKg) : '');
+    setWeight(user.weightKg ? weightText(user.weightKg,unit) : '');
     setAvatarUrl(user.avatarUrl);
     setAvatarPath(user.avatarPath);
-  }, [user]);
+  }, [user,unit]);
 
   const openProfileEditor = () => {
     setName(user.name ?? '');
@@ -106,7 +109,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
     setExperience(user.experienceLevel);
     setAge(String(user.age));
     setHeight(String(user.heightCm));
-    setWeight(user.weightKg ? String(user.weightKg) : '');
+    setWeight(user.weightKg ? weightText(user.weightKg,unit) : '');
     setAvatarUrl(user.avatarUrl);
     setAvatarPath(user.avatarPath);
     setEditingProfile(true);
@@ -115,11 +118,11 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   const saveProfile = async () => {
     const ageValue = Number.parseInt(age, 10);
     const heightValue = Number.parseInt(height, 10);
-    const weightValue = weight.trim() ? Number.parseFloat(weight) : undefined;
+    const weightValue = weight.trim() ? user.weightKg!=null&&weight===weightText(user.weightKg,unit)?user.weightKg:toKg(Number(weight),unit) : undefined;
     if (!name.trim()) { Alert.alert('Name required', 'Enter the name you want shown in the app.'); return; }
     if (!Number.isFinite(ageValue) || ageValue < 13 || ageValue > 100) { Alert.alert('Check age', 'Age must be between 13 and 100.'); return; }
     if (!Number.isFinite(heightValue) || heightValue < 100 || heightValue > 250) { Alert.alert('Check height', 'Height must be between 100 and 250 cm.'); return; }
-    if (weightValue !== undefined && (!Number.isFinite(weightValue) || weightValue < 25 || weightValue > 400)) { Alert.alert('Check weight', 'Enter a weight between 25 and 400 kg.'); return; }
+    if (weightValue !== undefined && (!Number.isFinite(weightValue) || weightValue < 25 || weightValue > 400)) { Alert.alert('Check weight', `Enter a weight between ${weightText(25,unit)} and ${weightText(400,unit)} ${unit}.`); return; }
     setSavingProfile(true);
     try {
       await onSaveProfile({ ...user, name: name.trim(), sex, experienceLevel: experience, age: ageValue, heightCm: heightValue, weightKg: weightValue, avatarUrl, avatarPath });
@@ -193,7 +196,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
                 <View style={styles.badge}><Txt variant="code" tone="accent" style={styles.badgeText}>{user.experienceLevel.toUpperCase()}</Txt></View>
               </View>
             </View>
-            <View style={styles.metrics}><Metric label="YEARS" value={user.age}/><Metric label="HEIGHT" value={user.heightCm} unit="cm"/><Metric label="WEIGHT" value={user.weightKg} unit="kg"/></View>
+            <View style={styles.metrics}><Metric label="YEARS" value={user.age}/><Metric label="HEIGHT" value={user.heightCm} unit="cm"/><Metric label="WEIGHT" value={user.weightKg==null?undefined:Number(weightText(user.weightKg,unit))} unit={unit}/></View>
           </View>
         </View>
 
@@ -205,6 +208,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
               <Fact label="schedule" value={source?`${source.daysPerWeek} days · ${source.sessionMinutes} min`:'—'}/>
               <Fact label="equipment" value={source?equipmentSummary:'—'}/>
               <Fact label="limits" value={source?limits:'—'}/>
+              <View style={styles.fact}><Txt variant="mono" tone="muted" style={styles.factLabel}>weight unit</Txt><View style={styles.flex}><WeightUnitOptions/></View></View>
             </View>
           </View>
         </View>
@@ -253,7 +257,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
         <Field label="name" value={name} onChangeText={setName} />
         <Field label="age" value={age} onChangeText={(value) => setAge(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix="years" />
         <Field label="height" value={height} onChangeText={(value) => setHeight(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix="cm" />
-        <Field label="weight" value={weight} onChangeText={(value) => setWeight(value.replace(/[^0-9.]/g, '').slice(0, 6))} keyboardType="decimal-pad" suffix="kg" />
+        <Field label="weight" value={weight} onChangeText={(value) => setWeight(value.replace(/[^0-9.]/g, '').slice(0, 6))} keyboardType="decimal-pad" suffix={unit} />
         <Txt variant="label" tone="muted">SEX</Txt>
         <View style={styles.choices}>
           {(['male', 'female', 'other'] as const).map((value) => <Choice key={value} compact code label={value} selected={sex === value} onPress={() => setSex(value)} />)}
