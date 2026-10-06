@@ -319,7 +319,7 @@ export const Banner = ({
 
 // ───────────────────────── Sheets & help ─────────────────────────
 
-export const Sheet = ({ visible, onClose, title, children, avoidKeyboard = false }: { visible: boolean; onClose: () => void; title: string; children: ReactNode; avoidKeyboard?: boolean }) => {
+export const Sheet = ({ visible, onClose, title, children, avoidKeyboard = false, scrollable = true }: { visible: boolean; onClose: () => void; title: string; children: ReactNode; avoidKeyboard?: boolean; scrollable?: boolean }) => {
   const insets = useSafeAreaInsets();
   return (
     <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
@@ -335,7 +335,7 @@ export const Sheet = ({ visible, onClose, title, children, avoidKeyboard = false
               <Ionicons name="close" size={24} color={colors.textSecondary} />
             </Pressable>
           </View>
-          <ScrollView bounces={false} contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled">{children}</ScrollView>
+          {scrollable?<ScrollView bounces={false} contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled">{children}</ScrollView>:<View style={styles.sheetContent}>{children}</View>}
         </View>
       </KeyboardAvoidingView>
     </Modal>
