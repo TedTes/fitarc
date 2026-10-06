@@ -14,6 +14,9 @@ import { ExerciseCardHeader, ExerciseSetRows } from './ExerciseCard';
 import { ExerciseMuscleDetails } from './ExerciseMuscles';
 import { WorkoutCompleteSheet } from './WorkoutCompleteSheet';
 import { EmptyToday } from './EmptyToday';
+import { nextWorkoutPreview } from '../../runtime/nextWorkout';
+import { startAdditionalWorkout } from '../../runtime/freeWorkout';
+import { NextWorkoutPreview } from './NextWorkoutPreview';
 import { useLayoutMotion } from './useLayoutMotion';
 import { WorkoutAlternatives } from './WorkoutAlternatives';
 import type { ApplyResult } from './useRuntimeController';
@@ -67,6 +70,11 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
     try { return { value: previewTrainingSessionDetailed(state, context), error: null }; }
     catch (error) { return { value: null, error: describeRuntimeError(error).message }; }
   }, [state, context, session]);
+  const nextWorkout=useMemo(()=>nextWorkoutPreview(state,date),[state,date]);
+  if(nextWorkout)return <><NextWorkoutPreview workout={nextWorkout} today={date} onRoutine={onOpenSource} onNewWorkout={onNewWorkout} onUse={()=>{
+    const outcome=apply(current=>startAdditionalWorkout(current,current.source!,nextWorkout.exercises.map(({exercise,...item})=>({...item,exerciseId:exercise.id})),nextWorkout.name,date));
+    if(!outcome.ok)notify({tone:'error',title:'Could not prepare workout',message:describeRuntimeError(outcome.error).message});
+  }}/>{completion}</>;
   if(!session&&state.block?.kind==='workout')return <><EmptyToday onAddRoutine={onOpenSource} onLogWorkout={onNewWorkout}/>{completion}</>;
   const proposal = preview?.value;
 

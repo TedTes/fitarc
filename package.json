@@ -16,7 +16,8 @@
     "adaptation:check": "node scripts/check-adaptation.cjs",
     "routine:check": "node scripts/check-routine.cjs",
     "routine-setup:check": "node scripts/check-routine-setup.cjs",
-    "workout-summary:check": "node scripts/check-workout-summary.cjs"
+    "workout-summary:check": "node scripts/check-workout-summary.cjs",
+    "next-workout:check": "node scripts/check-next-workout.cjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
