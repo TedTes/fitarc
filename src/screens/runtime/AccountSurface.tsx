@@ -1,6 +1,6 @@
 import { WeightUnitOptions, useWeightSettings } from './WeightSettings';
 import { toKg, weightText } from '../../runtime/weights';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -10,9 +10,7 @@ import { uploadUserAvatar } from '../../services/userProfileService';
 import { colors, radius, space, TOUCH, planTokens as t } from './theme';
 import { Button, Choice, Sheet, Txt } from './ui';
 import { equipmentLabel, goalLabel, limitationLabel } from './copy';
-import { PlanPanel, PlanText } from './PlanKit';
-import { useLayoutMotion } from './useLayoutMotion';
-import { WorkoutResults } from './WorkoutResults';
+import { PlanText } from './PlanKit';
 import { FULL_GYM } from './constants';
 import type { SyncStatus } from './useRuntimeController';
 
@@ -37,9 +35,6 @@ const Metric = ({label,value,unit}:{label:string;value:number|null|undefined;uni
   <View style={styles.metricValue}><Txt variant="code" style={styles.metricNumber}>{value??'—'}</Txt>{value&&unit?<Txt variant="mono" tone="muted" style={styles.metricUnit}>{unit}</Txt>:null}</View>
   <Txt variant="label" tone="muted" style={styles.metricLabel}>{label}</Txt>
 </View>;
-const AccountButton = ({label,icon,onPress,compact=false}:{label:string;icon:keyof typeof Ionicons.glyphMap;onPress:()=>void;compact?:boolean}) => <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({pressed})=>[styles.outlineButton,compact&&styles.compactButton,pressed&&styles.pressed]}>
-  <Ionicons name={icon} size={t.icon} color={colors.textMuted}/><Txt variant="heading" style={styles.buttonLabel}>{label}</Txt>
-</Pressable>;
 const initialsFor = (name?:string) => (name?.trim()||'Athlete').split(/\s+/).map(part=>part[0]).join('').slice(0,2).toUpperCase();
 
 const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }: {
@@ -68,10 +63,7 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
 );
 
 export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
-  const { animate } = useLayoutMotion();
   const {unit}=useWeightSettings();
-  const [logOpen,setLogOpen] = useState(false);
-  const [openSession,setOpenSession] = useState<string|null>(null);
   const [editingProfile, setEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -86,7 +78,6 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   const [avatarPath, setAvatarPath] = useState(user.avatarPath);
   const source = state.source;
   const initials = initialsFor(name);
-  const completedWorkouts = useMemo(()=>state.sessions.filter(session=>session.status==='committed'&&session.exercises.some(entry=>entry.sets.some(set=>set.status==='completed'&&set.result))).slice().sort((a,b)=>(b.finishedAt??b.context.date).localeCompare(a.finishedAt??a.context.date)),[state.sessions]);
   const equipment = source?.equipment??[];
   const equipmentSummary = FULL_GYM.every(item=>equipment.includes(item))?'full gym':equipment.length?equipment.map(equipmentLabel).join(', ').toLowerCase():'bodyweight';
   const limits = [...(source?.limitations.map(limitationLabel)??[]),...(source?.routine?.limitationNote?.trim()?[source.routine.limitationNote.trim()]:[])].join(' · ')||'none';
@@ -179,7 +170,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-        <View style={styles.header}><PlanText kind="title">Account</PlanText><AccountButton label="Workout log" icon="calendar-outline" compact onPress={()=>setLogOpen(true)}/></View>
+        <View style={styles.header}><PlanText kind="title">Account</PlanText></View>
 
         <View style={styles.section}>
           <PlanText kind="overline">PROFILE</PlanText>
@@ -237,16 +228,6 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
         </View>
       </ScrollView>
 
-      <Sheet visible={logOpen} onClose={()=>setLogOpen(false)} title="Workout log">
-        {completedWorkouts.length?completedWorkouts.map(session=>{
-          const plan=[...(state.blockHistory??[]),...(state.block?[state.block]:[])].find(plan=>plan.id===session.blockId);
-          const title=session.name??plan?.slots.find(slot=>slot.id===session.slotId)?.label??'Workout';
-          const sets=session.exercises.flatMap(entry=>entry.sets).filter(set=>set.status==='completed'&&set.result).length;
-          const date=new Date(`${session.context.date}T12:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
-          return <PlanPanel key={session.id} title={`${title} · ${date}`} summary={`${sets} ${sets===1?'set':'sets'}`} open={openSession===session.id} onToggle={()=>{animate();setOpenSession(current=>current===session.id?null:session.id);}}><WorkoutResults session={session}/></PlanPanel>;
-        }):<PlanText kind="meta">No workouts yet</PlanText>}
-      </Sheet>
-
       <Sheet visible={editingProfile} onClose={() => setEditingProfile(false)} title="Edit profile">
         <View style={styles.avatarEditor}>
           <View style={styles.avatarLarge}>
@@ -286,8 +267,7 @@ const styles = StyleSheet.create({
   metrics:{flexDirection:'row',gap:t.pad.small},
   metric:{flex:1,minHeight:56,justifyContent:'center',alignItems:'center',gap:t.pad.tiny,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.segment,backgroundColor:colors.surfaceInset},
   metricValue:{flexDirection:'row',alignItems:'baseline'},metricNumber:{fontSize:17,lineHeight:22},metricUnit:{fontSize:9,lineHeight:13},metricLabel:{fontSize:8,lineHeight:12,letterSpacing:0.8},
-  outlineButton:{minHeight:t.touch,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:t.pad.small,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.segment},
-  compactButton:{paddingHorizontal:t.pad.medium},buttonLabel:{fontSize:12,lineHeight:17,color:colors.textSecondary},actionLabel:{fontSize:14,lineHeight:20},
+  actionLabel:{fontSize:14,lineHeight:20},
   section: { gap: space.sm },
   profileRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   avatar: { width: 48, height: 48, borderRadius: 24, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
