@@ -231,6 +231,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       <Txt variant="mono" tone="muted" style={styles.meta}>
         <Txt variant="mono" style={[styles.meta,{color:startedAt?colors.success:colors.accent}]}>{startedAt?`● ${formatTime(elapsed).padStart(5,'0')} elapsed`:'Ready'}</Txt>{` · ${completed} of ${allSets.length} sets`}
       </Txt>
+      {state.source?.routine?.selectionMode==='pools'?<Txt variant="caption" tone="secondary">{state.block?.slots.find(slot=>slot.id===session.slotId)?.label} · Changes here are for today</Txt>:null}
       <View style={styles.progressRow} accessibilityLabel={`${completed} of ${allSets.length} sets completed`}>
         {allSets.map(item=><View key={item.id} style={[styles.segment,item.status==='completed'&&styles.segmentDone]}/>)}
       </View>
@@ -280,7 +281,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       {rangeOpen?<WeightRangeSheet exerciseId={exercise.id} name={exercise.name} onClose={applied=>{setRangeOpen(false);if(applied)setDrafts(previous=>{const next={...previous};entry.sets.filter(set=>set.status==='pending').forEach(set=>{if(next[set.id]){const {load,...rest}=next[set.id];next[set.id]=rest;}});return next;});}}/>:null}
       <ExerciseDetailsSheet exercise={inspectedExercise} onClose={()=>setInspectedExercise(null)}/>
       {sheet==='add'?<TodayExercisePicker
-        catalog={(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq)))}
+        initialMuscles={state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.targetMuscles:undefined}
+        catalog={(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq))).sort((a,b)=>{const pool=state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.plannedExercises:[];return Number(pool?.some(p=>p.exerciseId===b.id))-Number(pool?.some(p=>p.exerciseId===a.id));})}
         onClose={closeSheet}
         onAdd={exercise=>report(apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${exercise.name} added for today`});})}
       />:null}

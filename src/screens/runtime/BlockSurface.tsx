@@ -143,8 +143,8 @@ export const BlockSurface = ({ state, block, sessionActive, onNextBlock, onEditR
             nestedScrollEnabled
           >
             <View style={styles.workoutMeta}>
-              <Txt variant="label" tone="muted">{selectedSlot.plannedExercises.length} LIFTS</Txt>
-              <Txt variant="mono" tone="secondary">{selectedSets} sets</Txt>
+              <Txt variant="label" tone="muted">{selectedSlot.plannedExercises.length} {block.preferences?.routine?.selectionMode==='pools'?'IN POOL':'LIFTS'}</Txt>
+              <Txt variant="mono" tone="secondary">{block.preferences?.routine?.selectionMode==='pools'?'Today selects from this pool':`${selectedSets} sets`}</Txt>
             </View>
             {selectedSlot.plannedExercises.map((plan, index) => (
               <Pressable key={`${plan.exerciseId}:${index}`} onPress={() => setInspectedExerciseId(plan.exerciseId)}

@@ -1,3 +1,4 @@
+import { selectPoolPlans } from '../../runtime/exercisePools';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ExerciseDefinition, RuntimeState, SessionContext, TrainingSlot } from '../../runtime/types';
@@ -13,7 +14,8 @@ export const WorkoutAlternatives=({state,slot,target,context,onChange}:{
   if(!state.source||!state.block)return null;
   const catalog=state.block.catalog??state.catalog??[];
   const replacement=context.exerciseReplacements?.[target.id];
-  const excluded=slot.plannedExercises.filter(x=>x.exerciseId!==target.id).map(x=>context.exerciseReplacements?.[x.exerciseId]??x.exerciseId);
+  const plans=state.source.routine?.selectionMode==='pools'?selectPoolPlans(slot,state.source,catalog,context,state.sessions):slot.plannedExercises;
+  const excluded=plans.filter(x=>x.exerciseId!==target.id).map(x=>context.exerciseReplacements?.[x.exerciseId]??x.exerciseId);
   const options=exerciseAlternatives(target,catalog,state.source,state.sessions,context,excluded).slice(0,5);
   return <View style={styles.group}>
     {replacement?<Button label={`Restore ${target.name}`} variant="secondary" onPress={()=>{const next={...context.exerciseReplacements};delete next[target.id];onChange(next);}} />:null}

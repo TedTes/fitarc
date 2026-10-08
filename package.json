@@ -9,7 +9,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "muscle-map:check": "node scripts/check-muscle-targeting.cjs",
-    "runtime:check": "tsc src/runtime/runtimeCases.ts --outDir /tmp/fitarc-runtime-check --module commonjs --target es2022 --esModuleInterop --skipLibCheck && node -e \"require('/tmp/fitarc-runtime-check/runtimeCases.js').runRuntimeContractChecks(); console.log('runtime contracts passed')\"",
+    "runtime:check": "tsc src/runtime/runtimeCases.ts --outDir /tmp/fitarc-runtime-check --rootDir src --module commonjs --target es2022 --esModuleInterop --skipLibCheck && node -e \"require('/tmp/fitarc-runtime-check/runtime/runtimeCases.js').runRuntimeContractChecks(); console.log('runtime contracts passed')\"",
     "data:check": "node scripts/check-database-routing.cjs && node scripts/check-data-model.cjs && node scripts/seed-exercises.cjs --check",
     "catalog:seed": "node scripts/seed-exercises.cjs",
     "catalog:import": "node scripts/import-exercises.cjs",
@@ -17,6 +17,7 @@
     "routine:check": "node scripts/check-routine.cjs",
     "routine-setup:check": "node scripts/check-routine-setup.cjs",
     "workout-summary:check": "node scripts/check-workout-summary.cjs",
+    "pools:check": "node scripts/check-exercise-pools.cjs",
     "next-workout:check": "node scripts/check-next-workout.cjs"
   },
   "dependencies": {

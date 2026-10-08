@@ -3,7 +3,7 @@ import type { SessionPrescription, TrainingBlock } from './types';
 
 /** Only finished occurrences advance a routine. Previews and missed dates do not. */
 export const nextRoutineSlot = (block: TrainingBlock, sessions: SessionPrescription[], date?: string) => {
-  const finished = sessions.filter(s => belongsToPlan(s, block) && s.status === 'committed' && (!date || s.context.date <= date));
+  const finished = sessions.filter(s => belongsToPlan(s, block) && s.status === 'committed' && (block.preferences?.routine?.selectionMode!=='pools'||s.exercises.some(e=>e.sets.some(set=>set.status==='completed'&&(set.result?.completedReps??0)>0))) && (!date || s.context.date <= date));
   const latest = finished.map((s,index)=>({s,index})).sort((a,b)=>b.s.context.date.localeCompare(a.s.context.date)||b.index-a.index)
     .find(({s})=>block.slots.some(slot=>slot.id===s.slotId));
   const lastIndex = latest ? block.slots.findIndex(slot=>slot.id===latest.s.slotId) : -1;

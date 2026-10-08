@@ -1,3 +1,4 @@
+import { selectPoolPlans } from './exercisePools';
 import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
 import { suggestWorkoutLoad } from './progression';
@@ -26,11 +27,13 @@ export const solveSession = (input: {
   const catalog = input.block.catalog ?? RUNTIME_EXERCISES;
   const slot = input.block.slots[(input.slotIndex ?? 0) % input.block.slots.length];
   const phase = input.phaseOverride ?? currentPhase(input.block);
+  const pools = input.source.routine?.selectionMode === 'pools';
+  const plans = pools ? selectPoolPlans(slot,input.source,catalog,input.context,input.sessions) : slot.plannedExercises;
   const custom = input.source.routine?.split === 'custom';
-  const exerciseLimit = custom ? slot.plannedExercises.length : input.context.minutesAvailable <= 30 ? 3 : input.context.minutesAvailable <= 45 ? 4 : 5;
+  const exerciseLimit = custom ? plans.length : input.context.minutesAvailable <= 30 ? 3 : input.context.minutesAvailable <= 45 ? 4 : 5;
   const unavailableExercises = new Set(input.context.unavailableExerciseIds);
   const unavailableEquipment = new Set(input.context.unavailableEquipment);
-  const planned = (slot.plannedExercises ?? []).flatMap((plan) => {
+  const planned = (plans ?? []).flatMap((plan) => {
     const original = catalog.find(candidate=>candidate.id===plan.exerciseId);
     const replacementId = input.context.exerciseReplacements?.[plan.exerciseId];
     if (replacementId && (!original || !exerciseAlternatives(original,catalog,input.source,input.sessions ?? [],input.context).some(x=>x.exercise.id===replacementId))) throw Error('A selected replacement no longer fits today’s constraints.');

@@ -17,6 +17,7 @@ export const ExercisePicker=({catalog,selectedIds,onAdd,initialMuscles=[]}:{cata
   const matches=catalog.filter(exercise=>(!muscles.length||exercise.primaryMuscles.some(m=>muscles.includes(m)))&&exercise.name.toLowerCase().includes(query.trim().toLowerCase()));
   return <View style={s.section}>
     <PlanInput accessibilityLabel="Search exercises" placeholder="Search exercises" value={query} onChangeText={setQuery}/>
+    {muscles.length?<PlanButton label="Show all exercises" variant="ghost" onPress={()=>setMuscles([])}/>:null}
     <PlanOptions options={MUSCLE_OPTIONS} value={muscles} onChange={muscle=>setMuscles(current=>toggleValue(current,muscle))}/>
     {matches.length?matches.map(exercise=>{const selected=selectedIds.includes(exercise.id);return <Pressable key={exercise.id} accessibilityRole="button" accessibilityLabel={`Add ${exercise.name}`} accessibilityState={{disabled:selected}} disabled={selected} onPress={()=>onAdd(exercise)} style={[s.pickerRow,selected&&s.disabled]}>
       <ExerciseTile exercise={exercise}/><View style={s.flex}><PlanText bold>{exercise.name}</PlanText><PlanText kind="meta">{exercise.primaryMuscles.map(m=>MUSCLE_OPTIONS.find(option=>option.value===m)?.label.toLowerCase()).join(' · ')}</PlanText></View><Ionicons name={selected?'checkmark':'add'} size={t.icon} color={selected?colors.success:colors.accent}/>

@@ -1,3 +1,4 @@
+import { preferredWorkoutPattern } from './exercisePools';
 import { addRuntimeExercise, commitRuntimeSession, compileTrainingBlock, solveTrainingSession } from './runtimeService';
 import { defaultRoutine, editableRoutine, routineCatalog } from './routine';
 import { createRuntimeId } from './id';
@@ -12,7 +13,7 @@ export const startUnplannedWorkout = (state: RuntimeState, defaults: TrainingSou
   if (state.block && state.block.kind !== 'workout') throw Error('Start from your existing plan.');
   const source: TrainingSource = {
     ...(state.source ?? defaults), version: (state.source?.version ?? 0) + 1,
-    routine: { ...defaultRoutine(), split: 'custom', workouts: [{ id: createRuntimeId(), name: 'Workout',
+    routine: { ...defaultRoutine(), preferredSplit:preferredWorkoutPattern(state.source??defaults), split: 'custom', workouts: [{ id: createRuntimeId(), name: 'Workout',
       exercises: [{ exerciseId, sets: 3, minReps: 8, maxReps: 12, targetRir: 2 }] }] },
   };
   const compiled = compileTrainingBlock(state, source);
@@ -31,14 +32,14 @@ export const startAdditionalWorkout = (
   let ready = state;
   if (!ready.block || !ready.source) {
     const source: TrainingSource = { ...(state.source ?? defaults),
-      routine: { ...defaultRoutine(), split: 'custom', workouts: [{id:createRuntimeId(),name,exercises}] },
+      routine: { ...defaultRoutine(), preferredSplit:preferredWorkoutPattern(state.source??defaults), split: 'custom', workouts: [{id:createRuntimeId(),name,exercises}] },
     };
     if (exercises.length) {
       ready = compileTrainingBlock(ready,source);
       ready = {...ready,block:{...ready.block!,kind:'workout'}};
     } else {
       // A blank logger needs a persistence snapshot, not an invented recurring routine.
-      source.routine = { ...defaultRoutine(), customExercises: (state.source ?? defaults).routine?.customExercises };
+      source.routine = { ...defaultRoutine(), preferredSplit:preferredWorkoutPattern(state.source??defaults), customExercises: (state.source ?? defaults).routine?.customExercises };
       const id=createRuntimeId();
       ready={...ready,source,block:{id,groupId:id,kind:'workout',userId:source.userId,version:1,
         sourceId:source.id,sourceVersion:source.version,preferences:source,ruleVersion:RULE_VERSION,

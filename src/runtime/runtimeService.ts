@@ -1,3 +1,4 @@
+import { nextSessionAdditions } from './nextSessionEdits';
 import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
 import { suggestWorkoutLoad } from './progression';
@@ -101,13 +102,23 @@ const resolveTrainingSession = (
     kind: resolvedBlock.scheduling === 'sequence' ? 'next_in_order' : !availableSlots.length ? 'repeat' : candidates.length === 1 ? 'only_remaining' : behind.length ? 'largest_deficit' : 'next_in_order',
     muscles: behind,
   };
-  const prescription = solveSessionEngine({
+  let prescription = solveSessionEngine({
     source: state.source, block: resolvedBlock, context,
     workingSets: state.workingSets, sessions: state.sessions, weeklyStatus: weekStatus,
     slotIndex: resolvedBlock.slots.indexOf(nextSlot),
     phaseOverride: deloadTriggered ? resolvedBlock.phases.find((phase) => phase.kind === 'deload') : undefined,
-    setCeilings: window && !Object.keys(context.exerciseReplacements ?? {}).length && !context.workoutId && !context.extraWorkout && window.slotId === nextSlot.id ? Object.fromEntries((resolvedBlock.catalog ?? RUNTIME_EXERCISES).map((item) => [item.id, window.workout.exercises.find((entry) => entry.exercise.id === item.id)?.sets.length ?? 0])) : undefined,
+    setCeilings: state.source.routine?.selectionMode!=='pools' && window && !Object.keys(context.exerciseReplacements ?? {}).length && !context.workoutId && !context.extraWorkout && window.slotId === nextSlot.id ? Object.fromEntries((resolvedBlock.catalog ?? RUNTIME_EXERCISES).map((item) => [item.id, window.workout.exercises.find((entry) => entry.exercise.id === item.id)?.sets.length ?? 0])) : undefined,
   });
+  for(const item of nextSessionAdditions(state,nextSlot.id,context.date)){
+    if(prescription.exercises.some(entry=>entry.exercise.id===item.exerciseId))continue;
+    const exercise=(resolvedBlock.catalog??RUNTIME_EXERCISES).find(e=>e.id===item.exerciseId);
+    if(!exercise||state.source.excludedExerciseIds.includes(exercise.id)||context.unavailableExerciseIds.includes(exercise.id)
+      ||exercise.equipment.some(e=>!state.source!.equipment.includes(e)||context.unavailableEquipment.includes(e))
+      ||exercise.contraindications.some(e=>state.source!.limitations.includes(e)))continue;
+    // Reuse manual-add rules on a disposable preview; no session is stored or started here.
+    const previewState={...state,block:resolvedBlock,activeSession:prescription,sessions:[prescription]};
+    prescription={...addRuntimeExercise(previewState,item).activeSession!,status:'proposed'};
+  }
   if (!prescription.exercises.length) throw new Error('No work fits the current equipment, time and weekly limits. Change your remaining week in Progress.');
   return { block: resolvedBlock, prescription, slotChoice, deloadTriggered };
 };
@@ -444,7 +455,9 @@ export const finishAndUpdateRoutine = (state: RuntimeState): RuntimeState => {
     return [{exerciseId:entry.exercise.id,sets:sets.length,minReps:sets[0].minReps,maxReps:sets[0].maxReps,targetRir:sets[0].targetRir}];
   });
   if (!exercises.length) throw Error('Keep at least one exercise before updating your routine.');
-  routine.workouts = routine.workouts.map(workout=>workout.id===session.slotId?{...workout,exercises}:workout);
+  routine.workouts = routine.workouts.map(workout=>workout.id===session.slotId?{...workout,exercises: routine.selectionMode==='pools'
+    ? [...workout.exercises.map(item=>exercises.find(e=>e.exerciseId===item.exerciseId)??item),...exercises.filter(item=>!workout.exercises.some(e=>e.exerciseId===item.exerciseId))]
+    : exercises}:workout);
   const finished = commitRuntimeSession(state);
   const updated = compileTrainingBlock(finished,{...state.source,version:state.source.version+1,routine});
   return {...updated,blockHistory:[...(state.blockHistory??[]).filter(x=>x.id!==state.block!.id),state.block]};

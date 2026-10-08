@@ -11,6 +11,7 @@ export const defaultRoutine = (): RoutineDefinition => ({ split: 'auto', workout
 
 /** Convert only when the user explicitly edits a legacy/generated routine. No historical rewrite. */
 export const editableRoutine = (plan: TrainingBlock): RoutineDefinition => ({
+  selectionMode:plan.preferences?.routine?.selectionMode,
   focus:plan.preferences?.routine?.focus,
   setDefaults:plan.preferences?.routine?.setDefaults,
   limitationNote:plan.preferences?.routine?.limitationNote,
@@ -35,6 +36,8 @@ export const validateRoutineSource = (source: TrainingSource, catalog: ExerciseD
   catalog = routineCatalog(source,catalog);
   const routine = source.routine;
   if (!routine) return;
+  if (routine.selectionMode !== undefined && !['fixed','pools'].includes(routine.selectionMode)) throw Error('Choose fixed workouts or exercise pools.');
+  if (routine.selectionMode==='pools' && routine.split!=='custom') throw Error('Add your muscle groups before saving exercise pools.');
   if (routine.focus !== undefined && !['build_muscle','lose_fat','strength','maintain'].includes(routine.focus)) throw Error('Choose a training goal.');
   if (routine.limitationNote !== undefined && (typeof routine.limitationNote !== 'string' || routine.limitationNote.length > 1000)) throw Error('Keep your limitations note under 1,000 characters.');
   const defaults = routine.setDefaults;
@@ -57,7 +60,7 @@ export const validateRoutineSource = (source: TrainingSource, catalog: ExerciseD
     if (!workout.id || ids.has(workout.id)) throw Error('Workout IDs must be unique.');
     ids.add(workout.id);
     if (!workout.name.trim() || workout.name.length > 80) throw Error('Give each workout a name of up to 80 characters.');
-    if (!workout.exercises.length || workout.exercises.length > 20) throw Error(`Add 1–20 exercises to ${workout.name}.`);
+    if (!workout.exercises.length || workout.exercises.length > (routine.selectionMode==='pools'?500:20)) throw Error(`Add 1–${routine.selectionMode==='pools'?500:20} exercises to ${workout.name}.`);
     const exercises = new Set<string>();
     for (const item of workout.exercises) {
       if (!catalog.some(x => x.id === item.exerciseId)) throw Error('An exercise is missing from the available catalog.');

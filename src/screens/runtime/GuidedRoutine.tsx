@@ -1,3 +1,5 @@
+import { groupDraft } from '../../routineSetup/pools';
+import { isPoolPattern } from '../../runtime/exercisePools';
 import { useState } from 'react';
 import { TextInput, View } from 'react-native';
 import type { ExerciseDefinition, RoutineDefinition, TrainingSource } from '../../runtime/types';
@@ -19,7 +21,9 @@ export const GuidedRoutine=({initial,catalog,onReview,onBack}:{initial:TrainingS
       const proposed={...source,routine:{...defaultRoutine(),progression:initial.routine?.progression??defaultRoutine().progression,split,preferredSplit:split}};
       const plan=compileBlock(proposed,undefined,undefined,catalog);
       if(!plan.slots.length||plan.slots.some(s=>!s.plannedExercises.length))throw Error('Could not build every workout with these preferences. Try different equipment or adjust your limitations.');
-      onReview(draftFromRoutine(editableRoutine(plan),proposed,catalog,'guided'));
+      const draft=draftFromRoutine(editableRoutine(plan),proposed,catalog,'guided');
+      const pattern=isPoolPattern(split)?split:source.daysPerWeek<=3?'full_body':source.daysPerWeek===4?'upper_lower':'push_pull_legs';
+      onReview(groupDraft(draft,pattern,catalog));
     }catch(e){setError(e instanceof Error?e.message:'Could not prepare a routine.');}
   };
   return <View style={{gap:space.md}}>

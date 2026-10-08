@@ -17,6 +17,7 @@ export type RoutineDraft = {
   limitationNote?: string;
   days: DraftValue<number>; minutes: DraftValue<number>; goal: DraftValue<RuntimeGoal>;
   equipment: string[] | null; notes: string[]; customExercises: ExerciseDefinition[];
+  selectionMode?: RoutineDefinition['selectionMode'];
   preferredSplit?: RoutineDefinition['split'];
 };
 export const unknownValue = <T>(): DraftValue<T> => ({ value: null, origin: 'unknown' });
@@ -36,6 +37,7 @@ export const draftCatalog = (draft: RoutineDraft, catalog: ExerciseDefinition[])
 export const draftFromRoutine = (routine: RoutineDefinition, source: TrainingSource, catalog: ExerciseDefinition[], method: RoutineDraft['method']='saved'): RoutineDraft => ({
   ...emptyDraft(), method, days:valueOf(source.daysPerWeek,method==='guided'?'suggested':'saved'), minutes:valueOf(source.sessionMinutes,'saved'),goal:valueOf(source.goal,'saved'),equipment:[...source.equipment],
   customExercises:routine.customExercises??[],
+  selectionMode:routine.selectionMode,
   focus:routine.focus, setDefaults:routine.setDefaults, limitationNote:routine.limitationNote,
   preferredSplit:routine.preferredSplit??routine.split,
   workouts:routine.workouts.map(workout=>({id:workout.id,name:workout.name,targetMuscles:workout.targetMuscles,exercises:workout.exercises.map(item=>({
@@ -77,7 +79,7 @@ export const sourceFromDraft = (draft: RoutineDraft, initial: TrainingSource, ca
   const source:TrainingSource={...initial,version:initial.version+1,createdAt:new Date().toISOString(),
     daysPerWeek:(draft.days.value??initial.daysPerWeek) as TrainingSource['daysPerWeek'],sessionMinutes:draft.minutes.value??initial.sessionMinutes,goal:draft.goal.value??initial.goal,
     equipment:draft.equipment??initial.equipment,
-    routine:{...(initial.routine??defaultRoutine()),split:'custom',preferredSplit:draft.preferredSplit??initial.routine?.preferredSplit,customExercises:draft.customExercises,
+    routine:{...(initial.routine??defaultRoutine()),selectionMode:draft.selectionMode,split:'custom',preferredSplit:draft.preferredSplit??initial.routine?.preferredSplit,customExercises:draft.customExercises,
       focus:draft.focus, setDefaults:draft.setDefaults, limitationNote:draft.limitationNote,
       workouts:draft.workouts.map(workout=>({id:workout.id,name:workout.name.trim(),targetMuscles:workout.targetMuscles,exercises:workout.exercises.map(item=>({
         exerciseId:item.exerciseId!,sets:item.sets.value??3,minReps:item.minReps.value??item.maxReps.value??8,maxReps:item.maxReps.value??item.minReps.value??12,targetRir:item.targetRir.value??2,

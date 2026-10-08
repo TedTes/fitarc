@@ -30,7 +30,7 @@ export const SessionReview=({state,apply,notify,onOpenWeek}:Props)=>{
       <Txt variant="title">{session.name??slotPlain(slot)}</Txt>
       <WorkoutResults session={session}/>
       {!setsDone?<Txt tone="muted">No sets recorded</Txt>:null}
-      {setsDone>0?<Button label={slot&&state.block?.kind!=='workout'?'Save changes to routine':state.block?.kind==='workout'?'Save as routine':'Add to routine'} variant="ghost" onPress={()=>Alert.alert('Save to your routine?', 'Use today’s completed exercises and set targets in your routine.',[
+      {setsDone>0?<Button label={slot&&state.block?.kind!=='workout'?'Save changes to routine':state.block?.kind==='workout'?'Save as routine':'Add to routine'} variant="ghost" onPress={()=>Alert.alert('Save to your routine?', state.source?.routine?.selectionMode==='pools'?'Update these exercises in your pool. Other pool exercises stay available.':'Use today’s completed exercises and set targets in your routine.',[
         {text:'Cancel',style:'cancel'},{text:'Save and finish',onPress:()=>finish(true)},
       ])}/>:null}
       <Button label="Discard workout" variant="ghost" onPress={discard}/>

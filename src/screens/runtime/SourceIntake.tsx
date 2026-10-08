@@ -1,3 +1,5 @@
+import { groupDraft } from '../../routineSetup/pools';
+import { isPoolPattern } from '../../runtime/exercisePools';
 import { useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +10,6 @@ import { draftFromRoutine, draftIssues, emptyDraft, sourceFromDraft, valueOf } f
 import { editorSettings, mergeRoutineInput, type RoutineEditorInput } from '../../routineSetup/editor';
 import { interpretLocally } from '../../routineSetup/localInterpretation';
 import { hostedRoutineInputEnabled, interpretRoutine } from '../../services/routineInputService';
-import { defaultRoutine, editableRoutine } from '../../runtime/routine';
 import { applyInputContext, type RoutineInputContext } from '../../routineSetup/context';
 import { RoutineContextChips } from './RoutineContextChips';
 import { RoutineDescription, type RoutineStarter } from './RoutineDescription';
@@ -16,7 +17,6 @@ import { RoutineDraftReview } from './RoutineDraftReview';
 import { RoutineVoiceInput } from './RoutineVoiceInput';
 import { Txt } from './ui';
 import { colors, planTokens as t } from './theme';
-import { compileBlock } from '../../runtime/blockCompiler';
 import type { SyncStatus } from './useRuntimeController';
 
 type Props={catalog?:ExerciseDefinition[];initial:TrainingSource;sessionActive?:boolean;sync:SyncStatus;onSave:(editor:RoutineEditorInput)=>string|undefined;onClose:()=>void};
@@ -58,7 +58,10 @@ export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RU
       const all=[...new Map([...catalog,...input.draft.customExercises].map(item=>[item.id,item])).values()];
       const parsed=local?interpretLocally(input.text,all):await interpretRoutine(input.text,all,controller.signal);
       if(!mounted.current||controller.signal.aborted||request.current!==controller||latest.current!==input)return;
-      const next={...input,interpretedText:input.text,draft:mergeRoutineInput(input.draft,applyInputContext(parsed,input.context??{}))};
+      const merged=mergeRoutineInput(input.draft,applyInputContext(parsed,input.context??{}));
+      const draft=input.draft.selectionMode==='pools'&&isPoolPattern(merged.preferredSplit)
+        ?groupDraft(merged,merged.preferredSplit,all):merged;
+      const next={...input,interpretedText:input.text,draft};
       update(next);flush(next);
     }catch(problem){if(mounted.current&&request.current===controller)setError(controller.signal.aborted?'Could not update workouts. Your input is saved.':problem instanceof Error?problem.message:'Could not read your routine.');}
     finally{clearTimeout(timeout);if(mounted.current&&request.current===controller){request.current=null;setBusy(false);}}
@@ -69,18 +72,9 @@ export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RU
     let draft=input.draft;
     if(starter==='muscle'||starter==='fat_loss')draft={...draft,focus:starter==='muscle'?'build_muscle':'lose_fat',goal:valueOf('hypertrophy')};
     else{
-      draft=applyInputContext(draft,{split:starter,...(starter==='full_body'?{days:3 as const}:{})});
-      if(!draft.workouts.length){
-        try{
-          const source={...input.settings,daysPerWeek:(draft.days.value??input.settings.daysPerWeek) as TrainingSource['daysPerWeek'],sessionMinutes:draft.minutes.value??input.settings.sessionMinutes,
-            goal:draft.goal.value??input.settings.goal,routine:{...defaultRoutine(),split:starter}};
-          const plan=compileBlock(source,undefined,undefined,catalog);
-          const generated=draftFromRoutine(editableRoutine(plan),source,catalog,'guided');
-          draft={...generated,focus:draft.focus,originalText:input.text,preferredSplit:starter};
-        }catch(problem){setError(problem instanceof Error?problem.message:'Could not add this template');return;}
-      }
+      draft=groupDraft(draft,starter,catalog);
     }
-    update({...input,draft,...(starter==='muscle'||starter==='fat_loss'?{}:{context:{...input.context,split:starter,...(starter==='full_body'?{days:3 as const}:{})}})});
+    update({...input,draft,...(starter==='muscle'||starter==='fat_loss'?{}:{context:{...input.context,split:starter}})});
   };
   const selectedStarters:RoutineStarter[]=[...(editor.draft.focus==='build_muscle'?['muscle' as const]:editor.draft.focus==='lose_fat'?['fat_loss' as const]:[]),...(['full_body','upper_lower','push_pull_legs'].includes(editor.draft.preferredSplit??'')?[editor.draft.preferredSplit as RoutineStarter]:[])];
   let issue=editor.draft.workouts.length?draftIssues(editor.draft,catalog)[0]:undefined;
@@ -92,7 +86,7 @@ export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RU
       onLocalReview={hostedRoutineInputEnabled&&error?()=>void interpret(true):undefined}
       status={<Txt variant="mono" tone="muted" style={styles.status} accessibilityLiveRegion="polite">{status}</Txt>}
       headerAction={<Pressable accessibilityRole="button" accessibilityLabel="Close routine" onPress={()=>void close()} disabled={voiceBusy} style={styles.close}><Ionicons name="close" size={22} color={colors.textMuted}/></Pressable>}
-      contextControls={<RoutineContextChips value={context} initial={editor.settings} disabled={voiceBusy} onChange={next=>{update({...latest.current,context:next,draft:applyInputContext(latest.current.draft,next)});void interpret();}}/>}
+      contextControls={<RoutineContextChips value={context} initial={editor.settings} disabled={voiceBusy} onChange={next=>{update({...latest.current,context:next,draft:isPoolPattern(next.split)&&next.split!==latest.current.draft.preferredSplit?groupDraft(applyInputContext(latest.current.draft,next),next.split,catalog):applyInputContext(latest.current.draft,next)});void interpret();}}/>}
       bottomInset={insets.bottom}
       voiceControl={<RoutineVoiceInput disabled={busy} onBusy={setVoiceBusy} onError={setError} onTranscript={transcript=>{const input=latest.current;update({...input,text:input.text.trim()?`${input.text.trim()}\n${transcript}`:transcript});void interpret();}}/>}>
       <RoutineDraftReview embedded draft={editor.draft} initial={editor.settings} catalog={catalog}

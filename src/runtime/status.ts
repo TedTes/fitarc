@@ -1,3 +1,5 @@
+import { selectPoolPlans } from './exercisePools';
+import { localDate } from './planDates';
 import { scheduledOccurrences } from './sequence';
 import { belongsToPlan } from './planDates';
 import { hardSetCredit, MUSCLES, secondaryMuscleCredit } from './trainingPolicy';
@@ -91,6 +93,9 @@ export const computeWeeklyStatus = (
     if (result.completedReps < result.prescribedMinReps) misses += 1;
   });
   const scheduled = Object.fromEntries(MUSCLES.map((muscle) => [muscle, 0])) as Record<(typeof MUSCLES)[number], number>;
+  const poolPlans=(slot:TrainingBlock['slots'][number])=>block.preferences?.routine?.selectionMode==='pools'
+    ?selectPoolPlans(slot,block.preferences,block.catalog??RUNTIME_EXERCISES,{date:weekNumber===block.currentWeek?localDate():weekStart.toISOString().slice(0,10),minutesAvailable:block.preferences.sessionMinutes,recovery:'yes',unavailableEquipment:[],unavailableExerciseIds:[]},sessions)
+    :slot.plannedExercises;
   const scheduledEntries = block.scheduling ? occurrences : block.slots.filter((slot) => !committedSlotIds.has(slot.id) && (!remaining || remaining.windows.some((item) => item.slotId === slot.id))).map(slot=>({slot,workout:undefined as SessionPrescription | undefined}));
   scheduledEntries.forEach(({slot,workout}) => {
     const prescribed = workout ?? (!block.scheduling ? [...weekSessions].reverse().find((session) => session.slotId === slot.id && session.status !== 'committed') ?? remaining?.windows.find((item) => item.slotId === slot.id)?.workout : undefined);
@@ -102,7 +107,12 @@ export const computeWeeklyStatus = (
       });
       return;
     }
-    MUSCLES.forEach((muscle) => { scheduled[muscle] += slot.muscleSetBudget[muscle] ?? 0; });
+    if(block.preferences?.routine?.selectionMode==='pools'){
+      poolPlans(slot).forEach(plan=>{const e=(block.catalog??RUNTIME_EXERCISES).find(e=>e.id===plan.exerciseId)!;
+        e.primaryMuscles.forEach(m=>scheduled[m]+=plan.sets);
+        e.secondaryMuscles.forEach(m=>scheduled[m]+=plan.sets*secondaryMuscleCredit);
+      });
+    }else MUSCLES.forEach((muscle) => { scheduled[muscle] += slot.muscleSetBudget[muscle] ?? 0; });
   });
   const muscles = MUSCLES.map((muscle) => {
     const target = block.weeklyTargets[muscle];
@@ -117,10 +127,10 @@ export const computeWeeklyStatus = (
     };
   });
   const phase = block.phases.find((item) => weekNumber >= item.startWeek && weekNumber <= item.endWeek) ?? block.phases[0];
-  const weeklyFatigueCapacity = Math.max(1, block.slots.reduce((slotSum, slot) => slotSum + slot.plannedExercises.reduce((sum, plan) => {
+  const weeklyFatigueCapacity = Math.max(1, block.slots.reduce((slotSum, slot) => slotSum + poolPlans(slot).reduce((sum, plan) => {
     const exercise = (block.catalog ?? RUNTIME_EXERCISES).find((candidate) => candidate.id === plan.exerciseId);
     return sum + plan.sets * (exercise?.fatigueCost ?? 1) * (6 - phase.targetRir);
-  }, 0), 0));
+  }, 0), 0) * (block.preferences?.routine?.selectionMode==='pools'?block.preferences.daysPerWeek/block.slots.length:1));
   const fatiguePercent = Math.min(100, Math.round((fatiguePoints / weeklyFatigueCapacity) * 100));
   const repeatedMisses = misses >= 3;
   const deloadRecommended = (!block.scheduling && weekNumber >= block.durationWeeks) || (weekState === 'complete' && fatiguePercent >= 80 && repeatedMisses);

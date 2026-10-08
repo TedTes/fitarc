@@ -1,3 +1,4 @@
+import { selectPoolPlans } from './exercisePools';
 import { routineCatalog, validateRoutineSource } from './routine';
 import { localDate } from './planDates';
 import { phasesFor, RULE_VERSION, weeklyTargetsFor } from './trainingPolicy';
@@ -76,13 +77,19 @@ export const compileBlock = (
     const muscleSetBudget: Partial<Record<Muscle, number>> = {};
     definitions.forEach((exercise, i) => creditSets(muscleSetBudget, exercise, plannedExercises[i].sets));
     return { id: workout.id, label: workout.name.trim(), dayIndex: index, plannedExercises, muscleSetBudget,
-      targetMuscles: [...new Set(definitions.flatMap(x => [...x.primaryMuscles, ...x.secondaryMuscles]))],
+      targetMuscles: workout.targetMuscles?.length ? workout.targetMuscles : [...new Set(definitions.flatMap(x => [...x.primaryMuscles, ...x.secondaryMuscles]))],
       movementPatterns: [...new Set(definitions.map(x => x.movementPattern))] };
+  });
+  if(source.routine?.selectionMode==='pools') slots=slots.map(slot=>{
+    const chosen=selectPoolPlans(slot,source,catalog,{date:localDate(),minutesAvailable:source.sessionMinutes,recovery:'yes',unavailableEquipment:[],unavailableExerciseIds:[]});
+    const muscleSetBudget:Partial<Record<Muscle,number>>={};
+    chosen.forEach(plan=>creditSets(muscleSetBudget,catalog.find(e=>e.id===plan.exerciseId)!,plan.sets));
+    return {...slot,muscleSetBudget};
   });
   const weeklySetBudget = Object.fromEntries(
     Object.keys(weeklyTargetsFor(source.goal, source.experience)).map((muscle) => [
       muscle,
-      slots.reduce((sum, slot) => sum + (slot.muscleSetBudget[muscle as Muscle] ?? 0), 0),
+      slots.reduce((sum, slot) => sum + (slot.muscleSetBudget[muscle as Muscle] ?? 0) * (source.routine?.selectionMode==='pools'?source.daysPerWeek/slots.length:1), 0),
     ])
   ) as Record<Muscle, number>;
   return {
