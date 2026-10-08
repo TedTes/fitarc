@@ -10,9 +10,23 @@ const loadData = (file) => {
   const { outputText } = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   });
-  // These modules contain only data and pure helpers; type-only imports are erased.
-  new Function('exports', outputText)(exports);
+  // These modules contain only data and pure helpers; type-only imports are erased, relative ones resolve here.
+  const localRequire = (spec) => loadData(path.join(path.dirname(file), `${spec}.ts`));
+  new Function('exports', 'require', outputText)(exports, localRequire);
   return exports;
+};
+/** Width and height from a baseline/progressive JPEG's SOF segment. */
+const jpegSize = (buf) => {
+  let i = 2;
+  while (i < buf.length) {
+    const marker = buf[i + 1];
+    const length = buf.readUInt16BE(i + 2);
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+    }
+    i += 2 + length;
+  }
+  throw new Error('no JPEG size marker');
 };
 const { RUNTIME_EXERCISES } = loadData('src/runtime/exerciseCatalog.ts');
 const { MUSCLE_MASKS, MUSCLE_MAP_SIZE } = loadData('src/screens/runtime/muscleMasks.ts');
@@ -35,9 +49,9 @@ const groups = new Set(Object.values(MUSCLE_MASKS).flat().map((mask) => mask.mus
 for (const view of ['front', 'back']) {
   const visible = new Set(MUSCLE_MASKS[view].map((mask) => mask.muscle));
   for (const group of groups) assert.equal(isMuscleVisible(group, view), visible.has(group), `${group} visibility on ${view}`);
-  const image = fs.readFileSync(path.join(root, `assets/images/muscle-map/athlete-${view}-v2.png`));
-  assert.equal(image.readUInt32BE(16), MUSCLE_MAP_SIZE.width, `${view} image/overlay width`);
-  assert.equal(image.readUInt32BE(20), MUSCLE_MAP_SIZE.height, `${view} image/overlay height`);
+  const image = jpegSize(fs.readFileSync(path.join(root, `assets/images/muscle-map/athlete-${view}-v4.jpg`)));
+  assert.equal(image.width, MUSCLE_MAP_SIZE.width, `${view} image/overlay width`);
+  assert.equal(image.height, MUSCLE_MAP_SIZE.height, `${view} image/overlay height`);
 }
 for (const lift of RUNTIME_EXERCISES) {
   for (const muscle of [...lift.primaryMuscles, ...lift.secondaryMuscles]) {

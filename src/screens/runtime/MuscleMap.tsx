@@ -1,11 +1,11 @@
-import { memo, useCallback, useState } from 'react';
-import { Image, type LayoutChangeEvent, Pressable, StyleSheet, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Image, type LayoutChangeEvent, PanResponder, Pressable, StyleSheet, View } from 'react-native';
 import Svg, { G, Path } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import type { Muscle } from '../../runtime';
 import { colors, radius, space } from './theme';
 import { MUSCLE_MAP_SIZE, MUSCLE_MASKS, type MuscleMapView } from './muscleMasks';
-import { ATHLETE_ARTWORK } from '../../components/athleteArtwork';
+import { MUSCLE_MAP_ARTWORK } from '../../components/athleteArtwork';
 import { hasLowerBodyTarget, muscleTargetRole, type TargetMuscles } from './muscleTargeting';
 
 export type MuscleMapTone = 'neutral' | 'success' | 'warning' | 'danger';
@@ -22,6 +22,8 @@ type Props = {
   onSelect?: (muscle: Muscle, part: string) => void;
   /** Exercise roles use a single accent; volume traffic-light colors stay in the weekly map. */
   targets?: TargetMuscles;
+  /** Today recap: green completed training, red next-session training; overlap keeps both. */
+  sessionComparison?: { completed: readonly Muscle[]; next: readonly Muscle[] };
   height?: number;
   showZoom?: boolean;
   overview?: boolean;
@@ -30,11 +32,11 @@ type Props = {
 
 // The upper body, in image pixels. Zooming shows this region at a comfortable touch size.
 const FOCUS: Record<MuscleMapView, { x0: number; y0: number; x1: number; y1: number }> = {
-  front: { x0: 118, y0: 108, x1: 394, y1: 336 },
-  back: { x0: 150, y0: 92, x1: 362, y1: 312 },
+  front: { x0: 245, y0: 165, x1: 660, y1: 525 },
+  back: { x0: 245, y0: 165, x1: 660, y1: 460 },
 };
 const FULL = { x0: 0, y0: 0, x1: MUSCLE_MAP_SIZE.width, y1: MUSCLE_MAP_SIZE.height };
-const LEGS = { x0: 146, y0: 302, x1: 366, y1: 656 };
+const LEGS = { x0: 290, y0: 500, x1: 625, y1: 1095 };
 const NO_TONES: Partial<Record<Muscle, MuscleMapTone>> = {};
 
 const toneColor = (tone: MuscleMapTone) => {
@@ -68,7 +70,7 @@ const look = (tone: MuscleMapTone | undefined, emphasis: Emphasis) => {
  */
 export const MuscleMap = memo(({
   view, onViewChange, tones = NO_TONES, selected = null, selectedPart = null, onSelect,
-  targets, height = 420, showZoom = true, overview = false, focusTargets = false,
+  targets, sessionComparison, height = 420, showZoom = true, overview = false, focusTargets = false,
 }: Props) => {
   const [box, setBox] = useState<{ width: number; height: number } | null>(null);
   const [zoomed, setZoomed] = useState(false);
@@ -86,6 +88,41 @@ export const MuscleMap = memo(({
   const left = box ? box.width / 2 - ((region.x0 + region.x1) / 2) * fit : 0;
   const top = box ? box.height / 2 - ((region.y0 + region.y1) / 2) * fit : 0;
 
+  // Drag to pan when the picture is larger than its frame (zoomed), so the whole body stays reachable.
+  // Limits keep an image edge from ever pulling inside the frame; a fitted picture can't move at all.
+  const limits = useMemo(() => box ? {
+    minX: Math.min(0, box.width - width - left), maxX: Math.max(0, -left),
+    minY: Math.min(0, box.height - imageHeight - top), maxY: Math.max(0, -top),
+  } : { minX: 0, maxX: 0, minY: 0, maxY: 0 }, [box, width, imageHeight, left, top]);
+  const canPan = limits.minX < 0 || limits.maxX > 0 || limits.minY < 0 || limits.maxY > 0;
+  const pan = useRef(new Animated.ValueXY()).current;
+  const panAt = useRef({ x: 0, y: 0 });
+  const live = useRef({ limits, canPan });
+  live.current = { limits, canPan };
+  useEffect(() => {
+    panAt.current = { x: 0, y: 0 };
+    pan.setValue({ x: 0, y: 0 });
+  }, [pan, view, zoomed, zoomToLegs, box?.width, box?.height]);
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+  const responder = useMemo(() => PanResponder.create({
+    // Small moves stay taps, so muscles can still be selected while zoomed.
+    onMoveShouldSetPanResponder: (_, g) => live.current.canPan && Math.abs(g.dx) + Math.abs(g.dy) > 6,
+    onMoveShouldSetPanResponderCapture: (_, g) => live.current.canPan && Math.abs(g.dx) + Math.abs(g.dy) > 6,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, g) => {
+      const { limits: l } = live.current;
+      pan.setValue({ x: clamp(panAt.current.x + g.dx, l.minX, l.maxX), y: clamp(panAt.current.y + g.dy, l.minY, l.maxY) });
+    },
+    onPanResponderRelease: (_, g) => {
+      const { limits: l } = live.current;
+      panAt.current = { x: clamp(panAt.current.x + g.dx, l.minX, l.maxX), y: clamp(panAt.current.y + g.dy, l.minY, l.maxY) };
+    },
+    onPanResponderTerminate: (_, g) => {
+      const { limits: l } = live.current;
+      panAt.current = { x: clamp(panAt.current.x + g.dx, l.minX, l.maxX), y: clamp(panAt.current.y + g.dy, l.minY, l.maxY) };
+    },
+  }), [pan]);
+
   const masks = MUSCLE_MASKS[view];
   const emphasisOf = (muscle: Muscle, part: string): Emphasis => {
     if (selected !== muscle) return 'rest';
@@ -98,6 +135,18 @@ export const MuscleMap = memo(({
     : rank[emphasisOf(muscle, part)];
   const drawOrder = [...masks].sort((a, b) => layer(a.muscle, a.part) - layer(b.muscle, b.part));
   const highlight = (muscle: Muscle, part: string) => {
+    if (sessionComparison) {
+      const completed = sessionComparison.completed.includes(muscle);
+      const next = sessionComparison.next.includes(muscle);
+      const focused = muscle === selected;
+      return {
+        color: completed ? colors.success : colors.danger,
+        fill: completed || next ? focused ? 0.7 : 0.5 : 0,
+        strokeColor: next ? colors.danger : colors.success,
+        stroke: completed || next ? 1 : 0,
+        width: completed && next ? 6 : focused ? 4 : 2,
+      };
+    }
     if (targets) {
       const role = muscleTargetRole(targets, muscle);
       const focused = muscle === selected && (selectedPart === null || part === selectedPart);
@@ -116,12 +165,12 @@ export const MuscleMap = memo(({
   };
 
   return (
-    <View style={[styles.container, { height }]} onLayout={onLayout}>
+    <View style={[styles.container, { height }]} onLayout={onLayout} {...responder.panHandlers}>
       {fit > 0 ? (
-        <View style={{ position: 'absolute', left, top, width, height: imageHeight }}
+        <Animated.View style={{ position: 'absolute', left, top, width, height: imageHeight, transform: pan.getTranslateTransform() }}
           accessibilityElementsHidden={!onSelect} importantForAccessibility={onSelect ? 'auto' : 'no-hide-descendants'}>
           {/* Explicit size: a local image otherwise keeps its intrinsic 512 x 768 size and ignores absoluteFill. */}
-          <Image source={ATHLETE_ARTWORK[view]} resizeMode="contain" style={{ width, height: imageHeight }} accessible={false} fadeDuration={0} />
+          <Image source={MUSCLE_MAP_ARTWORK[view]} resizeMode="contain" style={{ width, height: imageHeight }} accessible={false} fadeDuration={0} />
           <Svg
             style={StyleSheet.absoluteFill}
             width={width}
@@ -134,6 +183,7 @@ export const MuscleMap = memo(({
               return (
                 <Path
                   key={`${view}-${part}-visible`}
+                  testID={sessionComparison ? `recap-muscle-${view}-${part}` : undefined}
                   d={visible}
                   fill={style.color}
                   fillOpacity={style.fill}
@@ -159,8 +209,11 @@ export const MuscleMap = memo(({
               </G>
             )) : null}
           </Svg>
-        </View>
+        </Animated.View>
       ) : null}
+      {canPan && showZoom ? <View pointerEvents="none" style={styles.dragHint}>
+        <Ionicons name="move-outline" size={14} color={colors.textSecondary} />
+      </View> : null}
       {onViewChange || showZoom ? <View style={styles.tools}>
         {onViewChange ? <Pressable
           accessibilityRole="button"
@@ -189,6 +242,7 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: space.sm, right: space.sm, flexDirection: 'row',
     borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: 'rgba(9,11,15,0.88)',
   },
+  dragHint: { position: 'absolute', top: space.sm, left: space.sm, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(9,11,15,0.7)' },
   tool: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.7 },
 });
