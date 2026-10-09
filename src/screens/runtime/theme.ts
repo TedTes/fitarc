@@ -30,6 +30,8 @@ export const colors = {
   danger: '#F87171',
   dangerSoft: '#2B1416',
   violet: '#A78BFA',
+  // Upcoming work on the muscle map: blue is the one hue that stays readable over the orange-lit skin.
+  next: '#60A5FA',
   violetSoft: '#1B1730',
   scrim: 'rgba(0,0,0,0.62)',
   orange: '#f5893c',

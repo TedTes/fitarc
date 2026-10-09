@@ -29,7 +29,8 @@ const jpegSize = (buf) => {
   throw new Error('no JPEG size marker');
 };
 const { RUNTIME_EXERCISES } = loadData('src/runtime/exerciseCatalog.ts');
-const { MUSCLE_MASKS, MUSCLE_MAP_SIZE } = loadData('src/screens/runtime/muscleMasks.ts');
+const { MUSCLE_MASKS, MUSCLE_MAP_SIZES } = loadData('src/screens/runtime/muscleMasks.ts');
+const artwork = fs.readFileSync(path.join(root, 'src/components/athleteArtwork.ts'), 'utf8').split('export const MUSCLE_MAP_ARTWORK')[1];
 const { muscleTargetRole, preferredTargetView, isMuscleVisible, viewForMuscle } = loadData('src/screens/runtime/muscleTargeting.ts');
 const exercise = (id) => RUNTIME_EXERCISES.find((item) => item.id === id);
 
@@ -49,10 +50,26 @@ const groups = new Set(Object.values(MUSCLE_MASKS).flat().map((mask) => mask.mus
 for (const view of ['front', 'back']) {
   const visible = new Set(MUSCLE_MASKS[view].map((mask) => mask.muscle));
   for (const group of groups) assert.equal(isMuscleVisible(group, view), visible.has(group), `${group} visibility on ${view}`);
-  const image = jpegSize(fs.readFileSync(path.join(root, `assets/images/muscle-map/athlete-${view}-v4.jpg`)));
-  assert.equal(image.width, MUSCLE_MAP_SIZE.width, `${view} image/overlay width`);
-  assert.equal(image.height, MUSCLE_MAP_SIZE.height, `${view} image/overlay height`);
+  // Inspect the artwork actually imported by the component, including PNG's native dimensions.
+  const source = artwork.match(new RegExp(`${view}: require\\('([^']+)'\\)`))?.[1];
+  assert(source, `${view} artwork must be registered`);
+  const bytes = fs.readFileSync(path.resolve(root, 'src/components', source));
+  const image = bytes.subarray(1, 4).toString() === 'PNG'
+    ? { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+    : jpegSize(bytes);
+  assert.equal(image.width, MUSCLE_MAP_SIZES[view].width, `${view} image/overlay width`);
+  assert.equal(image.height, MUSCLE_MAP_SIZES[view].height, `${view} image/overlay height`);
+  const ids = MUSCLE_MASKS[view].map(mask => mask.part);
+  assert.equal(new Set(ids).size, ids.length, `${view} regions must have unique identities`);
+  for (const mask of MUSCLE_MASKS[view]) {
+    assert(mask.visible && mask.hit, `${view}/${mask.part} needs visible and touch regions`);
+  }
 }
+// The upper-back detail and both calf heads must remain separately selectable.
+for (const part of ['infraspinatus', 'teres_minor', 'teres_major', 'erectors', 'gastrocnemius_medial', 'gastrocnemius_lateral']) {
+  assert(MUSCLE_MASKS.back.some(mask => mask.part === part), `missing back detail: ${part}`);
+}
+assert(MUSCLE_MASKS.back.find(mask => mask.part === 'glute_max').covered, 'glutes are covered by shorts');
 for (const lift of RUNTIME_EXERCISES) {
   for (const muscle of [...lift.primaryMuscles, ...lift.secondaryMuscles]) {
     assert(groups.has(muscle), `${lift.name}: ${muscle} has no visible muscle mask`);

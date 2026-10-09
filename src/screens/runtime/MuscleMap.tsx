@@ -1,10 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, type LayoutChangeEvent, PanResponder, Pressable, StyleSheet, View } from 'react-native';
-import Svg, { G, Path } from 'react-native-svg';
+import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Image, type LayoutChangeEvent, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
+import Svg, { Defs, G, Mask, Path, Rect } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import type { Muscle } from '../../runtime';
 import { colors, radius, space } from './theme';
-import { MUSCLE_MAP_SIZE, MUSCLE_MASKS, type MuscleMapView } from './muscleMasks';
+import { MUSCLE_MAP_SIZES, MUSCLE_MASKS, type MuscleMapView } from './muscleMasks';
+import { BACK_GROUP_CONTOURS } from './backMuscleContours';
 import { MUSCLE_MAP_ARTWORK } from '../../components/athleteArtwork';
 import { hasLowerBodyTarget, muscleTargetRole, type TargetMuscles } from './muscleTargeting';
 
@@ -24,6 +25,8 @@ type Props = {
   targets?: TargetMuscles;
   /** Today recap: green completed training, red next-session training; overlap keeps both. */
   sessionComparison?: { completed: readonly Muscle[]; next: readonly Muscle[] };
+  /** Tap anywhere that isn't a muscle (background, head, shorts). Muscle taps still go to onSelect. */
+  onBackgroundPress?: () => void;
   height?: number;
   showZoom?: boolean;
   overview?: boolean;
@@ -33,10 +36,12 @@ type Props = {
 // The upper body, in image pixels. Zooming shows this region at a comfortable touch size.
 const FOCUS: Record<MuscleMapView, { x0: number; y0: number; x1: number; y1: number }> = {
   front: { x0: 245, y0: 165, x1: 660, y1: 525 },
-  back: { x0: 245, y0: 165, x1: 660, y1: 460 },
+  back: { x0: 290, y0: 175, x1: 800, y1: 590 },
 };
-const FULL = { x0: 0, y0: 0, x1: MUSCLE_MAP_SIZE.width, y1: MUSCLE_MAP_SIZE.height };
-const LEGS = { x0: 290, y0: 500, x1: 625, y1: 1095 };
+const LEGS: Record<MuscleMapView, { x0: number; y0: number; x1: number; y1: number }> = {
+  front: { x0: 290, y0: 500, x1: 625, y1: 1095 },
+  back: { x0: 355, y0: 580, x1: 735, y1: 1320 },
+};
 const NO_TONES: Partial<Record<Muscle, MuscleMapTone>> = {};
 
 const toneColor = (tone: MuscleMapTone) => {
@@ -48,7 +53,7 @@ const toneColor = (tone: MuscleMapTone) => {
 
 type Emphasis = 'active' | 'sibling' | 'rest';
 
-// Stroke widths are in the image's own 512 x 768 pixel units, so they scale with the picture.
+// Stroke widths use the artwork's native pixel units and scale with the picture.
 const look = (tone: MuscleMapTone | undefined, emphasis: Emphasis) => {
   const color = toneColor(tone ?? 'neutral');
   if (emphasis === 'active') return { color, fill: 0.52, stroke: 1, width: 1.5 };
@@ -64,13 +69,13 @@ const look = (tone: MuscleMapTone | undefined, emphasis: Emphasis) => {
 };
 
 /**
- * The masks in muscleMasks.ts were traced from these exact images in their native 512 x 768 space, so the
- * overlay uses that same space as its viewBox. The image and the overlay share one frame, which keeps them
+ * Each view uses its artwork's native dimensions for both the image and SVG viewBox.
+ * The image and overlay share one frame, which keeps them
  * locked together at any container width and at any zoom.
  */
 export const MuscleMap = memo(({
   view, onViewChange, tones = NO_TONES, selected = null, selectedPart = null, onSelect,
-  targets, sessionComparison, height = 420, showZoom = true, overview = false, focusTargets = false,
+  targets, sessionComparison, onBackgroundPress, height = 420, showZoom = true, overview = false, focusTargets = false,
 }: Props) => {
   const [box, setBox] = useState<{ width: number; height: number } | null>(null);
   const [zoomed, setZoomed] = useState(false);
@@ -81,10 +86,12 @@ export const MuscleMap = memo(({
 
   const zoomMuscle = selected ?? targets?.primaryMuscles[0];
   const zoomToLegs = Boolean(zoomMuscle && hasLowerBodyTarget(zoomMuscle));
-  const region = zoomed || focusTargets ? zoomToLegs ? LEGS : FOCUS[view] : FULL;
+  const size = MUSCLE_MAP_SIZES[view];
+  const full = { x0: 0, y0: 0, x1: size.width, y1: size.height };
+  const region = zoomed || focusTargets ? zoomToLegs ? LEGS[view] : FOCUS[view] : full;
   const fit = box ? Math.min(box.width / (region.x1 - region.x0), box.height / (region.y1 - region.y0)) : 0;
-  const width = MUSCLE_MAP_SIZE.width * fit;
-  const imageHeight = MUSCLE_MAP_SIZE.height * fit;
+  const width = size.width * fit;
+  const imageHeight = size.height * fit;
   const left = box ? box.width / 2 - ((region.x0 + region.x1) / 2) * fit : 0;
   const top = box ? box.height / 2 - ((region.y0 + region.y1) / 2) * fit : 0;
 
@@ -133,33 +140,58 @@ export const MuscleMap = memo(({
   const layer = (muscle: Muscle, part: string) => targets
     ? (muscle === selected && (selectedPart === null || part === selectedPart) ? 3 : muscleTargetRole(targets, muscle) === 'primary' ? 2 : 1)
     : rank[emphasisOf(muscle, part)];
-  const drawOrder = [...masks].sort((a, b) => layer(a.muscle, a.part) - layer(b.muscle, b.part));
+  const visibleMasks = view === 'back' && !selectedPart
+    ? [...masks.filter(mask=>!BACK_GROUP_CONTOURS.some(group=>group.muscle===mask.muscle)), ...BACK_GROUP_CONTOURS]
+    : masks;
+  const drawOrder = [...visibleMasks].sort((a, b) => layer(a.muscle, a.part) - layer(b.muscle, b.part));
+  const touchMasks = sessionComparison ? visibleMasks : masks;
+  // Comparison view: one dimming layer over the whole picture with every done/next (or the selected) muscle
+  // cut out of it, so those muscles stay at their natural brightness while the rest of the body recedes.
+  // The cut-outs are drawn with a wide stroke so the hairline gaps between neighbouring parts (e.g. the three
+  // quad heads) stay lit instead of showing the dimming through as dark seams.
+  const lit = sessionComparison ? visibleMasks.filter(({ muscle }) => selected
+    ? muscle === selected
+    : sessionComparison.completed.includes(muscle) || sessionComparison.next.includes(muscle))
+    // Weekly overview: trained muscles stay lit, untrained ones recede; a selection stands alone.
+    : overview ? masks.filter(({ muscle }) => selected ? muscle === selected : Boolean(tones[muscle]))
+    // Exercise targets: primary and assisting muscles stay lit; an orange tint alone vanishes on orange-lit skin.
+    : targets ? masks.filter(({ muscle }) => selected ? muscle === selected : muscleTargetRole(targets, muscle) !== null) : [];
+  const spotlightId = useRef(`spotlight-${Math.random().toString(36).slice(2)}`).current;
   const highlight = (muscle: Muscle, part: string) => {
     if (sessionComparison) {
       const completed = sessionComparison.completed.includes(muscle);
       const next = sessionComparison.next.includes(muscle);
       const focused = muscle === selected;
+      const dimmed = selected !== null && !focused;
+      // Done today: green fill. Coming next: blue fill (not red, which reads as a warning). Both: green with
+      // a blue outline. A selection is shown by brightening that muscle and dimming the rest -- never by
+      // outlining each part, which makes multi-part groups (quads, hamstrings) read as stitched seams.
+      // Spotlight: the body is dimmed and these muscles are cut out of the dimming (see `spotlight` below),
+      // so "next" keeps natural skin with only a faint cool tint; "done" glows green.
+      const base = completed ? 0.32 : next ? 0.1 : 0;
       return {
-        color: completed ? colors.success : colors.danger,
-        fill: completed || next ? focused ? 0.7 : 0.5 : 0,
-        strokeColor: next ? colors.danger : colors.success,
-        stroke: completed || next ? 1 : 0,
-        width: completed && next ? 6 : focused ? 4 : 2,
+        color: completed ? colors.success : colors.next,
+        fill: focused ? completed ? 0.6 : 0.4 : dimmed ? base * 0.35 : base,
+        strokeColor: colors.next,
+        stroke: completed && next ? dimmed ? 0.3 : 0.9 : 0,
+        width: 3,
       };
     }
     if (targets) {
       const role = muscleTargetRole(targets, muscle);
       const focused = muscle === selected && (selectedPart === null || part === selectedPart);
+      // Lit by the spotlight; primary gets a light warm lift, assisting is pulled halfway back toward the dimmed body.
       return {
-        color: colors.accent,
-        fill: role === 'primary' ? 0.55 : role === 'secondary' ? 0.18 : 0,
-        stroke: focused ? 1 : role === 'primary' ? 0.85 : role === 'secondary' ? 0.4 : 0,
-        width: focused ? 2 : 1,
-        strokeColor: focused ? colors.text : colors.accent,
+        color: role === 'secondary' && !focused ? '#000000' : colors.accent,
+        fill: focused ? 0.3 : role === 'primary' ? 0.16 : role === 'secondary' ? 0.28 : 0,
+        stroke: 0,
+        width: 0,
+        strokeColor: colors.accent,
       };
     }
-    const style = overview && !selected && tones[muscle]
-      ? { color: toneColor(tones[muscle]), fill: 0.28, stroke: 0.45, width: 0.8 }
+    const style = overview && tones[muscle]
+      ? { color: toneColor(tones[muscle]), fill: muscle === selected ? 0.5 : selected ? 0.1 : 0.3, stroke: 0, width: 0 }
+      : overview ? { color: colors.text, fill: 0, stroke: 0, width: 0 }
       : look(tones[muscle], emphasisOf(muscle, part));
     return { ...style, strokeColor: style.color };
   };
@@ -169,16 +201,25 @@ export const MuscleMap = memo(({
       {fit > 0 ? (
         <Animated.View style={{ position: 'absolute', left, top, width, height: imageHeight, transform: pan.getTranslateTransform() }}
           accessibilityElementsHidden={!onSelect} importantForAccessibility={onSelect ? 'auto' : 'no-hide-descendants'}>
-          {/* Explicit size: a local image otherwise keeps its intrinsic 512 x 768 size and ignores absoluteFill. */}
+          {/* Explicit size keeps the artwork and SVG registered at every zoom level. */}
           <Image source={MUSCLE_MAP_ARTWORK[view]} resizeMode="contain" style={{ width, height: imageHeight }} accessible={false} fadeDuration={0} />
           <Svg
             style={StyleSheet.absoluteFill}
             width={width}
             height={imageHeight}
-            pointerEvents={onSelect ? 'auto' : 'none'}
-            viewBox={`0 0 ${MUSCLE_MAP_SIZE.width} ${MUSCLE_MAP_SIZE.height}`}
+            pointerEvents={onSelect || onBackgroundPress ? 'auto' : 'none'}
+            viewBox={`0 0 ${size.width} ${size.height}`}
           >
-            {drawOrder.map(({ muscle, part, visible }) => {
+            {lit.length ? <>
+              <Defs>
+                <Mask id={spotlightId} x="0" y="0" width={size.width} height={size.height} maskUnits="userSpaceOnUse">
+                  <Rect x="0" y="0" width={size.width} height={size.height} fill="#ffffff" />
+                  {lit.map((mask) => <Path key={mask.part} d={mask.visible} fill="#000000" stroke="#000000" strokeWidth={7} strokeLinejoin="round" />)}
+                </Mask>
+              </Defs>
+              <Rect x="0" y="0" width={size.width} height={size.height} fill="#000000" fillOpacity={0.45} mask={`url(#${spotlightId})`} pointerEvents="none" />
+            </> : null}
+            {drawOrder.map(({ muscle, part, visible, covered }) => {
               const style = highlight(muscle, part);
               return (
                 <Path
@@ -186,28 +227,45 @@ export const MuscleMap = memo(({
                   testID={sessionComparison ? `recap-muscle-${view}-${part}` : undefined}
                   d={visible}
                   fill={style.color}
-                  fillOpacity={style.fill}
+                  fillOpacity={covered ? style.fill * 0.6 : style.fill}
                   stroke={style.strokeColor}
                   strokeOpacity={style.stroke}
                   strokeWidth={style.width}
                   strokeLinejoin="round"
+                  strokeDasharray={covered ? '8 6' : undefined}
                   pointerEvents="none"
                 />
               );
             })}
-            {/* Touch targets: invisible, a little larger than the muscles, and never overlapping each other. */}
-            {onSelect ? masks.map(({ muscle, part, label, hit }) => (
-              <G
+            {/* Drawn under the muscle touch targets, so it only receives taps that miss every muscle. */}
+            {onBackgroundPress ? <Rect x="0" y="0" width={size.width} height={size.height} fill="#000000" fillOpacity={0.001}
+              onPress={onBackgroundPress} accessible={false} /> : null}
+            {/* Comparison taps follow the group surface; detail views retain individual parts. */}
+            {onSelect ? touchMasks.map(({ muscle, part, label, hit }) => {
+              const name = label ? `Select ${label}, part of ${muscle}` : 'Select ' + muscle;
+              const isSelected = emphasisOf(muscle, part) === 'active';
+              const select = () => onSelect(muscle, part);
+              const path = <Path d={hit} fill="#000000" fillOpacity={0.001} />;
+              // RN Web converts accessibilityRole="button" on G into an HTML
+              // button inside the SVG, which breaks hit testing. Keep a real g.
+              if (Platform.OS === 'web') return createElement('g', {
+                key: `${view}-${part}-hit`, role: 'button', tabIndex: 0,
+                'aria-label': name, 'aria-pressed': isSelected, onClick: select,
+                onKeyDown: (event: React.KeyboardEvent) => {
+                  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); }
+                },
+              }, path);
+              return <G
                 key={`${view}-${part}-hit`}
                 accessible
                 accessibilityRole="button"
-                accessibilityLabel={label ? `Select ${label}, part of ${muscle}` : 'Select ' + muscle}
-                accessibilityState={{ selected: emphasisOf(muscle, part) === 'active' }}
-                onPress={() => onSelect(muscle, part)}
+                accessibilityLabel={name}
+                accessibilityState={{ selected: isSelected }}
+                onPress={select}
               >
-                <Path d={hit} fill="#000000" fillOpacity={0.001} />
-              </G>
-            )) : null}
+                {path}
+              </G>;
+            }) : null}
           </Svg>
         </Animated.View>
       ) : null}
