@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { MUSCLE_MAP_SIZE, MUSCLE_MASKS, type MuscleMapView } from '../lib/muscleMasks'
+import { MUSCLE_MAP_SIZES, MUSCLE_MASKS, type MuscleMapView } from '../lib/muscleMasks'
 import { EXAMPLE_WEEK, LOWER_BODY, TONE_COLOR, doseTone, fmt, muscleName, weekRow, weekStatus, type WeekRow } from '../lib/exampleWeek'
 import { liftsFor } from '../lib/muscleParts'
 import type { PreviewExercise } from '../lib/previewExercises'
+import { MUSCLE_MAP_ARTWORK } from '../lib/athleteArtwork'
+import { mapBounds } from '../lib/mapDisplay'
 import { ExerciseDetails } from './TrainingPreview'
 
 type Selection = { muscle: string; part: string | null }
@@ -36,7 +38,8 @@ export function WeekExplorer() {
   const partName = selection?.part ? partLabel(selection.part) : undefined
   const lifts = selection ? liftsFor(selection.muscle, selection.part).slice(0, 4) : []
   const legs = Boolean(selection && LOWER_BODY.includes(selection.muscle))
-  const viewBox = zoom ? (legs ? '140 305 232 370' : '115 105 280 225') : `0 0 ${MUSCLE_MAP_SIZE.width} ${MUSCLE_MAP_SIZE.height}`
+  const size = MUSCLE_MAP_SIZES[view]
+  const viewBox = mapBounds(view, zoom, legs)
 
   const showView = (next: MuscleMapView) => {
     setView(next)
@@ -92,8 +95,8 @@ export function WeekExplorer() {
         <div className="landing-muscle-map">
           {/* One coordinate system for the artwork and its masks: the masks were traced from these exact images. */}
           <svg className="muscle-overlay" viewBox={viewBox} role="group" aria-label={`Interactive ${view} muscle regions`}>
-            <image href={`/images/muscle-map/athlete-${view}-v2.png`} width={MUSCLE_MAP_SIZE.width} height={MUSCLE_MAP_SIZE.height} />
-            {MUSCLE_MASKS[view].map(({ muscle, part, label, visible, hit }) => {
+            <image href={MUSCLE_MAP_ARTWORK[view]} width={size.width} height={size.height} />
+            {MUSCLE_MASKS[view].map(({ muscle, part, label, visible, hit, covered }) => {
               const whole = part === muscle
               const active = Boolean(selection && selection.muscle === muscle && (selection.part === null || selection.part === part))
               const tone = TONE_COLOR[weekStatus(weekRow(muscle) ?? { min: 0, max: 99 }, weekRow(muscle)?.projected ?? 0).tone]
@@ -101,7 +104,7 @@ export function WeekExplorer() {
               const preview = hovered === muscle && !active
               const fill = active ? .52 : preview ? (selection ? .3 : .55) : selection ? .06 : hovered ? .12 : .28
               return <g key={`${view}-${part}`} className="muscle-region" role="button" tabIndex={0} aria-label={label ? `Select ${label}, part of ${muscleName(muscle).toLowerCase()}` : `Select ${muscleName(muscle)}`} aria-pressed={active} onClick={select} onPointerEnter={event => { if (event.pointerType === 'mouse') setHovered(muscle) }} onPointerLeave={() => setHovered(null)} onFocus={event => { if (event.currentTarget.matches(':focus-visible')) setHovered(muscle) }} onBlur={() => setHovered(null)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select() } }}>
-                <path className="muscle-visible" d={visible} fill={tone} fillOpacity={fill} stroke={tone} strokeOpacity={active ? 1 : preview ? .9 : selection ? 0 : .45} strokeWidth={active || preview ? 2 : 1} />
+                <path className="muscle-visible" d={visible} fill={tone} fillOpacity={fill * (covered ? .6 : 1)} strokeDasharray={covered ? "8 6" : undefined} stroke={tone} strokeOpacity={active ? 1 : preview ? .9 : selection ? 0 : .45} strokeWidth={active || preview ? 2 : 1} />
                 <path className="muscle-hit" d={hit} />
               </g>
             })}

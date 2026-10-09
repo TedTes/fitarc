@@ -30,6 +30,7 @@ export type Lift = { exercise: PreviewExercise; role: 'primary' | 'assist' }
 export const liftsFor = (muscle: string, part: string | null): Lift[] => {
   const spec = part && part !== muscle ? PART_LIFTS[part] : undefined
   if (spec) return [...spec.primary.map(id => ({ exercise: previewExercise(id), role: 'primary' as const })), ...spec.assist.map(id => ({ exercise: previewExercise(id), role: 'assist' as const }))]
+  if (part && part !== muscle) return []
   return PREVIEW_EXERCISES
     .filter(exercise => exercise.primaryMuscles.includes(muscle) || exercise.secondaryMuscles.includes(muscle))
     .map(exercise => ({ exercise, role: exercise.primaryMuscles.includes(muscle) ? 'primary' as const : 'assist' as const }))

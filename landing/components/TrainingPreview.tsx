@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { MUSCLE_MASKS, type MuscleMapView } from '../lib/muscleMasks'
+import { MUSCLE_MAP_SIZES, MUSCLE_MASKS, type MuscleMapView } from '../lib/muscleMasks'
 import { previewExercise, type PreviewExercise } from '../lib/previewExercises'
-import { LOWER_BODY, doseTone, fmt, muscleName, weekRow, weekStatus } from '../lib/exampleWeek'
-import { formatKg, frameRule, hardSetCredit, nextLoad, secondaryMuscleCredit } from '../lib/previewSolver'
+import { LOWER_BODY, fmt, muscleName } from '../lib/exampleWeek'
+import { hardSetCredit, secondaryMuscleCredit } from '../lib/previewSolver'
+import { MUSCLE_MAP_ARTWORK } from '../lib/athleteArtwork'
+import { groupMasks, mapBounds } from '../lib/mapDisplay'
 
 export { muscleName }
 const defaultView = (exercise: PreviewExercise): MuscleMapView =>
@@ -13,13 +15,14 @@ export function TargetFigure({ exercise, view = defaultView(exercise), zoom = fa
   selected?: string | null; onSelect?: (muscle: string, label: string) => void;
 }) {
   const legs = LOWER_BODY.includes(selected ?? exercise.primaryMuscles[0])
-  const bounds = zoom || compact ? (legs ? '140 305 232 370' : '115 105 280 225') : '0 0 512 768'
+  const bounds = mapBounds(view, zoom || compact, legs)
+  const size = MUSCLE_MAP_SIZES[view]
   return <svg className={compact ? 'target-figure compact' : 'target-figure'} viewBox={bounds} role={onSelect ? 'group' : undefined} aria-hidden={onSelect ? undefined : true} aria-label={onSelect ? `${view} exercise targets` : undefined}>
-    <image href={`/images/muscle-map/athlete-${view}-v2.png`} width="512" height="768" />
-    {MUSCLE_MASKS[view].map(mask => {
+    <image href={MUSCLE_MAP_ARTWORK[view]} width={size.width} height={size.height} />
+    {groupMasks(view).map(mask => {
       const primary = exercise.primaryMuscles.includes(mask.muscle)
       const secondary = exercise.secondaryMuscles.includes(mask.muscle)
-      return primary || secondary || selected === mask.muscle ? <path key={mask.part} d={mask.visible} fill="#f48d4d" fillOpacity={primary ? .55 : secondary ? .18 : 0} stroke={selected === mask.muscle ? '#f3f5f8' : '#f48d4d'} strokeOpacity={selected === mask.muscle ? 1 : primary ? .85 : .4} strokeWidth={selected === mask.muscle ? 2 : 1} /> : null
+      return primary || secondary || selected === mask.muscle ? <path key={mask.part} d={mask.visible} fill="#f48d4d" fillOpacity={(primary ? .32 : secondary ? .14 : 0) * (mask.covered ? .6 : 1)} stroke={selected === mask.muscle ? '#f3f5f8' : '#f48d4d'} strokeOpacity={selected === mask.muscle ? 1 : primary ? .85 : .4} strokeWidth={selected === mask.muscle ? 3 : 1} strokeDasharray={mask.covered ? "8 6" : undefined} /> : null
     })}
     {onSelect && MUSCLE_MASKS[view].map(mask => <g className="muscle-region" key={mask.part} role="button" tabIndex={0} aria-label={mask.label ? `Inspect ${mask.label}, part of ${muscleName(mask.muscle).toLowerCase()}` : `Inspect ${muscleName(mask.muscle)}`} onClick={() => onSelect(mask.muscle, mask.label ?? muscleName(mask.muscle))} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(mask.muscle, mask.label ?? muscleName(mask.muscle)) } }}><path className="muscle-hit" d={mask.hit} /></g>)}
   </svg>
@@ -49,208 +52,137 @@ export function ExerciseDetails({ exercise }: { exercise: PreviewExercise }) {
   </div>
 }
 
-function TargetButton({ exercise, onClick, label }: { exercise: PreviewExercise; onClick: () => void; label: string }) {
-  return <button className="preview-target-button" type="button" onClick={onClick} aria-label={`Inspect ${exercise.name} muscle targets`}>
-    <TargetFigure exercise={exercise} compact />
-    <span><small>{label}</small><strong>{exercise.primaryMuscles.map(muscleName).join(' · ')}</strong><small>Assists · {exercise.secondaryMuscles.map(muscleName).join(' · ') || 'none listed'}</small></span><span aria-hidden="true" className="preview-target-arrow">↗</span>
-  </button>
+// A small, local-only tour of the current app. Sample exercises and numbers, never user data.
+export const PATTERNS = [
+  { name: 'Upper / Lower', groups: ['Upper', 'Lower'] },
+  { name: 'Push / Pull / Legs', groups: ['Push', 'Pull', 'Legs'] },
+  { name: 'Full body', groups: ['Full body'] },
+]
+const POOLS: Record<string, string[]> = {
+  Upper: ['machine_chest_press', 'cable_row', 'overhead_press', 'biceps_curl'],
+  Lower: ['back_squat', 'romanian_deadlift', 'seated_leg_curl', 'leg_press'],
+  Push: ['machine_chest_press', 'overhead_press', 'triceps_pressdown', 'incline_db_press'],
+  Pull: ['cable_row', 'lat_pulldown', 'biceps_curl', 'chest_supported_row'],
+  Legs: ['back_squat', 'romanian_deadlift', 'seated_leg_curl', 'leg_press'],
+  'Full body': ['machine_chest_press', 'back_squat', 'cable_row', 'romanian_deadlift'],
+}
+const musclesFor = (ids: string[]) => Array.from(new Set(ids.flatMap(id => previewExercise(id).primaryMuscles)))
+type SetRow = { kg: number; reps: number; rir: number; done: boolean }
+const freshRows = (): SetRow[] => Array.from({ length: 3 }, () => ({ kg: 40, reps: 12, rir: 2, done: false }))
+const initialRows = (ids: string[]) => Object.fromEntries(ids.map(id => [id, freshRows()]))
+
+export function SessionBodies({ completed, next }: { completed: string[]; next: string[] }) {
+  return <div className="session-comparison">
+    <div className="session-bodies">{(['front', 'back'] as const).map(view => {
+      const size = MUSCLE_MAP_SIZES[view]
+      return <svg key={view} viewBox={mapBounds(view)} role="img" aria-label={`${view} muscle map. Completed: ${completed.map(muscleName).join(', ') || 'none'}. Next: ${next.map(muscleName).join(', ') || 'none'}.`}>
+        <image href={MUSCLE_MAP_ARTWORK[view]} width={size.width} height={size.height} />
+        {groupMasks(view).map(mask => {
+          const done = completed.includes(mask.muscle), upcoming = next.includes(mask.muscle)
+          if (!done && !upcoming) return null
+          return <path key={mask.part} d={mask.visible} fill={done ? '#2BCB7D' : '#60A5FA'} fillOpacity={mask.covered ? .2 : .4} stroke={upcoming ? '#60A5FA' : '#2BCB7D'} strokeWidth={done && upcoming ? 5 : 2} strokeDasharray={mask.covered ? '8 6' : undefined} />
+        })}
+      </svg>
+    })}</div>
+    <div className="session-legend">{completed.length > 0 && <span><i className="done" />Completed</span>}{next.length > 0 && <span><i className="next" />Next session</span>}{completed.some(m => next.includes(m)) && <span><i className="both" />Both</span>}</div>
+  </div>
 }
 
-// ── Sample session ─────────────────────────────────────────────────────────────────────────────
-// The tour mirrors the app's set-to-set rules (see lib/previewSolver.ts). Every load, rep and volume
-// figure below is an example, and nothing here is stored or sent anywhere.
-const TOTAL_SETS = 3
-const MIN_REPS = 8
-const MAX_REPS = 12
-const TARGET_RIR = 3
-const REST_SECONDS = 120 // prescribed by the runtime for a compound lift in a hypertrophy block
-
-type PreviewTab = 'Today' | 'block' | 'week'
-type Detail = { exercise: PreviewExercise; replacement?: boolean }
-type Frame = { load: number; last: { load: number; reps: number; rir: number; inSession: boolean } | null }
-type LoggedSet = { exerciseId: string; credit: number }
-type TourStep = 'inspect' | 'compare' | 'week'
-
-const START_LOAD: Record<string, number> = { machine_chest_press: 42.5, bench_press: 30 }
-const openingFrame = (id: string): Frame => id === 'machine_chest_press'
-  ? { load: START_LOAD[id], last: { load: 40, reps: 12, rir: 3, inSession: false } }
-  : { load: START_LOAD[id] ?? 10, last: null }
-const rirText = (value: number) => (value === 4 ? '4+' : String(value))
-
-const BLOCK_DAYS = {
-  'upper.a': ['machine_chest_press', 'lat_pulldown', 'biceps_curl'],
-  'lower.a': ['back_squat', 'romanian_deadlift', 'seated_leg_curl'],
-} as const
-const WEEK_LIFT: Record<string, string> = { chest: 'machine_chest_press', triceps: 'triceps_pressdown', quads: 'back_squat', hamstrings: 'romanian_deadlift' }
-const WEEK_ROWS = ['chest', 'triceps', 'quads', 'hamstrings']
-const PHASES = [{ weeks: 'W1–2', name: 'build' }, { weeks: 'W3–4', name: 'load' }, { weeks: 'W5', name: 'challenge' }, { weeks: 'W6', name: 'recover' }]
+function HoldStart({ onStart }: { onStart: () => void }) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [holding, setHolding] = useState(false)
+  const cancel = () => { if (timer.current) clearTimeout(timer.current); timer.current = null; setHolding(false) }
+  const begin = () => { if (timer.current) return; setHolding(true); timer.current = setTimeout(() => { timer.current = null; setHolding(false); onStart() }, 700) }
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  return <button type="button" className={`hold-start${holding ? ' holding' : ''}`} aria-label="Hold to start workout" onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); begin() }} onPointerUp={cancel} onPointerCancel={cancel} onKeyDown={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); begin() } }} onKeyUp={cancel} onBlur={cancel} onClick={event => { if (event.detail === 0 && !timer.current) onStart() }}><span aria-hidden="true">▶</span>{holding ? 'Keep holding…' : 'Hold to start'}</button>
+}
 
 export function TrainingPreview() {
   const scroll = useRef<HTMLDivElement>(null)
-  const [tab, setTab] = useState<PreviewTab>('Today')
-  const [exercise, setExercise] = useState(() => previewExercise('machine_chest_press'))
-  const [detail, setDetail] = useState<Detail | null>(null)
-  const [swapping, setSwapping] = useState(false)
-  const [day, setDay] = useState<keyof typeof BLOCK_DAYS>('upper.a')
-  const [phase, setPhase] = useState<'ready' | 'active' | 'rest'>('ready')
-  const [sets, setSets] = useState<LoggedSet[]>([])
-  const [frame, setFrame] = useState<Frame>(() => openingFrame('machine_chest_press'))
-  const [reps, setReps] = useState(MAX_REPS)
-  const [rir, setRir] = useState(TARGET_RIR)
+  const [tab, setTab] = useState<'Today' | 'Progress' | 'Profile'>('Today')
+  const [pattern, setPattern] = useState(0)
+  const [session, setSession] = useState(0)
+  const groups = PATTERNS[pattern].groups
+  const group = groups[session % groups.length]
+  const nextGroup = groups[(session + 1) % groups.length]
+  const [ids, setIds] = useState(POOLS.Upper.slice(0, 2))
+  const [nextIds, setNextIds] = useState(POOLS.Lower.slice(0, 2))
+  const [rows, setRows] = useState<Record<string, SetRow[]>>(() => initialRows(POOLS.Upper.slice(0, 2)))
+  const [started, setStarted] = useState(false)
+  const [finished, setFinished] = useState(false)
+  const [rest, setRest] = useState(0)
+  const [detail, setDetail] = useState<PreviewExercise | null>(null)
+  const [picker, setPicker] = useState<string | 'add' | null>(null)
   const [notice, setNotice] = useState('')
-
-  const complete = sets.length >= TOTAL_SETS
-  const earned = sets.reduce((sum, set) => sum + set.credit, 0)
-  useEffect(() => { scroll.current?.scrollTo(0, 0) }, [tab, detail?.exercise.id, swapping])
-
-  const changeTab = (next: PreviewTab) => { setTab(next); setDetail(null); setSwapping(false); setNotice('') }
-  const replacements = ['bench_press', 'neutral_grip_floor_press', 'machine_chest_press'].map(previewExercise).filter(lift => lift.id !== exercise.id)
-  const restartSession = () => { setPhase('ready'); setSets([]); setFrame(openingFrame('machine_chest_press')); setExercise(previewExercise('machine_chest_press')); setReps(MAX_REPS); setRir(TARGET_RIR); setNotice('') }
-  const reset = () => { changeTab('Today'); restartSession() }
-
-  const finishSet = () => {
-    const next = nextLoad({ load: frame.load, reps, rir, minReps: MIN_REPS, maxReps: MAX_REPS, incrementKg: exercise.incrementKg })
-    const credit = hardSetCredit(rir, TARGET_RIR)
-    const logged = [...sets, { exerciseId: exercise.id, credit }]
-    setSets(logged)
-    setFrame({ load: next, last: { load: frame.load, reps, rir, inSession: true } })
-    setReps(MAX_REPS); setRir(TARGET_RIR)
-    const change = Number((next - frame.load).toFixed(2))
-    const counted = credit ? '' : ` RIR ${rirText(rir)} is above the target of ${TARGET_RIR}, so this set adds no set credit.`
-    if (logged.length >= TOTAL_SETS) {
-      setPhase('ready')
-      setNotice(`${exercise.name} done · ${logged.reduce((sum, set) => sum + set.credit, 0)} of ${TOTAL_SETS} sets earned credit.${counted}`)
-    } else {
-      setPhase('rest')
-      setNotice(`Logged ${reps} reps at RIR ${rirText(rir)}. Next set: ${formatKg(next)}${change > 0 ? ` (+${formatKg(change)})` : change < 0 ? ` (−${formatKg(Math.abs(change))})` : ' · hold'}.${counted}`)
+  const [expanded, setExpanded] = useState(ids[0])
+  const count = ids.reduce((sum, id) => sum + rows[id].filter(row => row.done).length, 0)
+  const total = ids.length * 3
+  const completeMuscles = musclesFor(ids.filter(id => rows[id].some(row => row.done)))
+  useEffect(() => { scroll.current?.scrollTo(0, 0) }, [tab, detail?.id, picker, finished])
+  useEffect(() => {
+    if (!rest) return
+    const timer = setInterval(() => setRest(value => Math.max(0, value - 1)), 1000)
+    return () => clearInterval(timer)
+  }, [rest > 0])
+  const changeTab = (value: typeof tab) => { setTab(value); setPicker(null); setDetail(null) }
+  const setup = (p: number, n = 0, list = POOLS[PATTERNS[p].groups[n % PATTERNS[p].groups.length]].slice(0, 2)) => {
+    setPattern(p); setSession(n); setIds(list); setRows(initialRows(list)); setExpanded(list[0]); setStarted(false); setFinished(false); setRest(0); setNotice('')
+    setNextIds(POOLS[PATTERNS[p].groups[(n + 1) % PATTERNS[p].groups.length]].slice(0, 2))
+  }
+  const update = (id: string, index: number, patch: Partial<SetRow>) => setRows(current => ({ ...current, [id]: current[id].map((row, i) => i === index ? { ...row, ...patch } : row) }))
+  const log = (id: string, index: number) => {
+    if (rows[id][index].done) { update(id, index, { done: false }); setRest(0); return }
+    update(id, index, { done: true }); setStarted(true)
+    const exerciseDone = rows[id].filter(row => row.done).length === 2
+    setRest(exerciseDone ? 0 : 120)
+    const following = ids.find(key => key !== id && rows[key].some(row => !row.done))
+    if (exerciseDone && following) setExpanded(following)
+    setNotice(count + 1 === total ? 'All sets logged. Finish to see your muscle summary.' : exerciseDone ? 'Exercise complete. Move to your next lift.' : 'Set logged. Rest when you need it.')
+  }
+  const finish = () => { if (!count) return; setFinished(true); setRest(0); setStarted(false); setNotice('') }
+  const tourComplete = () => { setRows(current => Object.fromEntries(Object.entries(current).map(([id, sets]) => [id, sets.map(row => ({ ...row, done: true }))]))); setFinished(true); setStarted(false); setRest(0); changeTab('Today'); setNotice('') }
+  const pickerGroup = finished ? nextGroup : group
+  const listed = finished ? nextIds : ids
+  const choose = (id: string) => {
+    if (finished) setNextIds(current => [...current, id])
+    else {
+      setIds(current => picker === 'add' ? [...current, id] : current.map(key => key === picker ? id : key))
+      setRows(current => ({ ...current, [id]: freshRows() })); setExpanded(id)
     }
+    setPicker(null)
   }
-  const primary = () => {
-    if (complete) return changeTab('week')
-    if (phase === 'ready') { setPhase('active'); setNotice('Set started. Adjust your reps and RIR, then finish.') }
-    else if (phase === 'active') finishSet()
-    else { setPhase('ready'); setNotice('Ready for the next set.') }
-  }
-  const replaceLift = (lift: PreviewExercise) => {
-    setExercise(lift); setFrame(openingFrame(lift.id)); setReps(MAX_REPS); setRir(TARGET_RIR)
-    setDetail(null); setSwapping(false)
-    setNotice(`Lift replaced. ${sets.length ? `Your ${sets.length} logged ${sets.length === 1 ? 'set stays' : 'sets stay'}.` : 'Nothing was logged yet.'} A swap can’t be undone.`)
-  }
-
-  // Guided tour: the three buttons under the phone drive it into the states they describe.
-  const active: TourStep | null = detail ? (detail.replacement ? 'compare' : 'inspect') : swapping ? 'compare' : tab === 'week' ? 'week' : null
-  const tour = (step: TourStep) => {
-    setNotice('')
-    if (step === 'week') return changeTab('week')
-    setTab('Today')
-    if (step === 'inspect') { setSwapping(false); setDetail({ exercise }) }
-    else { if (complete) restartSession(); else if (phase === 'active') setPhase('ready'); setDetail(null); setSwapping(true) }
-  }
-
-  // Weekly volume for the Week tab: the example week plus the credit this session's sets earned.
-  // A logged set moves one planned set into "done", so projected only changes when a set earns no credit.
-  const sessionEffect = (muscle: string) => sets.reduce((acc, set) => {
-    const lift = previewExercise(set.exerciseId)
-    const weight = lift.primaryMuscles.includes(muscle) ? 1 : lift.secondaryMuscles.includes(muscle) ? secondaryMuscleCredit : 0
-    return { done: acc.done + set.credit * weight, projected: acc.projected + (set.credit - 1) * weight }
-  }, { done: 0, projected: 0 })
-
-  const phaseLabel = complete ? 'exercise complete' : phase === 'active' ? 'set in progress' : phase === 'rest' ? `rest · ${Math.floor(REST_SECONDS / 60)}:${String(REST_SECONDS % 60).padStart(2, '0')}` : 'ready'
-  const currentSet = Math.min(sets.length + 1, TOTAL_SETS)
-  const inputsLocked = phase === 'rest' || complete
-
   return <div className="phone-wrap">
     <div className="phone-glow" />
-    <div className="tour" role="group" aria-label="Guided preview">
-      <span className="tour-label">TRY THE PREVIEW</span>
-      <button type="button" aria-current={active === 'inspect' ? 'step' : undefined} onClick={() => tour('inspect')}><b>01</b> Inspect a lift</button>
-      <button type="button" aria-current={active === 'compare' ? 'step' : undefined} onClick={() => tour('compare')}><b>02</b> Swap a lift</button>
-      <button type="button" aria-current={active === 'week' ? 'step' : undefined} onClick={() => tour('week')}><b>03</b> Weekly volume</button>
+    <div className="tour" role="group" aria-label="Guided preview"><span className="tour-label">EXPLORE THE CURRENT APP · SAMPLE DATA</span>
+      <button type="button" onClick={() => { setup(pattern); changeTab('Today') }}><b>01</b> Today</button>
+      <button type="button" onClick={tourComplete}><b>02</b> After workout</button>
+      <button type="button" onClick={() => changeTab('Progress')}><b>03</b> Progress</button>
     </div>
     <section className="runtime-phone product-preview" aria-label="Interactive app preview">
-      <div className="phone-sensor" />
-      <div className="preview-disclaimer"><span>INTERACTIVE PREVIEW · SAMPLE DATA</span><button type="button" onClick={reset}>Reset</button></div>
+      <div className="phone-sensor" /><div className="preview-disclaimer"><span>INTERACTIVE PREVIEW · SAMPLE DATA</span><button type="button" onClick={() => { setup(0); changeTab('Today') }}>Reset</button></div>
       <div className="preview-scroll" ref={scroll}>
-        {detail ? <>
-          <button className="preview-text-button preview-back" type="button" autoFocus onClick={() => setDetail(null)}>← {swapping ? 'Compare lifts' : `Back to ${tab}`}</button>
-          <p className="preview-title">{detail.exercise.name}</p>
-          {detail.replacement && <p className="preview-muted">Replacing {exercise.name}. {sets.length ? `Your ${sets.length} logged ${sets.length === 1 ? 'set stays' : 'sets stay'}.` : 'Nothing is logged yet.'}</p>}
-          <ExerciseDetails key={detail.exercise.id} exercise={detail.exercise} />
-          {detail.replacement && <button className="preview-primary" type="button" onClick={() => replaceLift(detail.exercise)}>Use {detail.exercise.name}</button>}
-        </> : swapping ? <>
-          <button className="preview-text-button preview-back" type="button" autoFocus onClick={() => setSwapping(false)}>← Back to Today</button>
-          <p className="preview-title">Compare before you swap.</p>
-          <p className="preview-muted">Current: {exercise.name}. Inspect a replacement’s targets and equipment. Logged sets stay; the remaining sets move to the new lift.</p>
-          {replacements.map(lift => <button className="preview-lift" type="button" key={lift.id} onClick={() => setDetail({ exercise: lift, replacement: true })}><span><strong>{lift.name}</strong><small>{lift.equipment.join(' · ')} · {lift.primaryMuscles.map(muscleName).join(', ')}</small></span><span aria-hidden="true">↗</span></button>)}
-          <p className="preview-footnote">In the app, replacements reflect your equipment and limitations.</p>
-        </> : tab === 'Today' ? <>
-          <div className="phone-header"><strong>Today<i>.</i></strong><span>Upper body A · set {currentSet} of {TOTAL_SETS}</span></div>
-          <p className="runtime-goal">Focus: chest · building muscle</p>
-          <div className="section-line"><b>EXERCISES</b><span>{sets.length} of {TOTAL_SETS} sets logged</span></div>
-          <div className="preview-current"><span>▶ now</span><strong>{exercise.name}</strong><button type="button" onClick={() => setSwapping(true)} disabled={phase !== 'ready' || complete}>Swap</button></div>
-          <div className="frame-panel">
-            <div className="section-line"><b>CURRENT SET</b><span>{phaseLabel}</span></div>
-            <TargetButton exercise={exercise} label={phase === 'rest' ? 'NEXT SET · MUSCLES' : 'MUSCLES WORKED'} onClick={() => setDetail({ exercise })} />
-            <div className="frame-facts">
-              <div className="frame-row"><span>this set</span><code>{formatKg(frame.load)} × {MAX_REPS} @ RIR{TARGET_RIR}</code></div>
-              <div className="frame-row"><span>rule</span><code className="frame-rule">{frameRule(frame.last, frame.load, MIN_REPS)}</code></div>
-              <div className={`frame-row frame-adjust${inputsLocked ? ' locked' : ''}`}><label htmlFor="preview-reps">reps done</label><input id="preview-reps" type="number" inputMode="numeric" min="1" max="99" value={reps} onChange={event => setReps(Math.max(1, Math.min(99, Math.trunc(Number(event.target.value)) || 1)))} disabled={inputsLocked} /><em>/ {MIN_REPS}–{MAX_REPS}</em></div>
-              <div className={`frame-row frame-adjust${inputsLocked ? ' locked' : ''}`}><label htmlFor="preview-rir">RIR</label><select id="preview-rir" value={rir} onChange={event => setRir(Number(event.target.value))} disabled={inputsLocked}>{[0, 1, 2, 3, 4].map(value => <option value={value} key={value}>{rirText(value)}</option>)}</select><em>/ target {TARGET_RIR}</em></div>
-              <div className="frame-row"><span>{frame.last?.inSession ? 'last logged' : 'last session'}</span><code>{frame.last ? `${formatKg(frame.last.load)} × ${frame.last.reps} @ RIR${frame.last.rir}` : 'none · establishes baseline'}</code></div>
-            </div>
-            <p className="preview-muted">Reps are the main signal; RIR fine-tunes the next load. A set counts toward weekly volume when RIR is at or under target.</p>
-          </div>
-        </> : tab === 'block' ? <>
-          <div className="phone-header"><strong>My plan<i>.</i></strong></div>
-          <p className="preview-muted">Week 1 of 6 · accumulate</p>
-          <div className="phase-strip" role="group" aria-label="Six-week training phases">{PHASES.map((item, index) => <span key={item.weeks} className={index === 0 ? 'current' : undefined}>{index === 0 && <i />}{item.weeks} {item.name}</span>)}</div>
-          <div className="preview-segments" role="group" aria-label="Sample training day">{(Object.keys(BLOCK_DAYS) as Array<keyof typeof BLOCK_DAYS>).map(item => <button key={item} type="button" aria-pressed={day === item} onClick={() => setDay(item)}>{item}</button>)}</div>
-          <p className="preview-title">See the purpose of every lift.</p>
-          <p className="preview-muted">Open an exercise to inspect its equipment and primary and assisting muscles.</p>
-          {BLOCK_DAYS[day].map(id => { const lift = previewExercise(id); return <button className="preview-lift" type="button" key={id} onClick={() => setDetail({ exercise: lift })}><span><strong>{lift.name}</strong><small>3 × 8–12 · RIR 3</small></span><span aria-hidden="true">↗</span></button> })}
-          <div className="preview-block-note"><span>YOUR SIX-WEEK PLAN</span><p>Build → load → challenge → recover</p></div>
-        </> : <>
-          <div className="phone-header"><strong>Progress<i>.</i></strong></div>
-          <p className="preview-muted">Week 1 · example set credits</p>
-          <p className="preview-title">What you did.<br />What’s still planned.</p>
-          <p className="preview-muted">{sets.length ? `Includes your ${sets.length} sample ${sets.length === 1 ? 'set' : 'sets'}: ${fmt(earned)} earned credit. Assisting muscles earn half.` : 'Log a sample set in Today and watch this update. Assisting muscles earn half credit.'}</p>
-          <div className="week-mini" role="group" aria-label="Example weekly muscle volume">
-            <div className="week-mini-head" aria-hidden="true"><span>MUSCLE</span><span>DOSE / PLAN</span><span>RANGE</span><span>STATE</span></div>
-            {WEEK_ROWS.map(muscle => {
-              const row = weekRow(muscle)!
-              const effect = sessionEffect(muscle)
-              const value = row.projected + effect.projected
-              const done = row.done + effect.done
-              const state = weekStatus(row, value)
-              return <button className="week-mini-row" type="button" key={muscle} onClick={() => setDetail({ exercise: previewExercise(WEEK_LIFT[muscle]) })} aria-label={`${row.label}. ${fmt(value)} of ${fmt(row.plan)} planned set credits, ${fmt(done)} done. Range ${row.min} to ${row.max}. ${state.label}. Inspect a lift for this muscle.`}>
-                <strong>{row.label}</strong>
-                <span className={`dose ${doseTone(row, value)}`}>{fmt(value)}<em> / {fmt(row.plan)}</em><small>{fmt(done)} done{effect.done > 0 && <b> +{fmt(effect.done)}</b>}</small></span>
-                <span>{row.min}–{row.max}</span>
-                <span className={`state ${state.tone}`}>{state.glyph} {state.label}</span>
-              </button>
-            })}
-          </div>
-          <p className="preview-footnote">Tap a row to inspect a lift for that muscle. The full weekly map below connects every region to its lifts.</p>
-        </>}
+        {detail ? <><button className="preview-text-button preview-back" type="button" aria-label="Back to preview" onClick={() => setDetail(null)}>‹</button><p className="preview-title">{detail.name}</p><ExerciseDetails exercise={detail} key={detail.id} /></>
+        : picker ? <><div className="session-heading"><button className="preview-text-button" type="button" aria-label="Back to workout" onClick={() => setPicker(null)}>‹</button><h3>{picker === 'add' ? 'Add to' : 'Swap in'} {pickerGroup}</h3></div><p className="preview-muted">Exercises from this session’s sample pool.</p>{POOLS[pickerGroup].filter(id => !listed.includes(id)).map(id => { const lift = previewExercise(id); return <button className="preview-lift" type="button" key={id} onClick={() => choose(id)}><TargetFigure exercise={lift} compact /><span><strong>{lift.name}</strong><small>{lift.primaryMuscles.map(muscleName).join(' · ')}</small></span><span>+</span></button> })}{POOLS[pickerGroup].every(id => listed.includes(id)) && <p className="preview-muted">All sample exercises are already included.</p>}</>
+        : tab === 'Today' ? <>
+          <div className="session-heading"><h3>Today</h3>{started && !finished ? <button className="preview-text-button" type="button" disabled={!count} onClick={finish}>Finish</button> : <button type="button" className="preview-text-button" aria-label={`Add exercise to ${finished ? nextGroup : group}`} onClick={() => setPicker('add')}>+ Add</button>}</div>
+          {finished ? <><p className="completion-title">✓ Workout complete <small>{count} sets</small></p><SessionBodies completed={completeMuscles} next={musclesFor(nextIds)} /><div className="next-session"><small>NEXT SESSION</small><h3>{nextGroup}</h3><p>{nextIds.length} exercises · {nextIds.length * 3} sets</p></div>{nextIds.map(id => <button className="preview-lift" type="button" key={id} onClick={() => setDetail(previewExercise(id))}><TargetFigure exercise={previewExercise(id)} compact /><span><strong>{previewExercise(id).name}</strong><small>3 × 8–12</small></span><span>›</span></button>)}<button type="button" className="preview-primary" onClick={() => setup(pattern, session + 1, nextIds)}>Preview {nextGroup} session →</button></>
+          : <><p className="runtime-goal">{group} · {PATTERNS[pattern].name}</p>
+            {!started ? <><SessionBodies completed={[]} next={musclesFor(ids)} /><div className="start-session"><div><strong>{group}</strong><small>{ids.length} exercises · {total} sets</small></div><HoldStart onStart={() => { setStarted(true); setNotice('Choose your weight, reps and RIR in each row.') }} /></div>{ids.map(id => <button key={id} type="button" className="preview-lift" onClick={() => setDetail(previewExercise(id))}><TargetFigure exercise={previewExercise(id)} compact /><span><strong>{previewExercise(id).name}</strong><small>3 × 8–12 · 2:00 rest</small></span><span>›</span></button>)}</>
+            : <><div className="set-progress" aria-label={`${count} of ${total} sets logged`}>{ids.flatMap(id => rows[id].map((row, index) => <i key={`${id}-${index}`} className={row.done ? 'done' : ''} />))}</div><p className="preview-muted">{count} of {total} sets logged</p>
+              {[expanded, ...ids.filter(id => id !== expanded)].map(id => <div key={id} className="exercise-card"><div className="exercise-card-heading"><button type="button" onClick={() => setExpanded(id)} aria-expanded={expanded === id}><strong>{previewExercise(id).name}</strong><small>{rows[id].filter(row => row.done).length}/3 · 8–12 reps</small></button><button className="preview-text-button" type="button" aria-label={`Inspect ${previewExercise(id).name}`} onClick={() => setDetail(previewExercise(id))}>↗</button></div>{expanded === id && <><div className="set-table-head"><span>SET</span><span>KG</span><span>REPS</span><span>RIR</span><span className="sr-only">Log</span></div>{rows[id].map((row, index) => <div key={index} className={`editable-set${row.done ? ' logged' : ''}`}><span>{index + 1}</span>{(['kg', 'reps', 'rir'] as const).map(field => <select key={field} aria-label={`${previewExercise(id).name} set ${index + 1} ${field}`} value={row[field]} onChange={event => update(id, index, { [field]: Number(event.target.value) })}>{Array.from({ length: field === 'kg' ? 61 : field === 'reps' ? 30 : 5 }, (_, i) => field === 'kg' ? i * 2.5 : field === 'reps' ? i + 1 : i).map(value => <option key={value} value={value}>{field === 'rir' && value === 4 ? '4+' : value}</option>)}</select>)}<button type="button" aria-label={`${row.done ? 'Unlog' : 'Log'} ${previewExercise(id).name} set ${index + 1}`} aria-pressed={row.done} onClick={() => log(id, index)}>✓</button></div>)}{!rows[id].some(row => row.done) && <button className="preview-text-button" type="button" onClick={() => setPicker(id)}>Swap exercise</button>}</>}</div>)}</>}
+          </>}
+          {notice && <p className="preview-notice" role="status">{notice}</p>}
+        </> : tab === 'Progress' ? <><div className="session-heading"><h3>Progress</h3></div><p className="preview-muted">Your sample session, muscle by muscle.</p><SessionBodies completed={completeMuscles} next={[]} /><div className="session-volume">{Array.from(new Set(ids.flatMap(id => [...previewExercise(id).primaryMuscles, ...previewExercise(id).secondaryMuscles]))).map(muscle => {
+          const credits = ids.reduce((sum, id) => { const lift = previewExercise(id); const weight = lift.primaryMuscles.includes(muscle) ? 1 : lift.secondaryMuscles.includes(muscle) ? secondaryMuscleCredit : 0; return sum + rows[id].reduce((n, row) => n + (row.done ? hardSetCredit(row.rir, 2) * weight : 0), 0) }, 0)
+          return <div key={muscle}><span>{muscleName(muscle)}</span><strong>{fmt(credits)} <small>set credits</small></strong></div>
+        })}</div><p className="preview-footnote">Log sets in Today to update this sample. Explore the weekly map below for logged and planned volume.</p></>
+        : <><div className="session-heading"><h3>Profile</h3></div><p className="preview-title">Your routine, your rhythm.</p><p className="preview-muted">Choose a pattern. Each group has a pool of exercises to draw from.</p><div className="pattern-options" role="group" aria-label="Training pattern">{PATTERNS.map((item, i) => <button type="button" key={item.name} aria-pressed={pattern === i} onClick={() => setup(i)}>{item.name}<span>{pattern === i ? '✓' : '›'}</span></button>)}</div><p className="rotation-line">{groups.join(' → ')} → repeat</p><p className="preview-footnote">Changing the pattern resets this sample. In the app, edit your pools, equipment and starting weight ranges in training preferences.</p><button className="preview-primary" type="button" onClick={() => changeTab('Today')}>See {group} in Today →</button></>}
       </div>
-      {!detail && !swapping && tab === 'Today' && <div className="preview-dock">
-        <button className="preview-primary" type="button" onClick={primary}>{complete ? 'See Progress ↗' : phase === 'ready' ? '▶ Start set' : phase === 'active' ? 'Finish set & start rest' : 'Skip rest'}</button>
-        <div className="preview-dock-row"><p className="preview-notice" role="status">{notice || 'Sample workout · try the controls'}</p>{sets.length > 0 && !complete && <button className="preview-text-button" type="button" onClick={() => changeTab('week')}>See volume ↗</button>}</div>
-      </div>}
-      <nav className="phone-tabs preview-tabs" aria-label="App preview screens">{(['Today', 'block', 'week'] as const).map(item => <button key={item} type="button" aria-current={tab === item ? 'page' : undefined} onClick={() => changeTab(item)}>{{ Today: 'Today', block: 'My plan', week: 'Progress' }[item]}</button>)}</nav>
+      {rest > 0 && tab === 'Today' && !detail && !picker ? <div className="rest-dock" role="status"><span><strong>{Math.floor(rest / 60)}:{String(rest % 60).padStart(2, '0')}</strong> resting</span><button type="button" className="preview-text-button" onClick={() => setRest(0)}>Skip ›</button><progress value={rest} max={120} aria-label="Rest time remaining" /></div> : <nav className="phone-tabs preview-tabs" aria-label="App preview screens">{(['Today', 'Progress', 'Profile'] as const).map(item => <button type="button" key={item} aria-current={tab === item ? 'page' : undefined} onClick={() => changeTab(item)}><span aria-hidden="true">{{ Today: '↔', Progress: '▥', Profile: '◎' }[item]}</span>{item}</button>)}</nav>}
     </section>
   </div>
 }
 
-export function WelcomePreview() {
-  const [loading, setLoading] = useState(false)
-  return <section className="welcome-section shell" aria-labelledby="welcome-title">
-    <div><p className="eyebrow">04 / READY WHEN YOU ARE</p><h2 id="welcome-title">A familiar start.<br />A clear next step.</h2><p>Open FitArc, restore your training, and get back to your next session. The same athlete artwork greets you at sign-in and while your training loads.</p><div className="preview-segments" role="group" aria-label="Welcome screen preview"><button type="button" aria-pressed={!loading} onClick={() => setLoading(false)}>Sign-in screen</button><button type="button" aria-pressed={loading} onClick={() => setLoading(true)}>Loading screen</button></div></div>
-    <div className="welcome-preview" role="img" aria-label={loading ? 'Loading screen preview with athlete artwork and restoring your training message' : 'Sign-in screen preview with athlete artwork'}>
-      <img src="/images/muscle-map/athlete-front-v2.png" alt="" width="512" height="768" loading="lazy" decoding="async" />
-      {!loading && <div className="welcome-terminal">Your training<br /><span>Welcome back</span></div>}
-      <div className="welcome-copy">{loading ? <><span className="wordmark">fitarc<span>.</span></span><span className="welcome-spinner" /><p>Restoring your training…</p></> : <><h3>Build your<br />next plan.</h3><p>Sign in to your plan, workouts and progress.</p><span className="welcome-button">Continue with Apple</span><span className="welcome-email">or sign in with email</span></>}</div>
-      <span className="welcome-label">APP SCREEN PREVIEW</span>
-    </div>
-  </section>
+export function CompletionPreview() {
+  return <section className="welcome-section shell" aria-labelledby="completion-title"><div><p className="eyebrow">04 / SEE WHAT YOU TRAINED</p><h2 id="completion-title">Finish with a picture<br />of your progress.</h2><p>Your completed muscles light up in green. The next session’s targets appear in blue. See both sides of the body, then review the exercises coming next.</p><p>With Upper / Lower, an Upper session leads to Lower. Your chosen pattern connects today’s work to your next visit.</p><a className="text-link" href="#top">Try “After workout” in the preview ↑</a></div><div className="completion-feature"><p className="completion-title">✓ Workout complete</p><SessionBodies completed={musclesFor(POOLS.Upper.slice(0, 2))} next={musclesFor(POOLS.Lower.slice(0, 2))} /><div className="next-session"><small>NEXT SESSION</small><h3>Lower</h3><p>Back squat · Romanian deadlift</p></div><p className="preview-footnote">Illustrative session · current app artwork</p></div></section>
 }

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "preview:check": "node scripts/check-preview.cjs"
+    "preview:check": "node scripts/check-preview.cjs",
+    "artwork:sync": "node scripts/sync-artwork.cjs"
   },
   "dependencies": {
     "next": "14.2.5",

@@ -1,62 +1,56 @@
 import { useState } from 'react'
 import { TONE_COLOR, fmt, weekRow, weekStatus } from '../lib/exampleWeek'
 
-// Phase names, short names and one-line purposes are the app's own words (PHASE_COPY in src/screens/runtime/copy.ts).
-const PHASES = [
-  { id: 'accumulate', weeks: 'W1–2', short: 'build', plain: 'build volume', purpose: 'Build volume at a comfortable effort.' },
-  { id: 'intensify', weeks: 'W3–4', short: 'load', plain: 'raise load', purpose: 'Loads climb and sets get harder.' },
-  { id: 'peak', weeks: 'W5', short: 'challenge', plain: 'test the top', purpose: 'The hardest week, closest to failure. Where new bests happen.' },
-  { id: 'deload', weeks: 'W6', short: 'recover', plain: 'recover', purpose: 'Fewer sets, with load increases paused before your next plan.' },
-]
+import { PATTERNS } from './TrainingPreview'
 
-const SOURCE_INPUTS = ['goal', 'days per week', 'time cap', 'equipment', 'limitations']
+const SOURCE_INPUTS = ['training pattern', 'exercise pools', 'equipment', 'time', 'starting weights']
 
 const chest = weekRow('chest')!
 const chestState = weekStatus(chest, chest.projected)
 
 export function LoopSection() {
   return <section className="runtime-section shell" id="runtime">
-    <div className="section-heading"><p>01 / HOW IT WORKS</p><h2>One decision loop.<br />Every training day.</h2><span>A clear next set, muscle targets a tap away, and replacements you can inspect before you choose.</span></div>
+    <div className="section-heading"><p>01 / HOW IT WORKS</p><h2>One decision loop.<br />Every training day.</h2><span>Your routine sets the direction. Today, the muscle map and Progress keep the work connected.</span></div>
     <ol className="loop-grid">
       <li className="loop-step">
         <span className="loop-number" aria-hidden="true">01</span>
-        <h3>Set your preferences</h3>
-        <p>Goal, training days, session time, equipment and any limitations become explicit inputs.</p>
+        <h3>Choose your pattern</h3>
+        <p>Choose Upper / Lower, Push / Pull / Legs or Full body. Add the exercises you want available in each group.</p>
         <ul className="loop-visual loop-chips" aria-label="Inputs you set">{SOURCE_INPUTS.map(item => <li key={item}>{item}</li>)}</ul>
       </li>
       <li className="loop-step">
         <span className="loop-number" aria-hidden="true">02</span>
-        <h3>Create your plan</h3>
-        <p>A six-week plan with build, load, challenge and recovery phases. Open a planned lift to see its muscle targets and why it was chosen.</p>
-        <div className="loop-visual phase-strip" role="group" aria-label="Six-week training phases">{PHASES.map((phase, index) => <span key={phase.id} className={index === 0 ? 'current' : undefined}>{index === 0 && <i />}{phase.weeks} {phase.short}</span>)}</div>
+        <h3>Build your pools</h3>
+        <p>Keep your own exercises together. FitArc selects from the session’s pool using muscle coverage, recent training and your available equipment.</p>
+        <div className="loop-visual phase-strip" aria-label="Example rotation"><span className="current">Upper</span><span>→ Lower</span><span>→ Upper</span></div>
       </li>
       <li className="loop-step">
         <span className="loop-number" aria-hidden="true">03</span>
         <h3>Check today’s workout</h3>
-        <p>Set today’s time, recovery and unavailable equipment. Preview the exercises before you start, then record the weight, reps and effort you actually used.</p>
-        <div className="loop-visual loop-code" role="group" aria-label="Example set frame"><div><span>this set</span><code>42.5 kg × 12 @ RIR3</code></div><div><span>rule</span><code className="accent">last reps hit + RIR3 → +2.5 kg</code></div></div>
+        <p>Hold to start your session. Adjust weight, reps and effort in the set rows, swap a lift when needed, and use the rest timer between sets.</p>
+        <div className="loop-visual loop-code" role="group" aria-label="Example set frame"><div><span>set 1 ✓</span><code>40 kg × 12 · RIR 2</code></div><div><span>set 2</span><code className="accent">weight · reps · effort</code></div></div>
       </li>
       <li className="loop-step">
         <span className="loop-number" aria-hidden="true">04</span>
-        <h3>Adjust the remaining week</h3>
-        <p>Choose the days and time you still have. Review the proposed workouts and any targets they won’t cover, then apply the changes. Completed work stays counted.</p>
+        <h3>See what comes next</h3>
+        <p>Finish with a muscle map of the work you completed and the next session’s targets. Progress brings your logged and planned volume together.</p>
         <div className="loop-visual loop-week" role="group" aria-label="Example weekly volume row"><b>Chest</b><span>{fmt(chest.projected)} / {fmt(chest.plan)}</span><span>{chest.min}–{chest.max}</span><em className={chestState.tone}><span aria-hidden="true">{chestState.glyph}</span> {chestState.label}</em></div>
       </li>
     </ol>
-    <p className="loop-return"><span aria-hidden="true">↺</span> Your logged sets guide the next load. Your chosen availability guides the remaining week.</p>
+    <p className="loop-return"><span aria-hidden="true">↺</span> Your pattern connects the sessions. Your logged sets build the picture of your training.</p>
   </section>
 }
 
-function PhaseCard() {
+function PatternCard() {
   const [active, setActive] = useState(0)
-  const phase = PHASES[active]
+  const pattern = PATTERNS[active]
   return <article className="system-card">
-    <div className="card-index">My plan<span>.</span></div>
-    <h3>A plan with a clear progression.</h3>
-    <p>Six weeks that move through accumulation, intensification, peak and deload. Tap any planned lift to see its muscle targets and why it was selected.</p>
+    <div className="card-index">Your routine<span>.</span></div>
+    <h3>A rhythm you choose.</h3>
+    <p>Fill each group with exercises you like. Keep a main lift to compare progress, with other exercises selected for coverage and recent training.</p>
     <div className="phase-picker">
-      <div className="phase-tabs" role="group" aria-label="Training phases">{PHASES.map((item, index) => <button type="button" key={item.id} aria-pressed={index === active} onClick={() => setActive(index)}><b>{item.weeks}</b><span>{item.short}</span></button>)}</div>
-      <p className="phase-purpose" aria-live="polite"><b>{phase.short}</b> · {phase.plain}. {phase.purpose}</p>
+      <div className="pattern-options" role="group" aria-label="Explore training patterns">{PATTERNS.map((item, index) => <button type="button" key={item.name} aria-pressed={index === active} onClick={() => setActive(index)}>{item.name}<span>{index === active ? '✓' : '›'}</span></button>)}</div>
+      <p className="phase-purpose" aria-live="polite">{pattern.groups.join(' → ')} → repeat</p>
     </div>
   </article>
 }
@@ -87,14 +81,14 @@ function VolumeCard() {
 
 export function SystemSection() {
   return <section className="system-section shell" id="system">
-    <div className="section-heading"><p>03 / THE SYSTEM</p><h2>The plan, the session<br />and the evidence.</h2></div>
+    <div className="section-heading"><p>03 / THE SYSTEM</p><h2>Your routine, your session<br />and your progress.</h2></div>
     <div className="system-grid">
-      <PhaseCard />
+      <PatternCard />
       <article className="system-card">
         <div className="card-index">Today<span>.</span></div>
         <h3>A workout that fits today.</h3>
-        <p>Missed Monday, only 35 minutes on Wednesday, rack unavailable? Set your remaining availability, preview compatible exercises, and see which weekly targets may remain short.</p>
-        <div className="mini-stack"><span>done&nbsp;&nbsp; Machine chest press</span><b>▶ now&nbsp;&nbsp; Lat pulldown</b><span>next&nbsp;&nbsp; Dumbbell curl</span></div>
+        <p>See the relevant exercises for your next group. Inspect their muscle targets, add from that group’s pool, or swap a lift. Log each set where you see it.</p>
+        <div className="mini-stack"><span>done&nbsp;&nbsp; Machine chest press</span><b>▶ now&nbsp;&nbsp; Lat pulldown</b><span>next&nbsp;&nbsp; Biceps curl</span></div>
       </article>
       <VolumeCard />
     </div>
@@ -104,13 +98,14 @@ export function SystemSection() {
 // Every answer below is drawn from how the app behaves today (source intake, setSolver, status, and the swap and pain flows).
 export const FAQ_ITEMS: { q: string; a: string }[] = [
   { q: 'What does FitArc need to know about me?', a: 'Your goal (hypertrophy or strength), how many days you train, a time cap for each session, and your equipment: a full gym, or dumbbells and a bench. You can also note limitations and starting weights.' },
-  { q: 'What happens when I miss a workout?', a: 'Choose the remaining days you can train, the time available and any unavailable equipment. FitArc previews an updated week for you to accept. Completed workouts stay counted, missed work is not doubled, and the preview explains which weekly targets may remain short. Your usual schedule resumes next week.' },
+  { q: 'How do exercise pools work?', a: 'Choose Upper / Lower, Push / Pull / Legs or Full body, then add exercises to each group. FitArc keeps a main lift for comparison and selects other exercises using muscle coverage and recent training, within your equipment and session time.' },
+  { q: 'What do the completed-workout colors mean?', a: 'Green marks muscles trained in the completed session. Blue marks the next session’s targets. A green region with a blue outline belongs to both. These colors describe your sessions, not measured recovery or muscle growth.' },
   { q: 'What is RIR?', a: 'Reps in reserve: how many more reps you could have done. RIR 3 means you stopped with three left. FitArc asks for it after every set because it shows how hard the set really was.' },
-  { q: 'What counts toward my weekly volume?', a: 'A set earns a set credit when your reported RIR is at or under the target for that phase. Assisting muscles earn half a credit. The week view compares logged and projected credits with a productive range for each muscle.' },
+  { q: 'What counts toward my weekly volume?', a: 'A set earns a set credit when your reported RIR is at or under the target for that phase. Assisting muscles earn half a credit. Progress compares logged and projected credits with a productive range for each muscle.' },
   { q: 'How does it choose my next load?', a: 'From the set you just logged, using explicit rules. Hit the top of the rep range at RIR 2 or higher and the next set adds one small step. Miss the rep floor or reach RIR 0 and it backs off. Otherwise it holds. In a deload, loads stay put.' },
   { q: 'Can I swap a lift mid-workout?', a: 'Yes. Compare the replacement’s muscle targets and equipment first. Sets you already logged stay, the remaining sets move to the new lift, and a swap can’t be undone.' },
   { q: 'What if something hurts?', a: 'Report pain on a lift and FitArc skips its remaining sets and stops prescribing it until you allow it again. If pain is sharp or lasting, stop training and get it checked.' },
-  { q: 'Are the numbers on this page real?', a: 'No. The workouts, loads and weekly volume in these previews are examples. The muscle map, exercise targets and set-to-set rules mirror how the app works.' },
+  { q: 'Are the numbers on this page real?', a: 'No. The workouts, loads and weekly volume in these previews are examples. The artwork and muscle contours come from the current app. The interactive tour is a simplified demonstration, and it does not save or send your entries.' },
 ]
 
 export function FaqSection() {

@@ -34,14 +34,21 @@ for (const exercise of preview) {
 }
 const appMasks = load('src/screens/runtime/muscleMasks.ts');
 assert.deepEqual(load('landing/lib/muscleMasks.ts'), appMasks);
+assert.deepEqual(load('landing/lib/backMuscleContours.ts'), load('src/screens/runtime/backMuscleContours.ts'));
+const registered = fs.readFileSync(path.join(root, 'src/components/athleteArtwork.ts'), 'utf8').split('export const MUSCLE_MAP_ARTWORK')[1];
+const artwork = load('landing/lib/athleteArtwork.ts').MUSCLE_MAP_ARTWORK;
 for (const view of ['front', 'back']) {
-  assert.deepEqual(fs.readFileSync(path.join(root, `landing/public/images/muscle-map/athlete-${view}-v2.png`)), fs.readFileSync(path.join(root, `assets/images/muscle-map/athlete-${view}-v2.png`)));
+  const match = registered.match(new RegExp(`${view}: require\\('([^']+)'\\)`));
+  assert(match, `Missing ${view} app image`);
+  const source = path.resolve(root, 'src/components', match[1]);
+  assert.equal(artwork[view], `/images/muscle-map/${path.basename(source)}`);
+  assert.deepEqual(fs.readFileSync(path.join(root, 'landing/public', artwork[view])), fs.readFileSync(source));
 }
 const { liftsForPart } = load('src/screens/runtime/muscleParts.ts');
 const { liftsFor } = load('landing/lib/muscleParts.ts');
 const allIds = new Set(catalog.map(item => item.id));
 for (const mask of Object.values(appMasks.MUSCLE_MASKS).flat()) {
-  if (!mask.label) continue;
+  if (!mask.label || mask.part === mask.muscle) continue;
   assert.deepEqual(liftsFor(mask.muscle, mask.part).map(({ exercise, role }) => ({ name: exercise.name, role })), liftsForPart(mask.part, allIds), mask.part);
 }
 const policy = load('src/runtime/trainingPolicy.ts');
