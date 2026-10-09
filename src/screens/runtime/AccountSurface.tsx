@@ -1,4 +1,4 @@
-import { WeightUnitOptions, useWeightSettings } from './WeightSettings';
+import { useWeightSettings } from './WeightSettings';
 import { toKg, weightText } from '../../runtime/weights';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -26,14 +26,19 @@ type Props = {
 
 const Fact = ({ label, value }: { label: string; value: string }) => (
   <View style={styles.fact} accessible accessibilityLabel={`${label}: ${value}`}>
-    <Txt variant="mono" tone="muted" style={styles.factLabel}>{label}</Txt>
-    <Txt variant="code" style={[styles.flex,styles.factValue]}>{value}</Txt>
+    <Txt variant="caption" tone="muted" style={styles.factLabel}>{label}</Txt>
+    <Txt variant="caption" style={styles.flex}>{value}</Txt>
   </View>
 );
 
-const Metric = ({label,value,unit}:{label:string;value:number|null|undefined;unit?:string}) => <View style={styles.metric} accessible accessibilityLabel={`${label}: ${value??'Not set'}${value&&unit?` ${unit}`:''}`}>
-  <View style={styles.metricValue}><Txt variant="code" style={styles.metricNumber}>{value??'—'}</Txt>{value&&unit?<Txt variant="mono" tone="muted" style={styles.metricUnit}>{unit}</Txt>:null}</View>
-  <Txt variant="label" tone="muted" style={styles.metricLabel}>{label}</Txt>
+const heightText = (cm: number, unit: 'kg' | 'lb') => {
+  if (unit === 'kg') return `${cm} cm`;
+  const inches = Math.round(cm / 2.54);
+  return `${Math.floor(inches / 12)}′${inches % 12}″`;
+};
+const Stat = ({ value, label }: { value: string; label: string }) => <View style={styles.stat} accessible accessibilityLabel={`${label}: ${value}`}>
+  <Txt variant="code" style={styles.statValue} numberOfLines={1}>{value}</Txt>
+  <Txt variant="caption" tone="muted" numberOfLines={1}>{label}</Txt>
 </View>;
 const initialsFor = (name?:string) => (name?.trim()||'Athlete').split(/\s+/).map(part=>part[0]).join('').slice(0,2).toUpperCase();
 
@@ -63,7 +68,7 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
 );
 
 export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
-  const {unit}=useWeightSettings();
+  const {unit,save:saveUnits}=useWeightSettings();
   const [editingProfile, setEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -81,6 +86,24 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   const equipment = source?.equipment??[];
   const equipmentSummary = FULL_GYM.every(item=>equipment.includes(item))?'full gym':equipment.length?equipment.map(equipmentLabel).join(', ').toLowerCase():'bodyweight';
   const limits = [...(source?.limitations.map(limitationLabel)??[]),...(source?.routine?.limitationNote?.trim()?[source.routine.limitationNote.trim()]:[])].join(' · ')||'none';
+  const summary = (() => {
+    const done = state.sessions.filter(session => session.status === 'committed'
+      && session.exercises.some(entry => entry.sets.some(set => set.status === 'completed' && (set.result?.completedReps ?? 0) > 0)));
+    const ids = new Set(done.map(session => session.id));
+    const results = state.setResults.filter(result => ids.has(result.prescriptionId) && result.completedReps > 0);
+    const volume = results.reduce((sum, result) => sum + (result.actualLoadKg ?? result.prescribedLoadKg) * result.completedReps, 0);
+    // Weeks in a row (ending this week or last) with at least one finished workout.
+    const weekOf = (date: string) => Math.floor(Date.parse(`${date}T12:00:00Z`) / (7 * 86400000));
+    const weeks = new Set(done.map(session => weekOf(session.context.date)));
+    let week = weekOf(new Date().toISOString().slice(0, 10)), streak = 0;
+    if (!weeks.has(week)) week -= 1;
+    while (weeks.has(week)) { streak += 1; week -= 1; }
+    const best = results.reduce<typeof results[number] | null>((top, result) =>
+      (result.actualLoadKg ?? result.prescribedLoadKg) > (top ? top.actualLoadKg ?? top.prescribedLoadKg : 0) ? result : top, null);
+    const catalog = [...(state.block?.catalog ?? []), ...(state.catalog ?? [])];
+    const bestName = best ? catalog.find(item => item.id === best.exerciseId)?.name : undefined;
+    return { workouts: done.length, volume, streak, best: best && bestName ? { name: bestName, kg: best.actualLoadKg ?? best.prescribedLoadKg } : null };
+  })();
   const trainingGoal = source?.routine?.focus?.replaceAll('_',' ')??(source?goalLabel(source.goal):'—');
 
   useEffect(() => {
@@ -170,62 +193,73 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-        <View style={styles.header}><PlanText kind="title">Account</PlanText></View>
+        <View style={styles.header}><PlanText kind="title">Profile</PlanText></View>
 
-        <View style={styles.section}>
-          <PlanText kind="overline">PROFILE</PlanText>
-          <View style={styles.card}>
-            <View style={styles.profileRow}>
-              <View style={styles.avatar}>
-                {user.avatarUrl ? <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} /> : <Txt variant="heading" tone="accent" style={styles.initials}>{initialsFor(user.name)}</Txt>}
-              </View>
-              <View style={styles.identity}>
-                <Pressable accessibilityRole="button" accessibilityLabel="Edit profile" onPress={openProfileEditor} style={({pressed})=>[styles.editProfile,pressed&&styles.pressed]}>
-                  <Txt variant="heading" style={styles.name}>{user.name?.trim() || 'Athlete'}</Txt>
-                  <Ionicons name="pencil-outline" size={15} color={colors.textMuted}/>
-                </Pressable>
-                <View style={styles.badge}><Txt variant="code" tone="accent" style={styles.badgeText}>{user.experienceLevel.toUpperCase()}</Txt></View>
-              </View>
+        <View style={styles.card}>
+          <View style={styles.profileRow}>
+            <View style={styles.avatar}>
+              {user.avatarUrl ? <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} /> : <Txt variant="heading" tone="accent" style={styles.initials}>{initialsFor(user.name)}</Txt>}
             </View>
-            <View style={styles.metrics}><Metric label="YEARS" value={user.age}/><Metric label="HEIGHT" value={user.heightCm} unit="cm"/><Metric label="WEIGHT" value={user.weightKg==null?undefined:Number(weightText(user.weightKg,unit))} unit={unit}/></View>
+            <View style={styles.identity}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Edit profile" onPress={openProfileEditor} style={({pressed})=>[styles.editProfile,pressed&&styles.pressed]}>
+                <Txt variant="heading" style={styles.name}>{user.name?.trim() || 'Athlete'}</Txt>
+                <Ionicons name="pencil-outline" size={15} color={colors.textMuted}/>
+              </Pressable>
+              <Txt variant="caption" tone="secondary" numberOfLines={1}>
+                {[`${user.age} yrs`, heightText(user.heightCm, unit), user.weightKg != null ? `${weightText(user.weightKg, unit)} ${unit}` : null].filter(Boolean).join(' · ')}
+                <Txt variant="caption" tone="accent">{'  ·  '}{user.experienceLevel}</Txt>
+              </Txt>
+            </View>
           </View>
+          {summary.workouts ? <View style={styles.stats}>
+            <Stat value={String(summary.workouts)} label={summary.workouts === 1 ? 'workout' : 'workouts'}/>
+            <Stat value={summary.streak ? String(summary.streak) : '—'} label={summary.streak === 1 ? 'week streak' : 'weeks streak'}/>
+            <Stat value={`${Math.round(summary.volume / (unit === 'lb' ? 0.45359237 : 1)).toLocaleString()}`} label={`${unit} lifted`}/>
+          </View> : <Txt variant="caption" tone="muted">Finish your first workout to start your stats.</Txt>}
+          {summary.best ? <Txt variant="caption" tone="secondary" numberOfLines={1}>Heaviest lift: <Txt variant="caption">{summary.best.name} · {weightText(summary.best.kg, unit)} {unit}</Txt></Txt> : null}
         </View>
 
         <View style={styles.section}>
           <PlanText kind="overline">TRAINING</PlanText>
           <View style={styles.card}>
-            <View>
-              <Fact label="goal" value={trainingGoal}/>
-              <Fact label="schedule" value={source?`${source.daysPerWeek} days · ${source.sessionMinutes} min`:'—'}/>
-              <Fact label="equipment" value={source?equipmentSummary:'—'}/>
-              <Fact label="limits" value={source?limits:'—'}/>
-              <View style={styles.fact}><Txt variant="mono" tone="muted" style={styles.factLabel}>weight unit</Txt><View style={styles.flex}><WeightUnitOptions/></View></View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Edit training preferences" onPress={onEditSource} style={({pressed})=>[pressed&&styles.pressed]}>
+              <View style={styles.trainingHead}>
+                <Txt variant="caption" tone="secondary" style={styles.flex}>Your plan</Txt>
+                <Txt variant="caption" tone="accent">Edit</Txt>
+                <Ionicons name="chevron-forward" size={16} color={colors.accent}/>
+              </View>
+              <Fact label="Goal" value={trainingGoal}/>
+              <Fact label="Schedule" value={source?`${source.daysPerWeek} days · ${source.sessionMinutes} min`:'—'}/>
+              <Fact label="Equipment" value={source?equipmentSummary:'—'}/>
+              <Fact label="Limits" value={source?limits:'—'}/>
+            </Pressable>
+            <View style={[styles.fact, styles.factLast]}>
+              <Txt variant="caption" tone="muted" style={styles.factLabel}>Units</Txt>
+              <View style={styles.flex}/>
+              <View style={styles.unitToggle} accessibilityRole="radiogroup" accessibilityLabel="Weight units">
+                {(['kg', 'lb'] as const).map(option => <Pressable key={option} accessibilityRole="radio" accessibilityState={{ checked: unit === option }}
+                  onPress={() => { const problem = saveUnits({ weightUnit: option }); if (problem) Alert.alert('Units not changed', problem); }}
+                  style={({ pressed }) => [styles.unitOption, unit === option && styles.unitOn, pressed && styles.pressed]}>
+                  <Txt variant="caption" tone={unit === option ? 'accent' : 'muted'}>{option}</Txt>
+                </Pressable>)}
+              </View>
             </View>
           </View>
         </View>
 
-        <View style={styles.section}>
-          <PlanText kind="overline">ACCOUNT</PlanText>
-          <View style={styles.accountCard}>
-            <Pressable accessibilityRole="button" accessibilityLabel="Training preferences" onPress={onEditSource} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed]}>
-              <Ionicons name="options-outline" size={t.icon} color={colors.textMuted}/>
-              <Txt variant="heading" style={[styles.flex,styles.actionLabel]}>Training preferences</Txt>
-              <Ionicons name="chevron-forward" size={t.icon} color={colors.textDim}/>
-            </Pressable>
-            <View style={styles.accountDivider}/>
-            <Pressable accessibilityRole="button" accessibilityLabel="Sign out" onPress={confirmSignOut} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed]}>
-              <Ionicons name="log-out-outline" size={t.icon} color={colors.textMuted}/>
-              <Txt variant="heading" style={[styles.flex,styles.actionLabel]}>Sign out</Txt>
-              <Ionicons name="chevron-forward" size={t.icon} color={colors.textDim}/>
-            </Pressable>
-            <View style={styles.accountDivider}/>
-            <Pressable accessibilityRole="button" accessibilityLabel="Delete account" accessibilityState={{disabled:deleting}} disabled={deleting} onPress={confirmDelete} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed,deleting&&styles.disabled]}>
-              {deleting?<ActivityIndicator color={colors.danger}/>:<Ionicons name="trash-outline" size={t.icon} color={colors.danger}/>}
-              <Txt variant="heading" tone="danger" style={[styles.flex,styles.actionLabel]}>{deleting?'Deleting account…':'Delete account'}</Txt>
-              {!deleting?<Ionicons name="chevron-forward" size={t.icon} color={colors.danger}/>:null}
-            </Pressable>
-          </View>
+        <View style={styles.accountCard}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Sign out" onPress={confirmSignOut} style={({pressed})=>[styles.accountAction,pressed&&styles.pressed]}>
+            <Ionicons name="log-out-outline" size={t.icon} color={colors.textMuted}/>
+            <Txt variant="heading" style={[styles.flex,styles.actionLabel]}>Sign out</Txt>
+            <Ionicons name="chevron-forward" size={t.icon} color={colors.textDim}/>
+          </Pressable>
         </View>
+
+        <Pressable accessibilityRole="button" accessibilityLabel="Delete account" accessibilityState={{disabled:deleting}} disabled={deleting} onPress={confirmDelete} hitSlop={8}
+          style={({pressed})=>[styles.deleteLink,pressed&&styles.pressed,deleting&&styles.disabled]}>
+          {deleting?<ActivityIndicator size="small" color={colors.danger}/>:null}
+          <Txt variant="caption" tone="danger">{deleting?'Deleting account…':'Delete account'}</Txt>
+        </Pressable>
       </ScrollView>
 
       <Sheet visible={editingProfile} onClose={() => setEditingProfile(false)} title="Edit profile">
@@ -237,7 +271,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
         </View>
         <Field label="name" value={name} onChangeText={setName} />
         <Field label="age" value={age} onChangeText={(value) => setAge(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix="years" />
-        <Field label="height" value={height} onChangeText={(value) => setHeight(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix="cm" />
+        <Field label="height" value={height} onChangeText={(value) => setHeight(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix={unit === 'lb' && Number(height) >= 100 ? `cm · ${heightText(Number(height), 'lb')}` : 'cm'} />
         <Field label="weight" value={weight} onChangeText={(value) => setWeight(value.replace(/[^0-9.]/g, '').slice(0, 6))} keyboardType="decimal-pad" suffix={unit} />
         <Txt variant="label" tone="muted">SEX</Txt>
         <View style={styles.choices}>
@@ -259,26 +293,28 @@ const styles = StyleSheet.create({
   page: { padding:t.gutter,gap:t.bodyGap },
   header:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:t.pad.small},
   card:{padding:t.pad.medium,gap:t.pad.medium,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.card,backgroundColor:colors.surface},
-  identity:{flex:1,minWidth:0,alignItems:'flex-start'},
+  identity:{flex:1,minWidth:0,alignItems:'flex-start',gap:2},
   editProfile:{minHeight:t.touch,maxWidth:'100%',flexDirection:'row',alignItems:'center',gap:t.pad.small},
   name:{fontSize:16,lineHeight:22,flexShrink:1},initials:{fontSize:16},
-  badge:{paddingHorizontal:6,paddingVertical:2,backgroundColor:colors.accentSoft,borderWidth:t.border,borderColor:colors.accentBorder,borderRadius:6},
-  badgeText:{fontSize:9,lineHeight:13},
-  metrics:{flexDirection:'row',gap:t.pad.small},
-  metric:{flex:1,minHeight:56,justifyContent:'center',alignItems:'center',gap:t.pad.tiny,borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.segment,backgroundColor:colors.surfaceInset},
-  metricValue:{flexDirection:'row',alignItems:'baseline'},metricNumber:{fontSize:17,lineHeight:22},metricUnit:{fontSize:9,lineHeight:13},metricLabel:{fontSize:8,lineHeight:12,letterSpacing:0.8},
+  stats:{flexDirection:'row',gap:t.pad.small},
+  stat:{flex:1,paddingVertical:t.pad.small,paddingHorizontal:t.pad.small,gap:2,borderRadius:t.radius.segment,backgroundColor:colors.surfaceInset},
+  statValue:{fontSize:17,lineHeight:22},
+  trainingHead:{flexDirection:'row',alignItems:'center',gap:4,paddingBottom:4},
+  factLast:{borderBottomWidth:0,marginTop:-t.pad.medium},
+  deleteLink:{alignSelf:'center',flexDirection:'row',alignItems:'center',gap:space.sm,minHeight:t.touch,paddingHorizontal:space.md},
   actionLabel:{fontSize:14,lineHeight:20},
   section: { gap: space.sm },
   profileRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { width: 48, height: 48, borderRadius: 24, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
+  avatar: { width: 56, height: 56, borderRadius: 28, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
   avatarLarge: { width: 82, height: 82, borderRadius: 41, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
   avatarImage: { width: '100%', height: '100%' },
   avatarEditor: { alignItems: 'center', gap: space.xs },
   fact: { minHeight:34, paddingVertical:8,flexDirection:'row',gap:t.pad.medium,alignItems:'center',borderBottomWidth:t.border,borderBottomColor:colors.border },
-  factValue:{fontSize:12,lineHeight:18},
-  factLabel: { width:72,fontSize:10,lineHeight:16 },
+  unitToggle:{flexDirection:'row',padding:2,gap:2,borderRadius:8,backgroundColor:colors.surfaceInset},
+  unitOption:{minWidth:44,height:28,alignItems:'center',justifyContent:'center',borderRadius:6},
+  unitOn:{backgroundColor:colors.accentSoft},
+  factLabel: { width:84 },
   accountCard: { borderWidth:t.border,borderColor:colors.borderCard,borderRadius:t.radius.card,backgroundColor:colors.surface,overflow:'hidden' },
-  accountDivider:{height:t.border,backgroundColor:colors.border,marginHorizontal:t.pad.medium},
   accountAction: { minHeight:48,paddingHorizontal:t.pad.medium,paddingVertical:t.pad.small,flexDirection:'row',alignItems:'center',gap:t.pad.medium },
   field: { gap: space.xs },
   inputRow: { minHeight: TOUCH, flexDirection: 'row', alignItems: 'center', gap: space.sm, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md, backgroundColor: colors.surfaceRaised, paddingHorizontal: space.md },
