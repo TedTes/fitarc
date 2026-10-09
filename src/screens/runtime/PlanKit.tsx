@@ -23,11 +23,18 @@ export const PlanOptions=<T extends string|number,>({options,value,onChange,segm
 export const PlanButton=({label,onPress,variant='primary',disabled=false}:{label:string;onPress:()=>void;variant?:'primary'|'ghost'|'dashed';disabled?:boolean})=><Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled}} aria-disabled={disabled} disabled={disabled} onPress={onPress} style={({pressed})=>[s.button,variant==='primary'?s.primary:variant==='dashed'?s.dashed:s.ghost,disabled&&s.disabled,pressed&&s.pressed]}><Text style={[s.buttonText,{fontFamily:headingFace()},variant==='primary'?s.accent:variant==='ghost'?s.ghostText:s.dashedText]}>{variant==='dashed'?'＋ ':''}{label}</Text></Pressable>;
 export const PlanFooter=({secondary,primary,onSecondary,onPrimary,disabled=false}:{secondary:string;primary:string;onSecondary:()=>void;onPrimary:()=>void;disabled?:boolean})=><View style={s.footer}><View style={s.secondarySlot}><PlanButton variant="ghost" label={secondary} onPress={onSecondary}/></View><View style={s.primarySlot}><PlanButton label={primary} onPress={onPrimary} disabled={disabled}/></View></View>;
 export const PlanInput=(props:TextInputProps)=><TextInput {...props} placeholderTextColor={colors.textFaint} style={[s.input,{fontFamily:headingFace()},props.style]}/>;
-export const PlanPanel=({title,summary,open,onToggle,leading,children}:{title:string;summary:string;open:boolean;onToggle:()=>void;leading?:ReactNode;children:ReactNode})=><View style={[s.panel,open&&s.expanded]}>
-  <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{expanded:open}} aria-expanded={open} onPress={onToggle} style={s.row}>
-    {leading}<View style={s.copy}><PlanText bold>{title}</PlanText><PlanText kind="meta">{summary}</PlanText></View><Ionicons name={open?'chevron-up':'chevron-down'} size={t.icon} color={open?colors.accent:colors.textDim}/>
-  </Pressable>{open?<View style={s.panelBody}>{children}</View>:null}
+export const PlanPanel=({title,summary,open,onToggle,leading,action,children}:{title:string;summary:string;open:boolean;onToggle:()=>void;leading?:ReactNode;action?:ReactNode;children:ReactNode})=><View style={[s.panel,open&&s.expanded]}>
+  <View style={s.panelHead}>
+    <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{expanded:open}} aria-expanded={open} onPress={onToggle} style={[s.row,s.panelToggle]}>
+      {leading}<View style={s.copy}><PlanText bold>{title}</PlanText><PlanText kind="meta">{summary}</PlanText></View>{action?null:<Ionicons name={open?'chevron-up':'chevron-down'} size={t.icon} color={open?colors.accent:colors.textDim}/>}
+    </Pressable>{action}
+  </View>{open?<View style={s.panelBody}>{children}</View>:null}
 </View>;
+/** Small round "+" for adding into the section it sits in. */
+export const PlanAdd=({label,onPress,disabled=false}:{label:string;onPress:()=>void;disabled?:boolean})=><Pressable accessibilityRole="button" accessibilityLabel={label}
+  disabled={disabled} onPress={onPress} hitSlop={8} style={({pressed})=>[s.add,disabled&&s.disabled,pressed&&s.pressed]}>
+  <Ionicons name="add" size={20} color={colors.accent}/>
+</Pressable>;
 export const planStyles=StyleSheet.create({
   root:{gap:t.gap}, row:{flexDirection:'row',alignItems:'center',gap:t.pad.medium}, flex:{flex:1},
   content:{padding:t.gutter,gap:t.bodyGap}, section:{gap:t.gap}, header:{padding:t.gutter,flexDirection:'row',alignItems:'center',gap:t.pad.small},
@@ -37,6 +44,8 @@ export const planStyles=StyleSheet.create({
   disabled:{opacity:t.disabled},note:{minHeight:t.button*2,textAlignVertical:'top'},
 });
 const s=StyleSheet.create({
+  panelHead:{flexDirection:'row',alignItems:'center',paddingRight:t.pad.small},panelToggle:{flex:1},
+  add:{width:36,height:36,borderRadius:18,alignItems:'center',justifyContent:'center',backgroundColor:colors.accentSoft,borderWidth:t.border,borderColor:colors.accentBorder},
   text:{fontSize:t.type.row,lineHeight:t.lineHeight.body,color:colors.text},title:{fontSize:t.type.title,lineHeight:t.lineHeight.title,fontWeight:'700'},meta:{fontSize:t.type.meta,lineHeight:t.lineHeight.meta,color:colors.textMuted},overline:{fontSize:t.type.overline,lineHeight:t.lineHeight.meta,letterSpacing:t.tracking.label,color:colors.textDim},bold:{fontWeight:'700'},accent:{color:colors.accent},success:{color:colors.success},muted:{color:colors.textMuted},
   group:{gap:t.gap},tileText:{fontSize:t.type.tile,fontWeight:'700',color:colors.accent},tile:{width:t.tile,height:t.tile,borderRadius:t.radius.tile,borderWidth:t.border,borderColor:colors.accentBorder,backgroundColor:colors.accentSoft,alignItems:'center',justifyContent:'center'},
   segments:{flexDirection:'row',gap:t.segmentGap},chips:{flexDirection:'row',flexWrap:'wrap',gap:t.chipGap},

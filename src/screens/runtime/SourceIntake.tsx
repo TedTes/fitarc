@@ -82,10 +82,10 @@ export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RU
   const status=busy?'Updating…':pending||sync==='saving'?'Saving…':sync==='failed'?'Not saved':sync==='conflict'?'Sync conflict':sync==='device'?'Saved on device':sessionActive||issue||editor.text!==editor.interpretedText?'Draft saved':'Saved';
   return <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS==='ios'?'padding':undefined}>
     <RoutineDescription text={editor.text} onChange={text=>update({...latest.current,text})} onBlur={()=>void interpret()} busy={voiceBusy}
-      onStarter={selectStarter} selectedStarters={selectedStarters} error={error||issue}
+      onStarter={selectStarter} selectedStarters={selectedStarters} error={error}
       onLocalReview={hostedRoutineInputEnabled&&error?()=>void interpret(true):undefined}
       status={<Txt variant="mono" tone="muted" style={styles.status} accessibilityLiveRegion="polite">{status}</Txt>}
-      headerAction={<Pressable accessibilityRole="button" accessibilityLabel="Close routine" onPress={()=>void close()} disabled={voiceBusy} style={styles.close}><Ionicons name="close" size={22} color={colors.textMuted}/></Pressable>}
+      backAction={<Pressable accessibilityRole="button" accessibilityLabel="Save and go back" onPress={()=>void close()} disabled={voiceBusy} style={styles.close}><Ionicons name="chevron-back" size={26} color={colors.text}/></Pressable>}
       contextControls={<RoutineContextChips value={context} initial={editor.settings} disabled={voiceBusy} onChange={next=>{update({...latest.current,context:next,draft:isPoolPattern(next.split)&&next.split!==latest.current.draft.preferredSplit?groupDraft(applyInputContext(latest.current.draft,next),next.split,catalog):applyInputContext(latest.current.draft,next)});void interpret();}}/>}
       bottomInset={insets.bottom}
       voiceControl={<RoutineVoiceInput disabled={busy} onBusy={setVoiceBusy} onError={setError} onTranscript={transcript=>{const input=latest.current;update({...input,text:input.text.trim()?`${input.text.trim()}\n${transcript}`:transcript});void interpret();}}/>}>
