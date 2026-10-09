@@ -1,3 +1,4 @@
+import { workoutGroup, matchesGroup } from './exercisePools';
 import { nextSessionAdditions } from './nextSessionEdits';
 import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
@@ -109,10 +110,11 @@ const resolveTrainingSession = (
     phaseOverride: deloadTriggered ? resolvedBlock.phases.find((phase) => phase.kind === 'deload') : undefined,
     setCeilings: state.source.routine?.selectionMode!=='pools' && window && !Object.keys(context.exerciseReplacements ?? {}).length && !context.workoutId && !context.extraWorkout && window.slotId === nextSlot.id ? Object.fromEntries((resolvedBlock.catalog ?? RUNTIME_EXERCISES).map((item) => [item.id, window.workout.exercises.find((entry) => entry.exercise.id === item.id)?.sets.length ?? 0])) : undefined,
   });
+  const group=workoutGroup(nextSlot.label);
   for(const item of nextSessionAdditions(state,nextSlot.id,context.date)){
     if(prescription.exercises.some(entry=>entry.exercise.id===item.exerciseId))continue;
     const exercise=(resolvedBlock.catalog??RUNTIME_EXERCISES).find(e=>e.id===item.exerciseId);
-    if(!exercise||state.source.excludedExerciseIds.includes(exercise.id)||context.unavailableExerciseIds.includes(exercise.id)
+    if(!exercise||(group&&!matchesGroup(exercise,group))||state.source.excludedExerciseIds.includes(exercise.id)||context.unavailableExerciseIds.includes(exercise.id)
       ||exercise.equipment.some(e=>!state.source!.equipment.includes(e)||context.unavailableEquipment.includes(e))
       ||exercise.contraindications.some(e=>state.source!.limitations.includes(e)))continue;
     // Reuse manual-add rules on a disposable preview; no session is stored or started here.

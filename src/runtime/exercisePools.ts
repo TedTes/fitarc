@@ -7,6 +7,13 @@ export const GROUP_TEMPLATES: Record<PoolPattern, Array<{name:string;muscles:Mus
   push_pull_legs:[{name:'Push',muscles:['chest','delts','triceps']},{name:'Pull',muscles:['back','biceps','delts']},{name:'Legs',muscles:['quads','hamstrings','glutes','calves','core']}],
   full_body:[{name:'Full body',muscles:['chest','back','delts','biceps','triceps','quads','hamstrings','glutes','calves','core']}],
 };
+/** Standard group names, including legacy slot labels such as upper.a and legs.b. */
+export const workoutGroup = (name: string) => {
+  const key = name.trim().toLowerCase().replace(/\.[a-z]$/, '');
+  return Object.values(GROUP_TEMPLATES).flat().find(group =>
+    group.name.toLowerCase() === key || (key === 'full' && group.name === 'Full body'));
+};
+
 export const isPoolPattern = (value:RoutineDefinition['split']|undefined):value is PoolPattern => Boolean(value && value in GROUP_TEMPLATES);
 /** A saved structure preference applies to suggestions even before every pool is filled. */
 export const preferredWorkoutPattern = (source:TrainingSource):PoolPattern|undefined => {
@@ -27,10 +34,11 @@ export const matchesGroup = (exercise:ExerciseDefinition, group:{name:string;mus
 
 /** Deterministic, read-only selection. Pool order defines the main lift; the rest fills coverage gaps. */
 export const selectPoolPlans = (slot:TrainingSlot, source:TrainingSource, catalog:ExerciseDefinition[], context:SessionContext, sessions:SessionPrescription[] = []) => {
+  const group=workoutGroup(slot.label);
   const definitions=new Map(catalog.map(e=>[e.id,e]));
   const candidates=slot.plannedExercises.filter(plan=>{
     const exercise=definitions.get(plan.exerciseId);
-    return exercise && !source.excludedExerciseIds.includes(exercise.id) && !context.unavailableExerciseIds.includes(exercise.id)
+    return exercise && (!group || matchesGroup(exercise,group)) && !source.excludedExerciseIds.includes(exercise.id) && !context.unavailableExerciseIds.includes(exercise.id)
       && exercise.equipment.every(e=>source.equipment.includes(e)&&!context.unavailableEquipment.includes(e))
       && !exercise.contraindications.some(e=>source.limitations.includes(e));
   });

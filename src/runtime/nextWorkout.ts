@@ -1,6 +1,7 @@
+import { nextWorkoutDate } from './workoutSchedule';
 import { lastCompletedSession, nextSessionAdditions } from './nextSessionEdits';
-import { GROUP_TEMPLATES, matchesGroup, preferredWorkoutPattern } from './exercisePools';
-import { previewTrainingSession } from './runtimeService';
+import { GROUP_TEMPLATES, matchesGroup, preferredWorkoutPattern, workoutGroup } from './exercisePools';
+import { previewTrainingSessionDetailed } from './runtimeService';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
 import { selectExercises } from './exerciseSelector';
 import { datePlusDays, planWeek } from './planDates';
@@ -14,6 +15,7 @@ export type NextWorkout = {
   /** Primary and assisting muscles from actually performed sets in today's finished sessions. */
   completedMuscles: Muscle[];
   flexibleDate?: boolean;
+  needsSchedule?: boolean;
   slotId?: string;
   targetMuscles?: Muscle[];
   exercises:Array<{exercise:ExerciseDefinition;sets:number;minReps:number;maxReps:number;targetRir:number}>;
@@ -30,32 +32,31 @@ export const nextWorkoutPreview=(state:RuntimeState,today:string):NextWorkout|nu
   const completedMuscles=[...new Set(completed.filter(session=>session.context.date===today).flatMap(session=>
     session.exercises.filter(entry=>entry.sets.some(set=>set.status==='completed'&&(set.result?.completedReps??0)>0))
       .flatMap(entry=>[...entry.exercise.primaryMuscles,...entry.exercise.secondaryMuscles])))];
-  const date=finishedToday?datePlusDays(today,1):today;
+  const earliest=finishedToday?datePlusDays(today,1):today;
+  const scheduledDate=nextWorkoutDate(source.workoutSchedule,earliest);
+  const needsSchedule=scheduledDate===null;
+  const date=scheduledDate??earliest;
   const allowed=(exercise:ExerciseDefinition)=>!source.excludedExerciseIds.includes(exercise.id)
     &&exercise.equipment.every(item=>source.equipment.includes(item))
     &&!exercise.contraindications.some(item=>source.limitations.includes(item));
   const block=state.block;
   if(block&&block.kind!=='workout'&&block.slots.length){
-    if(!finishedToday)return null; // Tomorrow's normal logger takes over on that day.
+    if(!finishedToday && !needsSchedule && date===today)return null; // Tomorrow's normal logger takes over on that day.
     const remaining=block.remainingWeek;
     const window=remaining?.windows.filter(item=>item.date>today).sort((a,b)=>a.date.localeCompare(b.date))[0];
     const nextDate=window?.date??(remaining?.week===planWeek(block,today)?datePlusDays(block.startedOn,remaining.week*7):date);
-    const slot=(window?block.slots.find(item=>item.id===window.slotId):undefined)??nextRoutineSlot(block,state.sessions,today);
-    if(source.routine?.selectionMode==='pools'||nextSessionAdditions(state,slot.id,nextDate).length){
-      // Use the exact same read-only solver as Today, including time and volume constraints.
-      let exercises:NextWorkout['exercises']=[];
-      try{
-        const proposal=previewTrainingSession(state,{date:nextDate,minutesAvailable:window?.minutesAvailable??source.sessionMinutes,recovery:window?.recovery??'yes',unavailableEquipment:window?.unavailableEquipment??[],unavailableExerciseIds:window?.unavailableExerciseIds??[]});
-        exercises=proposal.exercises.map(entry=>({exercise:entry.exercise,sets:entry.sets.length,minReps:entry.sets[0].minReps,maxReps:entry.sets[0].maxReps,targetRir:entry.sets[0].targetRir}));
-      }catch{ /* No compatible work: the preview offers editing the routine. */ }
-      return {kind:'routine',slotId:slot.id,targetMuscles:slot.targetMuscles,name:slot.label,date:nextDate,flexibleDate:!window,finishedToday,completedMuscles,exercises};
-    }
-    const phase=block.phases.find(item=>planWeek(block,nextDate)>=item.startWeek&&planWeek(block,nextDate)<=item.endWeek)??block.phases[0];
-    const catalog=block.catalog??state.catalog??RUNTIME_EXERCISES;
-    const exercises=window?window.workout.exercises.filter(entry=>allowed(entry.exercise)).map(entry=>({exercise:entry.exercise,sets:entry.sets.length,minReps:entry.sets[0]?.minReps??8,maxReps:entry.sets[0]?.maxReps??12,targetRir:entry.sets[0]?.targetRir??2})):
-      slot.plannedExercises.flatMap(plan=>{const exercise=catalog.find(item=>item.id===plan.exerciseId);return exercise&&allowed(exercise)?[{exercise,sets:plan.sets,minReps:plan.prescription?.minReps??phase.minReps,maxReps:plan.prescription?.maxReps??phase.maxReps,targetRir:plan.prescription?.targetRir??phase.targetRir}]:[];});
-    return {kind:'routine',slotId:slot.id,targetMuscles:slot.targetMuscles,name:slot.label,date:nextDate,finishedToday,completedMuscles,exercises};
+    let slot=(window?block.slots.find(item=>item.id===window.slotId):undefined)??nextRoutineSlot(block,state.sessions,today);
+    let exercises:NextWorkout['exercises']=[];
+    try {
+      // Resolve title, identity, targets and exercises together. The solver can choose a
+      // different slot from a simple sequence lookup (availability or weekly deficits).
+      const proposal=previewTrainingSessionDetailed(state,{date:nextDate,minutesAvailable:window?.minutesAvailable??source.sessionMinutes,recovery:window?.recovery??'yes',unavailableEquipment:window?.unavailableEquipment??[],unavailableExerciseIds:window?.unavailableExerciseIds??[]});
+      slot=proposal.slot??slot;
+      exercises=proposal.prescription.exercises.map(entry=>({exercise:entry.exercise,sets:entry.sets.length,minReps:entry.sets[0].minReps,maxReps:entry.sets[0].maxReps,targetRir:entry.sets[0].targetRir}));
+    } catch { /* Preserve the pending group when no compatible work fits. */ }
+    return {kind:'routine',needsSchedule,slotId:slot.id,targetMuscles:slot.targetMuscles,name:slot.label,date:nextDate,flexibleDate:!window,finishedToday,completedMuscles,exercises};
   }
+
   const exposure=Object.fromEntries(MUSCLES.map(muscle=>[muscle,0])) as Record<Muscle,number>;
   completed.filter(session=>session.context.date>=datePlusDays(today,-6)).forEach(session=>session.exercises.forEach(entry=>{
     const sets=entry.sets.filter(set=>(set.result?.completedReps??0)>0).length;
@@ -82,14 +83,14 @@ export const nextWorkoutPreview=(state:RuntimeState,today:string):NextWorkout|nu
     if(exercise&&allowed(exercise)&&(!nextGroup||matchesGroup(exercise,nextGroup))&&!exercises.some(e=>e.exercise.id===exercise.id))
       exercises.push({exercise,sets:item.sets,minReps:item.minReps,maxReps:item.maxReps,targetRir:item.targetRir});
   }
-  return {kind:'suggested',targetMuscles:nextGroup?.muscles??targets,name:nextGroup?.name??'Your next workout',flexibleDate:Boolean(nextGroup),date,finishedToday,completedMuscles,exercises};
+  return {kind:'suggested',needsSchedule,targetMuscles:nextGroup?.muscles??targets,name:nextGroup?.name??'Your next workout',flexibleDate:Boolean(nextGroup),date,finishedToday,completedMuscles,exercises};
 };
 
 /** The next-session picker shares the preview's group and the user's current constraints. */
 export const nextWorkoutCandidates = (state:RuntimeState, workout:NextWorkout):ExerciseDefinition[] => {
   if(!state.source)return [];
   const source=state.source;
-  const group=Object.values(GROUP_TEMPLATES).flat().find(group=>group.name===workout.name);
+  const group=workoutGroup(workout.name);
   const muscles=workout.targetMuscles??[...new Set(workout.exercises.flatMap(e=>e.exercise.primaryMuscles))];
   const pool=source.routine?.workouts.find(w=>w.id===workout.slotId)?.exercises??[];
   const window=state.block?.remainingWeek?.windows.find(w=>w.date===workout.date&&w.slotId===workout.slotId);

@@ -1,3 +1,4 @@
+import { RUNTIME_EXERCISES } from './exerciseCatalog';
 import { arbitratePrescription } from './arbitration';
 import { compileBlock, validateBlock } from './blockCompiler';
 import { solveSession } from './sessionSolver';
@@ -77,7 +78,11 @@ export const runRuntimeContractChecks = () => {
   ['lower back', 'shoulder', 'neck', 'elbow', 'knee'].forEach((limitation) => {
     const constrained = compileBlock({ ...source, limitations: [limitation] });
     const swaps = constrained.slots.flatMap((slot) => slot.plannedExercises).filter((plan) => plan.selection.substituted);
-    expect(swaps.length > 0, `${limitation} must resolve to at least one block-level substitution`);
+    const constrainedIds = constrained.slots.flatMap(slot => slot.plannedExercises.map(plan => plan.exerciseId));
+    expect(constrainedIds.every(id => !RUNTIME_EXERCISES.find(exercise => exercise.id === id)!.contraindications.includes(limitation)), `${limitation} must exclude every incompatible exercise`);
+    // A limited group may have fewer compatible lifts: omit blocked work rather than
+    // borrowing exercises from another group solely to manufacture a substitution.
+    expect(swaps.length > 0 || constrainedIds.length < block.slots.reduce((sum, slot) => sum + slot.plannedExercises.length, 0), `${limitation} must substitute or omit blocked work`);
     expect(swaps.every((plan) => plan.selection.reasons.some((reason) => reason.includes('avoids') || reason.includes('equipment') || reason.includes('excluded'))), `${limitation} substitutions must explain the avoided constraint`);
   });
 

@@ -1,4 +1,4 @@
-import { selectPoolPlans } from './exercisePools';
+import { selectPoolPlans, workoutGroup, matchesGroup } from './exercisePools';
 import { routineCatalog, validateRoutineSource } from './routine';
 import { localDate } from './planDates';
 import { phasesFor, RULE_VERSION, weeklyTargetsFor } from './trainingPolicy';
@@ -48,8 +48,9 @@ export const compileBlock = (
     exercise.secondaryMuscles.forEach((muscle) => { budget[muscle] = (budget[muscle] ?? 0) + sets * 0.5; });
   };
   let slots: TrainingSlot[] = blueprint.map((slot, index) => {
+    const group = workoutGroup(slot.label);
     const selected = selectExercisesWithReasons({
-      catalog, source, targetMuscles: slot.muscles,
+      catalog: group ? catalog.filter(exercise => matchesGroup(exercise, group)) : catalog, source, targetMuscles: slot.muscles,
       movementPatterns: slot.patterns, workingSets, limit: exerciseLimit,
     });
     const plannedSets = Math.max(2, Math.min(4, Math.floor(setsPerSlot / Math.max(1, selected.length))));

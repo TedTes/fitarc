@@ -89,3 +89,26 @@ const largeSession=previewTrainingSession(largeState,{...context,workoutId:large
 assert(largeSession.exercises.length<=5&&largeSession.estimatedMinutes<=60);
 assert(computeWeeklyStatus(largeState.block,[],[]).muscles.every(m=>m.scheduledSets<100));
 console.log('Exercise pools: patterns, sequence, coverage, rotation, constraints, time, previews, session-only edits, progress, persistence and 120 imported alternatives passed.');
+
+// Previously saved or imported pools must not leak lower-body work into Upper.
+const upperSlot=ready.block.slots[0];
+const legPlan={exerciseId:'leg_press',sets:3,selection:{reasons:[]}};
+const mixedSlot={...upperSlot,plannedExercises:[legPlan,...upperSlot.plannedExercises]};
+const mixed={...ready,block:{...ready.block,slots:[mixedSlot,...ready.block.slots.slice(1)]}};
+const poolBefore=JSON.stringify(mixed);
+assert(!selectPoolPlans(mixedSlot,mixed.source,catalog,context).some(p=>p.exerciseId==='leg_press'));
+assert(previewTrainingSession(mixed,context).exercises.every(e=>matchesGroup(e.exercise,GROUP_TEMPLATES.upper_lower[0])));
+assert.equal(JSON.stringify(mixed),poolBefore,'filter incompatible legacy entries without rewriting history or the saved pool');
+assert.equal(selectPoolPlans({...upperSlot,plannedExercises:[legPlan]},ready.source,catalog,context).length,0,'an invalid Upper pool must not become a leg workout');
+// A stale availability window must not provide a different name than the solved session.
+const future=datePlusDays(date,2),wrongSlot=finished.block.slots[1];
+const stale={...finished,block:{...finished.block,remainingWeek:{week:1,windows:[{...context,date:future,slotId:wrongSlot.id,workout:lower}],explanation:[]}}};
+const solved=previewTrainingSession(stale,{...context,date:future});
+const next=nextWorkoutPreview(stale,date);
+assert.equal(next.slotId,solved.slotId,'next-session identity must come from the same proposal as its exercises');
+assert.equal(next.name,stale.block.slots.find(s=>s.id===solved.slotId).label);
+assert.deepEqual(next.exercises.map(e=>e.exercise.id),ids(solved));
+console.log('Session group regression: legacy pool contamination and mismatched preview title/slot passed.');
+
+const fixedMixed={...mixed,source:{...mixed.source,routine:{...mixed.source.routine,selectionMode:'fixed'}}};
+assert(!previewTrainingSession(fixedMixed,context).exercises.some(e=>e.exercise.id==='leg_press'),'standard Upper also excludes leg press in saved fixed workouts');

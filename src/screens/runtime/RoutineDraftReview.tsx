@@ -1,4 +1,4 @@
-import { isPoolPattern } from '../../runtime/exercisePools';
+import { workoutGroup, matchesGroup, isPoolPattern } from '../../runtime/exercisePools';
 import { groupDraft } from '../../routineSetup/pools';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -45,6 +45,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
   useEffect(()=>{if(scheduleRequest)setOpen('schedule');},[scheduleRequest]);
   const toggle=(id:string)=>{animate();setOpen(current=>current===id?null:id);};
   const changeWorkout=(id:string,patch:Partial<RoutineDraft['workouts'][number]>)=>onChange({...draft,workouts:draft.workouts.map(w=>w.id===id?{...w,...patch}:w)});
+  const poolCatalog=(name:string)=>{const group=workoutGroup(name);return group?all.filter(exercise=>matchesGroup(exercise,group)):all;};
   const addingWorkout=draft.workouts.find(workout=>workout.id===addingTo)??null;
   let complete=true;
   try{sourceFromDraft(draft,initial,catalog);}catch{complete=false;}
@@ -86,7 +87,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
       {!workout.name.trim()?<PlanText kind="meta">Enter a workout name</PlanText>:null}
       <PlanGroup label="TARGET MUSCLES"><PlanOptions options={MUSCLE_OPTIONS} value={workout.targetMuscles??[]} onChange={muscle=>changeWorkout(workout.id,{targetMuscles:toggleValue(workout.targetMuscles??[],muscle)})}/></PlanGroup>
       {workout.exercises.map((item,itemIndex)=><PlanPanel key={item.id} title={all.find(x=>x.id===item.exerciseId)?.name||item.name||'Choose an exercise'} summary={`${item.sets.value??3} × ${item.minReps.value??8}–${item.maxReps.value??12} · ${item.targetRir.value??2} RIR`} open={pickerFor===item.id} onToggle={()=>{animate();setPickerFor(current=>current===item.id?null:item.id);}}>
-        <ExerciseEditor item={item} catalog={all} onChange={value=>changeWorkout(workout.id,{exercises:workout.exercises.map(e=>e.id===item.id?value:e)})} onPrivate={exercise=>onChange({...draft,customExercises:[...draft.customExercises,exercise],workouts:draft.workouts.map(w=>w.id===workout.id?{...w,exercises:w.exercises.map(e=>e.id===item.id?{...e,exerciseId:exercise.id,name:exercise.name,basis:null}:e)}:w)})} />
+        <ExerciseEditor item={item} catalog={poolCatalog(workout.name)} onChange={value=>changeWorkout(workout.id,{exercises:workout.exercises.map(e=>e.id===item.id?value:e)})} onPrivate={exercise=>onChange({...draft,customExercises:[...draft.customExercises,exercise],workouts:draft.workouts.map(w=>w.id===workout.id?{...w,exercises:w.exercises.map(e=>e.id===item.id?{...e,exerciseId:exercise.id,name:exercise.name,basis:null}:e)}:w)})} />
         {itemIndex>0?<PlanButton label="Move exercise up" variant="ghost" onPress={()=>changeWorkout(workout.id,{exercises:move(workout.exercises,itemIndex)})} />:null}
         <PlanButton label="Remove exercise" variant="ghost" onPress={()=>changeWorkout(workout.id,{exercises:workout.exercises.filter(e=>e.id!==item.id)})} />
       </PlanPanel>)}
@@ -94,7 +95,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
       <PlanButton label={pools?"Remove group":"Remove workout"} variant="ghost" onPress={()=>onChange({...draft,workouts:draft.workouts.filter(w=>w.id!==workout.id)})} />
     </PlanPanel>)}
     <Sheet visible={addingWorkout!==null} onClose={()=>setAddingTo(null)} title={`Add to ${addingWorkout?.name||'workout'}`}>
-      {addingWorkout?<ExercisePicker catalog={all} selectedIds={addingWorkout.exercises.map(item=>item.exerciseId??'')} initialMuscles={addingWorkout.targetMuscles}
+      {addingWorkout?<ExercisePicker catalog={poolCatalog(addingWorkout.name)} selectedIds={addingWorkout.exercises.map(item=>item.exerciseId??'')} initialMuscles={addingWorkout.targetMuscles}
         onAdd={exercise=>{changeWorkout(addingWorkout.id,{exercises:[...addingWorkout.exercises,exerciseFromDefaults(exercise,defaults)]});setAddingTo(null);}}/>:null}
     </Sheet>
     {newWorkout?<RoutineWorkoutSheet catalog={all} defaults={defaults} position={draft.workouts.length} onCancel={()=>setNewWorkout(false)} onAdd={workout=>{onChange({...draft,workouts:[...draft.workouts,workout]});setNewWorkout(false);setOpen(null);}}/>:null}

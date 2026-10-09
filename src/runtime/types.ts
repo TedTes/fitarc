@@ -67,6 +67,7 @@ export type RoutineDefinition = {
 };
 
 export type TrainingSource = {
+  workoutSchedule?: import('./workoutSchedule').WorkoutSchedule;
   /** Explicit additions for one upcoming session; never changes an exercise pool. */
   nextSessionAdditions?: {afterSessionId:string;blockId:string|null;slotId?:string;exercises:RoutineExercise[]};
   weightUnit?: import('./weights').WeightUnit;

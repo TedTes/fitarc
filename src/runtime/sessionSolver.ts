@@ -1,4 +1,4 @@
-import { selectPoolPlans } from './exercisePools';
+import { selectPoolPlans, workoutGroup, matchesGroup } from './exercisePools';
 import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
 import { suggestWorkoutLoad } from './progression';
@@ -30,6 +30,8 @@ export const solveSession = (input: {
   const pools = input.source.routine?.selectionMode === 'pools';
   const plans = pools ? selectPoolPlans(slot,input.source,catalog,input.context,input.sessions) : slot.plannedExercises;
   const custom = input.source.routine?.split === 'custom';
+  const group = workoutGroup(slot.label);
+  const groupCatalog = group ? catalog.filter(exercise => matchesGroup(exercise, group)) : catalog;
   const exerciseLimit = custom ? plans.length : input.context.minutesAvailable <= 30 ? 3 : input.context.minutesAvailable <= 45 ? 4 : 5;
   const unavailableExercises = new Set(input.context.unavailableExerciseIds);
   const unavailableEquipment = new Set(input.context.unavailableEquipment);
@@ -38,11 +40,11 @@ export const solveSession = (input: {
     const replacementId = input.context.exerciseReplacements?.[plan.exerciseId];
     if (replacementId && (!original || !exerciseAlternatives(original,catalog,input.source,input.sessions ?? [],input.context).some(x=>x.exercise.id===replacementId))) throw Error('A selected replacement no longer fits today’s constraints.');
     const exercise = catalog.find((candidate) => candidate.id === (replacementId ?? plan.exerciseId));
-    if (!exercise || input.source.excludedExerciseIds.includes(exercise.id) || exercise.contraindications.some((item) => input.source.limitations.includes(item)) || exercise.equipment.some((item) => !input.source.equipment.includes(item)) || unavailableExercises.has(exercise.id) || exercise.equipment.some((item) => unavailableEquipment.has(item))) return [];
+    if (!exercise || (group && !matchesGroup(exercise, group)) || input.source.excludedExerciseIds.includes(exercise.id) || exercise.contraindications.some((item) => input.source.limitations.includes(item)) || exercise.equipment.some((item) => !input.source.equipment.includes(item)) || unavailableExercises.has(exercise.id) || exercise.equipment.some((item) => unavailableEquipment.has(item))) return [];
     return [{ exercise, prescription: plan.prescription ? {...plan.prescription,exerciseId:exercise.id,startingLoadKg:replacementId?undefined:plan.prescription.startingLoadKg} : undefined, plannedSets: plan.sets, reason: replacementId ? `Your chosen replacement for ${original!.name}, today only` : plan.selection.reasons.join(' · ') }];
   }).slice(0, exerciseLimit);
   const fallback = selectExercises({
-    catalog, source: input.source,
+    catalog: groupCatalog, source: input.source,
     targetMuscles: slot.targetMuscles, movementPatterns: slot.movementPatterns,
     workingSets: input.workingSets,
     unavailableExerciseIds: input.context.unavailableExerciseIds,
