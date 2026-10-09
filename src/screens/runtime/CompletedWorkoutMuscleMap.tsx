@@ -11,25 +11,31 @@ import { WorkoutCelebration } from './WorkoutCelebration';
 
 export type TodayStats = { sets: number; volumeKg: number; minutes: number | null };
 
-/** Done-today vs next-session summary: both sides of the body at once, plus a tappable muscle sentence. */
-export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId }: { workout: NextWorkout; stats?: TodayStats; celebrationId?: string | null }) => {
-  const completed = workout.completedMuscles;
-  const next = [...new Set(workout.exercises.filter((entry) => entry.sets > 0).flatMap(({ exercise }) => exercise.primaryMuscles))];
-  const [selected, setSelected] = useState<Muscle | null>(null);
-  const [expanded, setExpanded] = useState<'front' | 'back' | null>(null);
-  const { height: screenHeight } = useWindowDimensions();
-  const toggle = (muscle: Muscle) => setSelected((current) => (current === muscle ? null : muscle));
-  const comparison = { completed, next };
-  const facts = stats ? [`${stats.sets} sets`, stats.volumeKg > 0 ? `${Math.round(stats.volumeKg).toLocaleString()} kg` : null, stats.minutes ? `${stats.minutes} min` : null].filter(Boolean).join(' · ') : '';
-
-  const chips = (muscles: readonly Muscle[], tone: 'done' | 'next') => muscles.map((muscle) => (
+export const SessionMuscleChips = ({ muscles, tone, selected, onSelect }: {
+  muscles: readonly Muscle[]; tone: 'done' | 'next'; selected: Muscle | null; onSelect: (muscle: Muscle) => void;
+}) => {
+  return <>{muscles.map((muscle) => (
     <Pressable key={`${tone}-${muscle}`} accessibilityRole="button" accessibilityState={{ selected: selected === muscle }}
       accessibilityLabel={`${muscleLabel(muscle)}, ${tone === 'done' ? 'done today' : 'next session'}. Highlights it on the body`}
-      onPress={() => toggle(muscle)} hitSlop={4}
+      onPress={() => onSelect(muscle)} hitSlop={4}
       style={({ pressed }) => [s.chip, tone === 'done' ? s.chipDone : s.chipNext, selected === muscle && (tone === 'done' ? s.chipDoneOn : s.chipNextOn), pressed && s.pressed]}>
       <Txt variant="caption" style={{ color: tone === 'done' ? colors.success : colors.next }}>{muscleLabel(muscle).toLowerCase()}</Txt>
     </Pressable>
-  ));
+  ))}</>;
+};
+
+/** Completed muscles and the upcoming session share the same selectable body map. */
+export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId, selected, onSelect }: {
+  workout: NextWorkout; stats?: TodayStats; celebrationId?: string | null;
+  selected: Muscle | null; onSelect: (muscle: Muscle) => void;
+}) => {
+  const completed = workout.completedMuscles;
+  const next = [...new Set(workout.exercises.filter((entry) => entry.sets > 0).flatMap(({ exercise }) => exercise.primaryMuscles))];
+  const [expanded, setExpanded] = useState<'front' | 'back' | null>(null);
+  const { height: screenHeight } = useWindowDimensions();
+  const comparison = { completed, next };
+  const facts = stats ? [`${stats.sets} sets`, stats.volumeKg > 0 ? `${Math.round(stats.volumeKg).toLocaleString()} kg` : null, stats.minutes ? `${stats.minutes} min` : null].filter(Boolean).join(' · ') : '';
+  const chips = (muscles: readonly Muscle[], tone: 'done' | 'next') => <SessionMuscleChips muscles={muscles} tone={tone} selected={selected} onSelect={onSelect} />;
 
   return <View style={s.root} testID="completed-workout-muscle-map">
     <View style={s.done}>
@@ -39,7 +45,7 @@ export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId }: { w
     </View>
     <View style={s.bodies}>
       {(['front', 'back'] as const).map((view) => <View key={view} style={s.body}>
-        <MuscleMap view={view} selected={selected} onSelect={(muscle) => toggle(muscle)}
+        <MuscleMap view={view} selected={selected} onSelect={onSelect}
           sessionComparison={comparison} height={200} showZoom={false} onBackgroundPress={() => setExpanded(view)} />
         <Pressable accessibilityRole="button" accessibilityLabel={`Open the ${view} muscle map full screen`} onPress={() => setExpanded(view)}
           hitSlop={10} style={({ pressed }) => [s.expand, pressed && s.pressed]}>
@@ -49,13 +55,12 @@ export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId }: { w
     </View>
     <View style={s.summary}>
       {completed.length ? <View style={s.line}><Ionicons name="checkmark" size={15} color={colors.success} /><Txt variant="caption" tone="secondary">Done</Txt>{chips(completed, 'done')}</View> : null}
-      {next.length ? <View style={s.line}><Ionicons name="arrow-forward" size={15} color={colors.next} /><Txt variant="caption" tone="secondary">Next</Txt>{chips(next, 'next')}</View> : null}
     </View>
     {celebrationId ? <WorkoutCelebration key={celebrationId} /> : null}
     {/* Full-screen look: same done/next colours, with the map's own zoom, drag and front/back flip.
         Not scrollable, so a drag moves the zoomed body rather than the sheet. */}
     <Sheet visible={expanded !== null} onClose={() => setExpanded(null)} title="Muscle map" scrollable={false}>
-      {expanded ? <MuscleMap view={expanded} onViewChange={setExpanded} selected={selected} onSelect={(muscle) => toggle(muscle)}
+      {expanded ? <MuscleMap view={expanded} onViewChange={setExpanded} selected={selected} onSelect={onSelect}
         sessionComparison={comparison} height={Math.round(screenHeight * 0.6)} /> : null}
       <View style={s.summary}>
         {completed.length ? <View style={s.line}><Ionicons name="checkmark" size={15} color={colors.success} /><Txt variant="caption" tone="secondary">Done</Txt>{chips(completed, 'done')}</View> : null}
@@ -67,7 +72,7 @@ export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId }: { w
 
 const s = StyleSheet.create({
   root: { gap: space.sm },
-  done: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  done: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   facts: { flexShrink: 1, marginLeft: 4 },
   bodies: { flexDirection: 'row', gap: space.sm },
   body: { flex: 1 },

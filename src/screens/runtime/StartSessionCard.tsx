@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,10 +15,10 @@ const C = 2 * Math.PI * R;
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 /** Session summary with a press-and-hold ring that starts the workout once it fills. */
-export const StartSessionCard = ({ title, exercises, sets, muscles, onStart, when, showMuscles = true }: {
-  title: string; exercises: number; sets: number; muscles: Muscle[]; showMuscles?: boolean;
+export const StartSessionCard = ({ title, exercises, sets, muscles, onStart, onCalendar, when, showMuscles = true, children }: {
+  title: string; exercises: number; sets: number; muscles: Muscle[]; showMuscles?: boolean; children?: ReactNode;
   /** Omitted for a session that can't start yet; the card then shows `when` instead of the ring. */
-  onStart?: () => void; when?: string;
+  onStart?: () => void; onCalendar?: () => void; when?: string;
 }) => {
   const progress = useRef(new Animated.Value(0)).current;
   const [hint, setHint] = useState(false);
@@ -44,12 +44,18 @@ export const StartSessionCard = ({ title, exercises, sets, muscles, onStart, whe
   const minutes = Math.round((sets * 2.5 + exercises) / 5) * 5;
   const unique = [...new Set(muscles)].slice(0, 4);
 
+  const calendar=onCalendar?<Pressable accessibilityRole="button" accessibilityLabel="Choose workout days" onPress={onCalendar} style={s.calendar}>{when ? <Txt variant="caption" tone="secondary">{when}</Txt> : null}<Ionicons name="calendar-outline" size={20} color={colors.textMuted}/></Pressable>:null;
+
   return (
     <View style={s.card}>
+      <View>
+      <View style={s.header}>
+        <Txt variant="body" style={s.sessionTitle}>Next session: {title}</Txt>
+        {calendar}
+      </View>
+      <View style={s.summary}>
       <View style={s.copy}>
-        <Txt variant="label" tone="accent">{onStart ? 'READY WHEN YOU ARE' : `UP NEXT · ${(when ?? 'later').toUpperCase()}`}</Txt>
-        <Txt variant="title" numberOfLines={1}>{title}</Txt>
-        <Txt variant="caption" tone="secondary">{exercises} exercises · {sets} sets · ~{minutes} min</Txt>
+        {exercises > 0 ? <Txt variant="caption" tone="secondary">{exercises} {exercises===1?'exercise':'exercises'} · {sets} sets · ~{minutes} min</Txt> : null}
         {showMuscles ? <View style={s.chips}>
           {unique.map((muscle) => <View key={muscle} style={s.chip}><Txt variant="mono" tone="secondary">{muscleLabel(muscle).toLowerCase()}</Txt></View>)}
         </View> : null}
@@ -77,21 +83,28 @@ export const StartSessionCard = ({ title, exercises, sets, muscles, onStart, whe
           <Ionicons name="play" size={26} color={colors.accent} style={s.play} />
         </Pressable>
         <Txt variant="mono" tone={hint ? 'accent' : 'muted'}>{hint ? 'keep holding' : 'hold to start'}</Txt>
-      </View> : <Ionicons name="calendar-outline" size={26} color={colors.textMuted} accessibilityElementsHidden importantForAccessibility="no" />}
+      </View> : null}
+      </View>
+      </View>
+      {children}
     </View>
   );
 };
 
 const s = StyleSheet.create({
   card: {
-    flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg, marginTop: space.sm,
+    gap: space.sm, padding: space.md, marginTop: space.xs,
     borderRadius: radius.lg, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface,
   },
+  header: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  sessionTitle: { flex: 1, minWidth: 0, color: colors.next },
+  summary: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   copy: { flex: 1, minWidth: 0, gap: 4 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
   chip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.surfaceRaised },
   ringColumn: { alignItems: 'center', gap: 6 },
   ring: { width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' },
   ringPressed: { transform: [{ scale: 0.96 }] },
+  calendar: {flexDirection:'row',flexShrink:0,minWidth:44,minHeight:44,alignItems:'center',justifyContent:'center',gap:8},
   play: { marginLeft: 4 },
 });

@@ -1,3 +1,6 @@
+import { datePlusDays } from '../../runtime/planDates';
+import { saveWorkoutSchedule } from '../../runtime/workoutSchedule';
+import { WorkoutCalendar } from './WorkoutCalendar';
 import { TodayExercisePicker } from './TodayExercisePicker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -27,7 +30,7 @@ type Props = {
   notify: Notify; active: boolean; onDockChange: (dock: WorkoutDockState | null) => void;
   onOpenSource: () => void; onOpenWeek: () => void; onNewWorkout: () => void;
 };
-type Panel='next-add'|'conditions'|'workout'|'omitted'|'more'|null;
+type Panel='calendar'|'next-add'|'conditions'|'workout'|'omitted'|'more'|null;
 
 export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpenSource, onOpenWeek, onNewWorkout }: Props) => {
   const formatKg=(kg:number)=>`${weightText(kg,state.source?.weightUnit??'kg')} ${state.source?.weightUnit??'kg'}`;
@@ -82,10 +85,15 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
     const span=times.length>1?Math.round((Math.max(...times)-Math.min(...times))/60000):0;
     return {sets:done.length,volumeKg:done.reduce((sum,result)=>sum+(result.actualLoadKg??result.prescribedLoadKg)*result.completedReps,0),minutes:span>=5?span:null};
   },[state.sessions,state.setResults,date]);
-  if(nextWorkout)return <><NextWorkoutPreview workout={nextWorkout} today={date} stats={todayStats} celebrationId={active?celebrationId:null} onAddExercise={()=>setPanel('next-add')} onUse={()=>{
+  if(nextWorkout)return <><NextWorkoutPreview workout={nextWorkout} today={date} stats={todayStats} celebrationId={active?celebrationId:null} onAddExercise={()=>setPanel('next-add')} onCalendar={()=>setPanel('calendar')} onUse={()=>{
     const outcome=apply(current=>startAdditionalWorkout(current,current.source!,nextWorkout.exercises.map(({exercise,...item})=>({...item,exerciseId:exercise.id})),nextWorkout.name,date));
     if(!outcome.ok)notify({tone:'error',title:'Could not prepare workout',message:describeRuntimeError(outcome.error).message});
   }}/>
+    {active&&panel==='calendar'?<WorkoutCalendar schedule={state.source?.workoutSchedule} today={nextWorkout.finishedToday?datePlusDays(date,1):date} onClose={()=>setPanel(null)} onSave={schedule=>{
+      const outcome=apply(current=>saveWorkoutSchedule(current,schedule));
+      if(outcome.ok)setPanel(null);
+      else notify({tone:'error',title:'Could not save workout days',message:describeRuntimeError(outcome.error).message});
+    }}/>:null}
     {active&&panel==='next-add'?<TodayExercisePicker
       title={/^(your )?next workout$/i.test(nextWorkout.name)?'Add to next session':`Add to ${slotPlain({label:nextWorkout.name})}`}
       catalog={nextWorkoutCandidates(state,nextWorkout)}
