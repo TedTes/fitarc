@@ -74,7 +74,15 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
     catch (error) { return { value: null, error: describeRuntimeError(error).message }; }
   }, [state, context, session]);
   const nextWorkout=useMemo(()=>nextWorkoutPreview(state,date),[state,date]);
-  if(nextWorkout)return <><NextWorkoutPreview workout={nextWorkout} today={date} celebrationId={active?celebrationId:null} onAddExercise={()=>setPanel('next-add')} onUse={()=>{
+  const todayStats=useMemo(()=>{
+    const ids=new Set(state.sessions.filter(item=>item.status==='committed'&&item.context.date===date).map(item=>item.id));
+    const done=state.setResults.filter(result=>ids.has(result.prescriptionId)&&result.completedReps>0);
+    if(!done.length)return undefined;
+    const times=done.map(result=>Date.parse(result.completedAt)).filter(Number.isFinite);
+    const span=times.length>1?Math.round((Math.max(...times)-Math.min(...times))/60000):0;
+    return {sets:done.length,volumeKg:done.reduce((sum,result)=>sum+(result.actualLoadKg??result.prescribedLoadKg)*result.completedReps,0),minutes:span>=5?span:null};
+  },[state.sessions,state.setResults,date]);
+  if(nextWorkout)return <><NextWorkoutPreview workout={nextWorkout} today={date} stats={todayStats} celebrationId={active?celebrationId:null} onAddExercise={()=>setPanel('next-add')} onUse={()=>{
     const outcome=apply(current=>startAdditionalWorkout(current,current.source!,nextWorkout.exercises.map(({exercise,...item})=>({...item,exerciseId:exercise.id})),nextWorkout.name,date));
     if(!outcome.ok)notify({tone:'error',title:'Could not prepare workout',message:describeRuntimeError(outcome.error).message});
   }}/>
