@@ -11,7 +11,7 @@ export type DraftExercise = {
 };
 export type RoutineDraft = {
   version: 1; originalText: string; method: 'text' | 'guided' | 'saved';
-  workouts: Array<{ id: string; name: string; targetMuscles?: Muscle[]; exercises: DraftExercise[] }>;
+  workouts: Array<{ id: string; name: string; targetMuscles?: Muscle[]; reuseSelection?:boolean; exercises: DraftExercise[] }>;
   focus?: RoutineDefinition['focus'];
   setDefaults?: RoutineSetDefaults;
   limitationNote?: string;
@@ -40,7 +40,7 @@ export const draftFromRoutine = (routine: RoutineDefinition, source: TrainingSou
   selectionMode:routine.selectionMode,
   focus:routine.focus, setDefaults:routine.setDefaults, limitationNote:routine.limitationNote,
   preferredSplit:routine.preferredSplit??routine.split,
-  workouts:routine.workouts.map(workout=>({id:workout.id,name:workout.name,targetMuscles:workout.targetMuscles,exercises:workout.exercises.map(item=>({
+  workouts:routine.workouts.map(workout=>({id:workout.id,name:workout.name,targetMuscles:workout.targetMuscles,reuseSelection:workout.reuseSelection,exercises:workout.exercises.map(item=>({
     ...emptyDraftExercise(catalog.find(x=>x.id===item.exerciseId)?.name??item.exerciseId),exerciseId:item.exerciseId,
     sets:valueOf(item.sets,method==='guided'?'suggested':'saved'),minReps:valueOf(item.minReps,method==='guided'?'suggested':'saved'),maxReps:valueOf(item.maxReps,method==='guided'?'suggested':'saved'),targetRir:valueOf(item.targetRir,method==='guided'?'suggested':'saved'),
     weight:item.startingLoadKg===undefined?unknownValue():valueOf(item.startingLoadKg,'saved'),unit:'kg',basis:catalog.find(x=>x.id===item.exerciseId)?.equipment.includes('dumbbell')?'per_hand':'total',
@@ -81,7 +81,7 @@ export const sourceFromDraft = (draft: RoutineDraft, initial: TrainingSource, ca
     equipment:draft.equipment??initial.equipment,
     routine:{...(initial.routine??defaultRoutine()),selectionMode:draft.selectionMode,split:'custom',preferredSplit:draft.preferredSplit??initial.routine?.preferredSplit,customExercises:draft.customExercises,
       focus:draft.focus, setDefaults:draft.setDefaults, limitationNote:draft.limitationNote,
-      workouts:draft.workouts.map(workout=>({id:workout.id,name:workout.name.trim(),targetMuscles:workout.targetMuscles,exercises:workout.exercises.map(item=>({
+      workouts:draft.workouts.map(workout=>({id:workout.id,name:workout.name.trim(),targetMuscles:workout.targetMuscles,reuseSelection:workout.reuseSelection,exercises:workout.exercises.map(item=>({
         exerciseId:item.exerciseId!,sets:item.sets.value??3,minReps:item.minReps.value??item.maxReps.value??8,maxReps:item.maxReps.value??item.minReps.value??12,targetRir:item.targetRir.value??2,
         ...(item.weight.value===null?{}:{startingLoadKg:weightInKg(item,all.find(x=>x.id===item.exerciseId)!)}),
       }))})),

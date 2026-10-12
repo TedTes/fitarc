@@ -26,7 +26,6 @@ export type RemoteProfileRow = {
   avatar_url?: string | null;
   tracking_preferences?: TrackingPreferences | null;
   plan_preferences?: User['planPreferences'] | null;
-  training_preferences?: User['trainingPreferences'] | null;
   created_at: string;
 };
 
@@ -70,7 +69,6 @@ const mapRowToUser = (row: RemoteProfileRow): User => {
     avatarPath: isUrl ? undefined : storedAvatar,
     trackingPreferences: row.tracking_preferences ?? undefined,
     planPreferences: row.plan_preferences ?? undefined,
-    trainingPreferences: row.training_preferences ?? undefined,
     createdAt: row.created_at,
   };
 };
@@ -122,7 +120,6 @@ export const saveUserProfile = async (user: User): Promise<void> => {
     height_cm: user.heightCm,
     weight_kg: user.weightKg ?? null,
     training_experience: user.experienceLevel,
-    training_split: user.trainingSplit ?? 'full_body',
     eating_mode: user.eatingMode ?? 'maintenance',
     current_physique_level: user.currentPhysiqueLevel ?? 1,
     avatar_url: user.avatarPath ?? user.avatarUrl ?? null,

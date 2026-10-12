@@ -1,3 +1,4 @@
+import { upgradeStoredTraining } from './upgradeStoredTraining';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
 import { loadExerciseCatalog } from '../services/exerciseCatalogService';
@@ -9,7 +10,7 @@ import type { RuntimeState, TrainingBlock, TrainingSource } from './types';
 
 export { emptyRuntimeState } from './runtimePersistence';
 export { applySetResult } from './runtimeReducers';
-const keyFor = (userId: string) => `fitarc:training-runtime:v3:${userId}`;
+const keyFor = (userId: string) => `fitarc:training-runtime:v4:${userId}`;
 const stores = new Map<string, ReturnType<typeof createRuntimePersistence>>();
 const persistence = (userId: string) => {
   const existing = stores.get(userId);
@@ -17,12 +18,12 @@ const persistence = (userId: string) => {
   const store = createRuntimePersistence({
     createId: createRuntimeId,
     readLocal: async () => {
-      const raw = await AsyncStorage.getItem(keyFor(userId));
+      const raw = await AsyncStorage.getItem(keyFor(userId)) ?? await AsyncStorage.getItem(`fitarc:training-runtime:v3:${userId}`);
       if (!raw) return null;
       const value = JSON.parse(raw) as DeviceSnapshot;
       if (!value.state || !Number.isInteger(value.revision) || value.revision < 0
         || !Array.isArray(value.state.sessions)) throw new Error('Invalid device training data.');
-      return { ...value, state: fromStoredTraining(value.state as unknown as import('./dataModel').StoredTrainingState), pendingState: value.pendingState ? fromStoredTraining(value.pendingState as unknown as import('./dataModel').StoredTrainingState) : undefined };
+      return { ...value, state: fromStoredTraining(upgradeStoredTraining(value.state)), pendingState: value.pendingState ? fromStoredTraining(upgradeStoredTraining(value.pendingState)) : undefined };
     },
     writeLocal: async (value) => AsyncStorage.setItem(keyFor(userId), JSON.stringify({ ...value, state: toStoredTraining(value.state), pendingState: value.pendingState ? toStoredTraining(value.pendingState) : undefined })),
     backup: async (value) => AsyncStorage.setItem(`${keyFor(userId)}:conflict:${createRuntimeId()}`, JSON.stringify({ ...value, state: toStoredTraining(value.state), pendingState: value.pendingState ? toStoredTraining(value.pendingState) : undefined })),

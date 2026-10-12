@@ -41,7 +41,7 @@ export const solveSession = (input: {
     if (replacementId && (!original || !exerciseAlternatives(original,catalog,input.source,input.sessions ?? [],input.context).some(x=>x.exercise.id===replacementId))) throw Error('A selected replacement no longer fits today’s constraints.');
     const exercise = catalog.find((candidate) => candidate.id === (replacementId ?? plan.exerciseId));
     if (!exercise || (group && !matchesGroup(exercise, group)) || input.source.excludedExerciseIds.includes(exercise.id) || exercise.contraindications.some((item) => input.source.limitations.includes(item)) || exercise.equipment.some((item) => !input.source.equipment.includes(item)) || unavailableExercises.has(exercise.id) || exercise.equipment.some((item) => unavailableEquipment.has(item))) return [];
-    return [{ exercise, prescription: plan.prescription ? {...plan.prescription,exerciseId:exercise.id,startingLoadKg:replacementId?undefined:plan.prescription.startingLoadKg} : undefined, plannedSets: plan.sets, reason: replacementId ? `Your chosen replacement for ${original!.name}, today only` : plan.selection.reasons.join(' · ') }];
+    return [{ exercise, prescription: plan.prescription ? {...plan.prescription,exerciseId:exercise.id,startingLoadKg:replacementId?undefined:plan.prescription.startingLoadKg} : undefined, plannedSets: plan.sets, reason: replacementId ? `Your chosen replacement for ${original!.name}` : plan.selection.reasons.join(' · ') }];
   }).slice(0, exerciseLimit);
   const fallback = selectExercises({
     catalog: groupCatalog, source: input.source,

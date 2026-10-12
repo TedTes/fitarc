@@ -25,12 +25,13 @@ export function projectTrainingState(state: RuntimeState): RuntimeState {
 
 export function toStoredTraining(state: RuntimeState): StoredTrainingState {
   const plans = [...new Map([...(state.blockHistory ?? []), ...(state.block ? [state.block] : [])].map((plan) => [plan.id, plan])).values()];
-  return { schemaVersion: 3, updatedAt: state.updatedAt, preferences: state.source, activePlanId: state.block?.id ?? null,
+  const profile=state.source?(({routine,...fields})=>fields)(state.source):null;
+  return { schemaVersion: 4, updatedAt: state.updatedAt, profile, activePlanId: state.block?.id ?? null,
     plans, sessions: state.sessions, lastChanges: state.lastBlockDiff };
 }
 
 export function fromStoredTraining(stored: StoredTrainingState): RuntimeState {
-  if (stored.schemaVersion !== 3 || !Array.isArray(stored.plans) || !Array.isArray(stored.sessions)) throw new Error('Unsupported training data format.');
+  if (stored.schemaVersion !== 4 || !Array.isArray(stored.plans) || !Array.isArray(stored.sessions)) throw new Error('Unsupported training data format.');
   const ids = new Set<string>();
   const sessions = stored.sessions as SessionPrescription[];
   if (sessions.filter((session) => session.status !== 'committed').length > 1) throw new Error('More than one workout is active.');
@@ -43,7 +44,7 @@ export function fromStoredTraining(stored: StoredTrainingState): RuntimeState {
   }
   const block = stored.plans.find((plan) => plan.id === stored.activePlanId) ?? null;
   if (stored.activePlanId && !block) throw new Error('Current plan is missing.');
-  return projectTrainingState({ updatedAt: stored.updatedAt, source: stored.preferences, block,
+  return projectTrainingState({ updatedAt: stored.updatedAt, source: stored.profile?{...stored.profile,...(block?.preferences?.routine?{routine:block.preferences.routine}:{})}:null, block,
     blockHistory: stored.plans, sessions, lastBlockDiff: stored.lastChanges,
     activeSession: null, setResults: [], decisions: [], workingSets: {}, committedSessionIds: [] });
 }

@@ -50,7 +50,7 @@ export type RoutineExercise = {
 };
 export type RoutineSetDefaults = Pick<RoutineExercise, 'sets' | 'minReps' | 'maxReps' | 'targetRir'>;
 export type RoutineFocus = 'build_muscle' | 'lose_fat' | 'strength' | 'maintain';
-export type RoutineWorkout = { id: string; name: string; targetMuscles?: Muscle[]; exercises: RoutineExercise[] };
+export type RoutineWorkout = { id: string; name: string; targetMuscles?: Muscle[]; reuseSelection?: boolean; exercises: RoutineExercise[] };
 export type RoutineDefinition = {
   /** Omitted means fixed workouts, preserving existing routines. */
   selectionMode?: 'fixed' | 'pools';
@@ -72,8 +72,9 @@ export type TrainingSource = {
   nextSessionAdditions?: {afterSessionId:string;blockId:string|null;slotId?:string;exercises:RoutineExercise[]};
   weightUnit?: import('./weights').WeightUnit;
   weightRanges?: Record<string,import('./weights').WeightRange>;
-  /** Autosaved editor input, including incomplete work; separate from the applied routine. */
-  routineEditor?: import('../routineSetup/editor').RoutineEditorSnapshot;
+  trainingSplit?: RoutineDefinition['preferredSplit'];
+  routineText?: string;
+  interpretedRoutineText?: string;
   id: string;
   userId: string;
   version: number;

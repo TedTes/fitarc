@@ -79,7 +79,6 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const eventId = useRef(0);
   const restoredNotice = useRef(false);
   const defaultSource = useMemo<TrainingSource>(() => {
-    if (user.trainingPreferences) return user.trainingPreferences;
     const preferences = user.planPreferences;
     const preferredDays = preferences?.daysPerWeek;
     const fallbackDays = user.trainingSplit === 'upper_lower' ? 4 : user.trainingSplit === 'push_pull_legs' || user.trainingSplit === 'bro_split' ? 5 : 3;
@@ -99,7 +98,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
       seedWorkingSets: [],
       createdAt: new Date().toISOString(),
     };
-  }, [user.experienceLevel, user.id, user.planPreferences, user.trainingPreferences, user.trainingSplit]);
+  }, [user.experienceLevel, user.id, user.planPreferences, user.trainingSplit]);
 
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardOpen(true));

@@ -19,6 +19,8 @@ import type { ExerciseDefinition, Muscle, RuntimeState, SessionContext, SessionP
 
 export const compileTrainingBlock = (state: RuntimeState, source: TrainingSource): RuntimeState => {
   if (state.activeSession) throw new Error('finish_active_session_before_recompile');
+  const selectedSplit=source.routine?.preferredSplit??source.routine?.split??source.trainingSplit;
+  if(selectedSplit)source={...source,trainingSplit:selectedSplit};
   const block = compileBlock(source, state.block, state.workingSets, [...new Map([...(state.block?.catalog ?? []), ...(state.catalog ?? RUNTIME_EXERCISES)].map(x => [x.id, x])).values()]);
   const errors = validateBlock(block);
   if (errors.length) throw new Error(errors.join(' '));
@@ -245,12 +247,22 @@ export const reorderRuntimeExercises = (
 export const commitRuntimeSession = (state: RuntimeState): RuntimeState => {
   if (!state.activeSession) throw new Error('active_session_required');
   const completed = { ...state.activeSession, status: 'committed' as const, finishedAt: new Date().toISOString() };
-  return {
-    ...state,
-    activeSession: null,
-    sessions: state.sessions.map((session) => session.id === completed.id ? completed : session),
-    committedSessionIds: [...new Set([...state.committedSessionIds, completed.id])],
+  const finished:RuntimeState={
+    ...state, activeSession:null,
+    sessions:state.sessions.map(session=>session.id===completed.id?completed:session),
+    committedSessionIds:[...new Set([...state.committedSessionIds,completed.id])],
   };
+  // Separate repeated workouts do not replace the current recurring routine.
+  if(!state.source?.routine||!state.block||completed.context.extraWorkout||completed.blockId!==state.block.id)return finished;
+  const workout=state.source.routine.workouts.find(item=>item.id===completed.slotId);
+  if(!workout||!completed.exercises.length)return finished;
+  const exercises=completed.exercises.filter(entry=>entry.sets.length).map(entry=>({exerciseId:entry.exercise.id,
+    sets:entry.sets.length,minReps:entry.sets[0].minReps,maxReps:entry.sets[0].maxReps,targetRir:entry.sets[0].targetRir}));
+  if(!exercises.length)return finished;
+  if(workout.reuseSelection&&JSON.stringify(workout.exercises)===JSON.stringify(exercises))return finished;
+  const routine={...state.source.routine,workouts:state.source.routine.workouts.map(item=>item.id===workout.id?{...item,reuseSelection:true,exercises}:item)};
+  const updated=compileTrainingBlock(finished,{...state.source,version:state.source.version+1,routine});
+  return {...updated,blockHistory:[...new Map([...(state.blockHistory??[]),state.block].map(plan=>[plan.id,plan])).values()]};
 };
 
 export const discardRuntimeSession = (state: RuntimeState): RuntimeState => {
@@ -407,7 +419,7 @@ export const substituteRuntimeExercise = (
   const replacementEntry = {
     id: createRuntimeId(), exercise: replacement, priority: target.priority,
     ...(replacementRange?{needsBaseline:false}:suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
-    reason: `Your replacement for ${target.exercise.name}, today only. ${suggestion?.explanation ?? ""}`,
+    reason: `Your replacement for ${target.exercise.name}. ${suggestion?.explanation ?? ""}`,
     sets: pending.map((set, index) => ({
       ...set, id: createRuntimeId(), setNumber: index + 1,
       loadKg: replacementRange?rangeLoad(replacementRange,index,pending.length):suggestion?.loadKg ?? seed?.loadKg ?? (replacement.compound ? 20 : 10),
@@ -440,7 +452,7 @@ export const addRuntimeExercise = (state: RuntimeState, item: import('./types').
   const load = item.startingLoadKg ?? suggestion?.loadKg ?? state.workingSets[item.exerciseId]?.loadKg ?? 0;
   const entry = { id: createRuntimeId(), exercise, priority: state.activeSession.exercises.length+1,
     needsBaseline: !range && item.startingLoadKg === undefined && !(suggestion?.baselineKnown ?? state.workingSets[item.exerciseId]),
-    reason: `Added by you for today only. ${suggestion?.explanation ?? 'Enter your actual weight.'}`,
+    reason: `Added by you. ${suggestion?.explanation ?? 'Enter your actual weight.'}`,
     sets: Array.from({length:item.sets},(_,i)=>({id:createRuntimeId(),setNumber:i+1,loadKg:range?rangeLoad(range,i,item.sets):load,minReps:item.minReps,maxReps:item.maxReps,targetRir:item.targetRir,status:'pending' as const})) };
   const session = { ...state.activeSession, exercises: [...state.activeSession.exercises,entry], estimatedMinutes: Math.ceil(state.activeSession.estimatedMinutes+exercise.setupMinutes+item.sets*(exercise.compound?3.5:2.5)) };
   return {...state,activeSession:session,sessions:state.sessions.map(x=>x.id===session.id?session:x)};

@@ -15,7 +15,6 @@ export const saveWeightSettings=(state:RuntimeState,defaults:TrainingSource,patc
     source.weightRanges={...source.weightRanges};
     if(patch.range)source.weightRanges[patch.exerciseId]=patch.range;else delete source.weightRanges[patch.exerciseId];
   }
-  if(source.routineEditor)source.routineEditor={...source.routineEditor,settings:{...source.routineEditor.settings,weightUnit:source.weightUnit,weightRanges:source.weightRanges}};
   const range=patch.range;
   const session=range&&state.activeSession?{...state.activeSession,exercises:state.activeSession.exercises.map(entry=>entry.exercise.id!==patch.exerciseId?entry:{
     ...entry,needsBaseline:false,sets:entry.sets.map((set,index)=>set.status==='pending'?{...set,loadKg:rangeLoad(range,index,entry.sets.length)}:set),

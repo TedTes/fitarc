@@ -31,7 +31,6 @@ export const saveWorkoutSchedule = (state:RuntimeState,schedule:WorkoutSchedule|
   const clean=schedule?{weekdays:[...new Set(schedule.weekdays)].sort(),addedDates:[...new Set(schedule.addedDates)].sort(),skippedDates:[...new Set(schedule.skippedDates)].sort()}:undefined;
   const source={...state.source,workoutSchedule:clean};
   // Keep an open autosaved routine editor from restoring an older schedule later.
-  if(source.routineEditor)source.routineEditor={...source.routineEditor,settings:{...source.routineEditor.settings,workoutSchedule:clean}};
   // Calendar selection supersedes a prior remaining-week date plan, never recorded sessions.
   return {...state,source,block:state.block?{...state.block,remainingWeek:undefined}:state.block};
 };

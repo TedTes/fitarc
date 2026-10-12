@@ -20,7 +20,7 @@ export const editableRoutine = (plan: TrainingBlock): RoutineDefinition => ({
   split: 'custom', progression: plan.preferences?.routine?.progression ?? defaultProgression(),
   workouts: plan.slots.map(slot => {
     const targetMuscles = plan.preferences?.routine?.workouts.find(workout=>workout.id===slot.id)?.targetMuscles;
-    return { id: slot.id, name: slot.label, ...(targetMuscles ? { targetMuscles } : {}), exercises: slot.plannedExercises.map(item => ({
+    return { id: slot.id, name: slot.label, reuseSelection:plan.preferences?.routine?.workouts.find(workout=>workout.id===slot.id)?.reuseSelection, ...(targetMuscles ? { targetMuscles } : {}), exercises: slot.plannedExercises.map(item => ({
     exerciseId: item.exerciseId, sets: item.sets,
     minReps: item.prescription?.minReps ?? plan.phases[0].minReps,
     maxReps: item.prescription?.maxReps ?? plan.phases[0].maxReps,

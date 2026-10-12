@@ -10,9 +10,9 @@ export const TRAINING_TABLES = {
 
 export type RecordedSet = { result: SetResult; decision: RuntimeDecision };
 export type StoredTrainingState = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   updatedAt: string;
-  preferences: TrainingSource | null;
+  profile: Omit<TrainingSource,'routine'> | null;
   activePlanId: string | null;
   plans: TrainingBlock[];
   sessions: SessionPrescription[];

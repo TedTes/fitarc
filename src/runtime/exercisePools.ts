@@ -17,10 +17,7 @@ export const workoutGroup = (name: string) => {
 export const isPoolPattern = (value:RoutineDefinition['split']|undefined):value is PoolPattern => Boolean(value && value in GROUP_TEMPLATES);
 /** A saved structure preference applies to suggestions even before every pool is filled. */
 export const preferredWorkoutPattern = (source:TrainingSource):PoolPattern|undefined => {
-  const editor=source.routineEditor;
-  const selected=editor?.baseVersion===source.version
-    ?editor.draft.preferredSplit??editor.context?.split??source.routine?.preferredSplit??source.routine?.split
-    :source.routine?.preferredSplit??source.routine?.split;
+  const selected=source.trainingSplit??source.routine?.preferredSplit??source.routine?.split;
   return isPoolPattern(selected)?selected:undefined;
 };
 
@@ -42,6 +39,7 @@ export const selectPoolPlans = (slot:TrainingSlot, source:TrainingSource, catalo
       && exercise.equipment.every(e=>source.equipment.includes(e)&&!context.unavailableEquipment.includes(e))
       && !exercise.contraindications.some(e=>source.limitations.includes(e));
   });
+  if(source.routine?.workouts.find(workout=>workout.id===slot.id)?.reuseSelection)return candidates;
   const order=new Map(candidates.map((p,index)=>[p.exerciseId,index]));
   const completed=sessions.filter(s=>s.status==='committed'&&s.context.date<=context.date)
     .sort((a,b)=>a.context.date.localeCompare(b.context.date)||(a.finishedAt??a.createdAt).localeCompare(b.finishedAt??b.createdAt));

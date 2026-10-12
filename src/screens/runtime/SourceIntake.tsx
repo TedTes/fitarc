@@ -20,13 +20,11 @@ import { colors, planTokens as t } from './theme';
 import type { SyncStatus } from './useRuntimeController';
 
 type Props={inline?:boolean;catalog?:ExerciseDefinition[];initial:TrainingSource;sessionActive?:boolean;sync:SyncStatus;onSave:(editor:RoutineEditorInput)=>string|undefined;onClose:()=>void};
-export const SourceIntake=({inline=false,initial,sessionActive,onSave,onClose,sync,catalog=RUNTIME_EXERCISES}:Props)=>{
+export const SourceIntake=({inline=false,initial,onSave,onClose,sync,catalog=RUNTIME_EXERCISES}:Props)=>{
   const insets=useSafeAreaInsets();
   const [editor,setEditor]=useState<RoutineEditorInput>(()=>{
-    const saved=initial.routineEditor;
-    if(saved?.version===1&&saved.baseVersion===initial.version)return saved;
     const routine=initial.routine;
-    return {settings:editorSettings(initial),text:'',interpretedText:'',draft:routine?.split==='custom'&&routine.workouts.length?draftFromRoutine(routine,initial,catalog):emptyDraft()};
+    return {settings:editorSettings(initial),text:initial.routineText??'',interpretedText:initial.interpretedRoutineText??'',draft:routine?.split==='custom'&&routine.workouts.length?draftFromRoutine(routine,initial,catalog):emptyDraft()};
   });
   const latest=useRef(editor),saveCallback=useRef(onSave),lastSaved=useRef(JSON.stringify(editor)),dirty=useRef(false),request=useRef<AbortController|null>(null),mounted=useRef(true);
   saveCallback.current=onSave;
@@ -44,9 +42,6 @@ export const SourceIntake=({inline=false,initial,sessionActive,onSave,onClose,sy
   };
   useEffect(()=>{const timer=setTimeout(()=>flush(),450);return()=>clearTimeout(timer);},[editor]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;request.current?.abort();flush();};},[]);
-  useEffect(()=>{
-    if(!sessionActive&&initial.routineEditor){dirty.current=true;lastSaved.current='';flush();}
-  },[sessionActive]);
   const context:RoutineInputContext={split:editor.draft.preferredSplit,days:(editor.draft.days.value??editor.settings.daysPerWeek) as TrainingSource['daysPerWeek'],minutes:editor.draft.minutes.value??editor.settings.sessionMinutes};
   const interpret=async(local=false)=>{
     const input=latest.current;
