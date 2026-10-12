@@ -19,8 +19,8 @@ import { Txt } from './ui';
 import { colors, planTokens as t } from './theme';
 import type { SyncStatus } from './useRuntimeController';
 
-type Props={catalog?:ExerciseDefinition[];initial:TrainingSource;sessionActive?:boolean;sync:SyncStatus;onSave:(editor:RoutineEditorInput)=>string|undefined;onClose:()=>void};
-export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RUNTIME_EXERCISES}:Props)=>{
+type Props={inline?:boolean;catalog?:ExerciseDefinition[];initial:TrainingSource;sessionActive?:boolean;sync:SyncStatus;onSave:(editor:RoutineEditorInput)=>string|undefined;onClose:()=>void};
+export const SourceIntake=({inline=false,initial,sessionActive,onSave,onClose,sync,catalog=RUNTIME_EXERCISES}:Props)=>{
   const insets=useSafeAreaInsets();
   const [editor,setEditor]=useState<RoutineEditorInput>(()=>{
     const saved=initial.routineEditor;
@@ -80,8 +80,8 @@ export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RU
   let issue=editor.draft.workouts.length?draftIssues(editor.draft,catalog)[0]:undefined;
   if(!issue&&editor.draft.workouts.length){try{sourceFromDraft(editor.draft,editor.settings,catalog);}catch(problem){issue=problem instanceof Error?problem.message:'Check your routine';}}
   const status=busy?'Updating…':pending||sync==='saving'?'Saving…':sync==='failed'?'Not saved':sync==='conflict'?'Sync conflict':sync==='device'?'Saved on device':sessionActive||issue||editor.text!==editor.interpretedText?'Draft saved':'Saved';
-  return <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS==='ios'?'padding':undefined}>
-    <RoutineDescription text={editor.text} onChange={text=>update({...latest.current,text})} onBlur={()=>void interpret()} busy={voiceBusy}
+  return <KeyboardAvoidingView style={inline?undefined:styles.flex} behavior={!inline&&Platform.OS==='ios'?'padding':undefined}>
+    <RoutineDescription inline={inline} text={editor.text} onChange={text=>update({...latest.current,text})} onBlur={()=>void interpret()} busy={voiceBusy}
       onStarter={selectStarter} selectedStarters={selectedStarters} error={error}
       onLocalReview={hostedRoutineInputEnabled&&error?()=>void interpret(true):undefined}
       status={<Txt variant="mono" tone="muted" style={styles.status} accessibilityLiveRegion="polite">{status}</Txt>}
@@ -91,7 +91,6 @@ export const SourceIntake=({initial,sessionActive,onSave,onClose,sync,catalog=RU
       voiceControl={<RoutineVoiceInput disabled={busy} onBusy={setVoiceBusy} onError={setError} onTranscript={transcript=>{const input=latest.current;update({...input,text:input.text.trim()?`${input.text.trim()}\n${transcript}`:transcript});void interpret();}}/>}>
       <RoutineDraftReview embedded draft={editor.draft} initial={editor.settings} catalog={catalog}
         onChange={draft=>update({...latest.current,draft})} onSettingsChange={settings=>update({...latest.current,settings:editorSettings(settings)})}/>
-      {sessionActive?<Txt variant="caption" tone="muted">Finish your workout to apply changes.</Txt>:null}
     </RoutineDescription>
   </KeyboardAvoidingView>;
 };

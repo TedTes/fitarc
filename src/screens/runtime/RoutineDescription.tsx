@@ -9,19 +9,21 @@ export type RoutineStarter = 'muscle' | 'fat_loss' | 'push_pull_legs' | 'upper_l
 // Split templates live in Workout structure below; offering them here too meant choosing a split in three places.
 const starters: Array<[RoutineStarter,string]> = [['muscle','Build muscle'],['fat_loss','Lose fat']];
 
-export const RoutineDescription = ({text,onChange,busy,onStarter,selectedStarters,error,voiceControl,headerAction,backAction,contextControls,bottomInset=0,onLocalReview,children,onBlur,status}: {
+export const RoutineDescription = ({text,onChange,busy,onStarter,selectedStarters,error,voiceControl,headerAction,backAction,contextControls,bottomInset=0,inline=false,onLocalReview,children,onBlur,status}: {
+  inline?:boolean;
   text:string;onChange:(value:string)=>void;busy:boolean;onBlur?:()=>void;status?:ReactNode;children?:ReactNode;
   onStarter:(starter:RoutineStarter)=>void;selectedStarters:RoutineStarter[];error?:string;voiceControl?:ReactNode;
   headerAction?:ReactNode;backAction?:ReactNode;contextControls?:ReactNode;bottomInset?:number;onLocalReview?:()=>void;
 }) => {
   const [focused,setFocused]=useState(false);
-  return <View style={styles.root}>
-    <View style={styles.header}>
+  const Container=inline?View:ScrollView;
+  return <View style={inline?undefined:styles.root}>
+    {!inline?<View style={styles.header}>
       {backAction}
       <View style={styles.titleBlock}><Txt variant="title" style={styles.title}>Your routine</Txt>{status}</View>
       {headerAction}
-    </View>
-    <ScrollView style={styles.scroll} contentContainerStyle={[styles.content,{paddingBottom:Math.max(bottomInset,16)}]} keyboardShouldPersistTaps="handled">
+    </View>:status}
+    <Container {...(inline?{style:{gap:14}}:{style:styles.scroll,contentContainerStyle:[styles.content,{paddingBottom:Math.max(bottomInset,16)}],keyboardShouldPersistTaps:'handled' as const})}>
       <View style={[styles.inputCard,focused&&styles.focused]}>
         <TextInput multiline textAlignVertical="top" value={text} onChangeText={onChange} onFocus={()=>setFocused(true)} onBlur={()=>{setFocused(false);onBlur?.();}}
           editable maxLength={12000} style={[styles.input,{fontFamily:monoFace('400')??mono}]} accessibilityLabel="Describe your current routine"
@@ -40,7 +42,7 @@ export const RoutineDescription = ({text,onChange,busy,onStarter,selectedStarter
       {children}
       {error?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{error}</Txt>:null}
       {error&&onLocalReview?<Pressable accessibilityRole="button" accessibilityLabel="Interpret locally" disabled={busy} onPress={onLocalReview} style={styles.local}><Txt variant="caption" tone="accent">Interpret locally</Txt></Pressable>:null}
-    </ScrollView>
+    </Container>
 
   </View>;
 };

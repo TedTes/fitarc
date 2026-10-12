@@ -58,7 +58,6 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const { state, loading: stateLoading, loadError, reload, sync, apply, retrySync, restoreCloud } = useRuntimeController(user.id);
   const loading = stateLoading || !fontsReady;
   const [surface, setSurface] = useState<Surface>('solver');
-  const [editingSource, setEditingSource] = useState(false);
   const [quickWorkoutOpen, setQuickWorkoutOpen] = useState(false);
   const hasSavedPlan = Boolean(state.source && state.block?.slots.length && state.block.kind !== 'workout');
   const hasProgress = Boolean(state.block && (hasSavedPlan || state.sessions.length || state.setResults.length));
@@ -270,8 +269,8 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           {hasTraining ? <TodaySurface
             state={state} apply={apply} notify={notify} active={surface === 'solver'}
             onDockChange={setWorkoutDock} onNewWorkout={()=>setQuickWorkoutOpen(true)}
-            onOpenSource={() => { setEditingSource(true); go('account'); }} onOpenWeek={() => go('week')}
-          /> : <EmptyToday onAddRoutine={()=>{setEditingSource(true);go('account');}} onLogWorkout={()=>setQuickWorkoutOpen(true)} />}
+            onOpenSource={() => { go('account'); }} onOpenWeek={() => go('week')}
+          /> : <EmptyToday onAddRoutine={()=>{go('account');}} onLogWorkout={()=>setQuickWorkoutOpen(true)} />}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'block' ? 'auto' : 'none'}
@@ -279,7 +278,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'block' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'block' && styles.surfaceActive, { opacity: surfaceOpacity.block, transform: [{ translateX: surfaceOffset.block }] }]}
         >
-          {hasSavedPlan && block ? <BlockSurface state={state} block={block} sessionActive={inSession} onNextBlock={nextBlock} onEditRoutine={() => { setEditingSource(true); go('account'); }} /> : <EmptyTrainingSurface title="My plan" message="No plan yet" />}
+          {hasSavedPlan && block ? <BlockSurface state={state} block={block} sessionActive={inSession} onNextBlock={nextBlock} onEditRoutine={() => { go('account'); }} /> : <EmptyTrainingSurface title="My plan" message="No plan yet" />}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'week' ? 'auto' : 'none'}
@@ -295,15 +294,10 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'account' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'account' && styles.surfaceActive, { opacity: surfaceOpacity.account, transform: [{ translateX: surfaceOffset.account }] }]}
         >
-          {editingSource ? (
-            <SourceIntake initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} sessionActive={Boolean(state.activeSession)} sync={sync} onSave={saveEditor} onClose={() => setEditingSource(false)} />
-          ) : (
-            <AccountSurface
-              user={user} state={state} sync={sync}
-              onEditSource={() => setEditingSource(true)} onSaveProfile={onSaveProfile}
-              onLogout={onLogout} onDeleteAccount={onDeleteAccount}
-            />
-          )}
+          <AccountSurface user={user} state={state} sync={sync}
+            routineControls={surface==='account'?<SourceIntake inline initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} sessionActive={Boolean(state.activeSession)} sync={sync} onSave={saveEditor} onClose={() => {}} />:null}
+            onSaveProfile={onSaveProfile} onLogout={onLogout} onDeleteAccount={onDeleteAccount}/>
+
         </Animated.View>
       </View>
 

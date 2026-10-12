@@ -1,15 +1,14 @@
 import { workoutGroup, matchesGroup, isPoolPattern } from '../../runtime/exercisePools';
 import { groupDraft } from '../../routineSetup/pools';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import type { ExerciseDefinition, TrainingSource } from '../../runtime/types';
 import { DEFAULT_SET_TARGETS, draftCatalog, exerciseFromDefaults, sourceFromDraft, unknownValue, valueOf, type DraftExercise, type RoutineDraft } from '../../routineSetup/draft';
 import { CustomExerciseForm } from './CustomExerciseForm';
 import { colors, radius, space } from './theme';
-import { defaultRoutine } from '../../runtime/routine';
 import { PlanAdd, PlanButton, PlanGroup, PlanInput, PlanOptions, PlanPanel, PlanText, PlanTile, planStyles, usePlanMotion } from './PlanKit';
 import { Sheet } from './ui';
-import { EQUIPMENT_OPTIONS, GOAL_OPTIONS, MUSCLE_OPTIONS, SetTargetControls, numberOptions, toggleValue } from './RoutinePlanControls';
+import { GOAL_OPTIONS, MUSCLE_OPTIONS, SetTargetControls, numberOptions, toggleValue } from './RoutinePlanControls';
 import { ExercisePicker, RoutineWorkoutSheet } from './RoutineWorkoutSheet';
 import { muscleList } from './copy';
 
@@ -33,15 +32,13 @@ const ExerciseEditor=({item,catalog,onChange,onPrivate}:{item:DraftExercise;cata
   </View>;
 };
 
-export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChange,scheduleRequest=0,embedded=false}:{draft:RoutineDraft;initial:TrainingSource;catalog:ExerciseDefinition[];onChange:(draft:RoutineDraft)=>void;onSettingsChange:(source:TrainingSource)=>void;scheduleRequest?:number;embedded?:boolean})=>{
+export const RoutineDraftReview=({draft,initial,catalog,onChange,scheduleRequest=0,embedded=false}:{draft:RoutineDraft;initial:TrainingSource;catalog:ExerciseDefinition[];onChange:(draft:RoutineDraft)=>void;onSettingsChange:(source:TrainingSource)=>void;scheduleRequest?:number;embedded?:boolean})=>{
   const all=draftCatalog(draft,catalog),{animate}=usePlanMotion();
   const [addingTo,setAddingTo]=useState<string|null>(null);
-  const [open,setOpen]=useState<string|null>(null),[newWorkout,setNewWorkout]=useState(false),[pickerFor,setPickerFor]=useState<string|null>(null),[noteOpen,setNoteOpen]=useState(Boolean(draft.limitationNote));
+  const [open,setOpen]=useState<string|null>(null),[newWorkout,setNewWorkout]=useState(false),[pickerFor,setPickerFor]=useState<string|null>(null);
   const pools=draft.selectionMode==='pools';
   const defaults=draft.setDefaults??DEFAULT_SET_TARGETS;
   const focus=draft.focus??((draft.goal.value??initial.goal)==='strength'?'strength':'build_muscle');
-  const equipment=draft.equipment??initial.equipment;
-  const progression=initial.routine?.progression??defaultRoutine().progression;
   useEffect(()=>{if(scheduleRequest)setOpen('schedule');},[scheduleRequest]);
   const toggle=(id:string)=>{animate();setOpen(current=>current===id?null:id);};
   const changeWorkout=(id:string,patch:Partial<RoutineDraft['workouts'][number]>)=>onChange({...draft,workouts:draft.workouts.map(w=>w.id===id?{...w,...patch}:w)});
@@ -50,14 +47,10 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
   let complete=true;
   try{sourceFromDraft(draft,initial,catalog);}catch{complete=false;}
   const days=draft.days.value??initial.daysPerWeek,minutes=draft.minutes.value??initial.sessionMinutes;
-  const equipmentSummary=equipment.map(value=>EQUIPMENT_OPTIONS.find(option=>option.value===value)?.label.toLowerCase()??value.replaceAll('_',' ')).join(', ');
-  const advancedSummary=[equipmentSummary,draft.limitationNote?.trim()?'note added':'',progression.mode==='manual'?'manual':'auto'].filter(Boolean).join(' · ');
   return <View style={planStyles.root}>
     <PlanGroup label="WORKOUT STRUCTURE">
       <PlanOptions options={[{value:'upper_lower' as const,label:'Upper / lower'},{value:'push_pull_legs' as const,label:'Push / pull / legs'},{value:'full_body' as const,label:'Full body'},{value:'custom' as const,label:'Custom groups'}]} value={pools?(draft.preferredSplit??'custom'):[]} onChange={pattern=>{animate();onChange(isPoolPattern(pattern)?groupDraft(draft,pattern,all):{...draft,selectionMode:'pools',preferredSplit:'custom'});}}/>
       <PlanText kind="meta">{pools?`${draft.workouts.map(w=>w.name).join(' → ')} → repeat. Each workout picks from its pool.`:'Choose a pattern to organize your exercises into pools.'}</PlanText>
-      {pools?<Pressable accessibilityRole="button" accessibilityLabel="Use as fixed workouts instead" onPress={()=>onChange({...draft,selectionMode:'fixed'})} hitSlop={8}
-        style={({pressed})=>[styles.link,pressed&&styles.pressed]}><PlanText kind="meta" accent>Use fixed workouts instead</PlanText></Pressable>:null}
     </PlanGroup>
     {!embedded?<><PlanText kind="overline">PLAN</PlanText>
     <PlanPanel title="Schedule & goal" summary={`${days} days/week · ${minutes} min · ${GOAL_OPTIONS.find(option=>option.value===focus)?.label.toLowerCase()}`} open={open==='schedule'} onToggle={()=>toggle('schedule')}>
@@ -69,11 +62,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
     <PlanPanel title="Set defaults" summary={`${defaults.sets} sets · ${defaults.minReps}–${defaults.maxReps} reps · ${defaults.targetRir} rir`} open={open==='defaults'} onToggle={()=>toggle('defaults')}>
       <SetTargetControls value={defaults} onChange={setDefaults=>onChange({...draft,setDefaults})}/>
     </PlanPanel>
-    <PlanPanel title="Advanced" summary={advancedSummary} open={open==='advanced'} onToggle={()=>toggle('advanced')}>
-      <PlanGroup label="EQUIPMENT"><PlanOptions options={EQUIPMENT_OPTIONS} value={equipment} onChange={value=>onChange({...draft,equipment:toggleValue(equipment,value)})}/></PlanGroup>
-      <PlanGroup label="LIMITATIONS">{noteOpen?<PlanInput multiline accessibilityLabel="Limitations note" value={draft.limitationNote??''} maxLength={1000} onChangeText={limitationNote=>onChange({...draft,limitationNote})} style={planStyles.note}/>:<PlanButton variant="ghost" label="Add note" onPress={()=>{animate();setNoteOpen(true);}}/>}</PlanGroup>
-      <PlanGroup label="PROGRESSION"><PlanOptions segments options={[{value:'double_progression' as const,label:'Auto'},{value:'manual' as const,label:'Manual'}]} value={progression.mode} onChange={mode=>onSettingsChange({...initial,routine:{...(initial.routine??defaultRoutine()),progression:{...progression,mode}}})}/></PlanGroup>
-    </PlanPanel>
+    {!pools?<>
     <View style={[planStyles.count,styles.sectionHead]}>
       <PlanText kind="overline">{pools?'EXERCISE POOLS':'WORKOUTS'} · {draft.workouts.length}</PlanText>
       <View style={styles.sectionEnd}>
@@ -99,6 +88,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,onSettingsChang
         onAdd={exercise=>{changeWorkout(addingWorkout.id,{exercises:[...addingWorkout.exercises,exerciseFromDefaults(exercise,defaults)]});setAddingTo(null);}}/>:null}
     </Sheet>
     {newWorkout?<RoutineWorkoutSheet catalog={all} defaults={defaults} position={draft.workouts.length} onCancel={()=>setNewWorkout(false)} onAdd={workout=>{onChange({...draft,workouts:[...draft.workouts,workout]});setNewWorkout(false);setOpen(null);}}/>:null}
+    </>:null}
   </View>;
 };
-const styles=StyleSheet.create({sectionHead:{alignItems:'center'},sectionEnd:{flexDirection:'row',alignItems:'center',gap:10},link:{alignSelf:'flex-start',minHeight:32,justifyContent:'center'},pressed:{opacity:0.7}});
+const styles=StyleSheet.create({sectionHead:{alignItems:'center'},sectionEnd:{flexDirection:'row',alignItems:'center',gap:10}});

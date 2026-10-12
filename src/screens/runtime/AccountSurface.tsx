@@ -1,6 +1,6 @@
 import { useWeightSettings } from './WeightSettings';
 import { toKg, weightText } from '../../runtime/weights';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -9,27 +9,18 @@ import type { RuntimeState } from '../../runtime';
 import { uploadUserAvatar } from '../../services/userProfileService';
 import { colors, radius, space, TOUCH, planTokens as t } from './theme';
 import { Button, Choice, Sheet, Txt } from './ui';
-import { equipmentLabel, goalLabel, limitationLabel } from './copy';
 import { PlanText } from './PlanKit';
-import { FULL_GYM } from './constants';
 import type { SyncStatus } from './useRuntimeController';
 
 type Props = {
   user: User;
   state: RuntimeState;
   sync: SyncStatus;
-  onEditSource: () => void;
+  routineControls: ReactNode;
   onSaveProfile: (profile: User) => void | Promise<void>;
   onLogout: () => void | Promise<void>;
   onDeleteAccount: () => void | Promise<void>;
 };
-
-const Fact = ({ label, value }: { label: string; value: string }) => (
-  <View style={styles.fact} accessible accessibilityLabel={`${label}: ${value}`}>
-    <Txt variant="caption" tone="muted" style={styles.factLabel}>{label}</Txt>
-    <Txt variant="caption" style={styles.flex}>{value}</Txt>
-  </View>
-);
 
 const heightText = (cm: number, unit: 'kg' | 'lb') => {
   if (unit === 'kg') return `${cm} cm`;
@@ -67,10 +58,16 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
   </View>
 );
 
-export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
+export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const {unit,save:saveUnits}=useWeightSettings();
   const [editingProfile, setEditingProfile] = useState(false);
-  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileStatus,setProfileStatus]=useState('');
+  const [profileError,setProfileError]=useState('');
+  const revision=useRef(0),savedRevision=useRef(0);
+  const [editVersion,setEditVersion]=useState(0);
+  const saveQueue=useRef<Promise<boolean>>(Promise.resolve(true));
+  const latestUser=useRef(user);latestUser.current=user;
+  const saveCallback=useRef(onSaveProfile);saveCallback.current=onSaveProfile;
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [name, setName] = useState(user.name ?? '');
@@ -81,11 +78,7 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   const [weight, setWeight] = useState(user.weightKg ? weightText(user.weightKg,unit) : '');
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
   const [avatarPath, setAvatarPath] = useState(user.avatarPath);
-  const source = state.source;
   const initials = initialsFor(name);
-  const equipment = source?.equipment??[];
-  const equipmentSummary = FULL_GYM.every(item=>equipment.includes(item))?'full gym':equipment.length?equipment.map(equipmentLabel).join(', ').toLowerCase():'bodyweight';
-  const limits = [...(source?.limitations.map(limitationLabel)??[]),...(source?.routine?.limitationNote?.trim()?[source.routine.limitationNote.trim()]:[])].join(' · ')||'none';
   const summary = (() => {
     const done = state.sessions.filter(session => session.status === 'committed'
       && session.exercises.some(entry => entry.sets.some(set => set.status === 'completed' && (set.result?.completedReps ?? 0) > 0)));
@@ -104,9 +97,9 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
     const bestName = best ? catalog.find(item => item.id === best.exerciseId)?.name : undefined;
     return { workouts: done.length, volume, streak, best: best && bestName ? { name: bestName, kg: best.actualLoadKg ?? best.prescribedLoadKg } : null };
   })();
-  const trainingGoal = source?.routine?.focus?.replaceAll('_',' ')??(source?goalLabel(source.goal):'—');
 
   useEffect(() => {
+    if(editingProfile || revision.current!==savedRevision.current)return;
     setName(user.name ?? '');
     setSex(user.sex);
     setExperience(user.experienceLevel);
@@ -118,6 +111,8 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
   }, [user,unit]);
 
   const openProfileEditor = () => {
+    if(revision.current!==savedRevision.current){setEditingProfile(true);return;}
+    setProfileStatus('');setProfileError('');
     setName(user.name ?? '');
     setSex(user.sex);
     setExperience(user.experienceLevel);
@@ -129,23 +124,35 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
     setEditingProfile(true);
   };
 
-  const saveProfile = async () => {
-    const ageValue = Number.parseInt(age, 10);
-    const heightValue = Number.parseInt(height, 10);
-    const weightValue = weight.trim() ? user.weightKg!=null&&weight===weightText(user.weightKg,unit)?user.weightKg:toKg(Number(weight),unit) : undefined;
-    if (!name.trim()) { Alert.alert('Name required', 'Enter the name you want shown in the app.'); return; }
-    if (!Number.isFinite(ageValue) || ageValue < 13 || ageValue > 100) { Alert.alert('Check age', 'Age must be between 13 and 100.'); return; }
-    if (!Number.isFinite(heightValue) || heightValue < 100 || heightValue > 250) { Alert.alert('Check height', 'Height must be between 100 and 250 cm.'); return; }
-    if (weightValue !== undefined && (!Number.isFinite(weightValue) || weightValue < 25 || weightValue > 400)) { Alert.alert('Check weight', `Enter a weight between ${weightText(25,unit)} and ${weightText(400,unit)} ${unit}.`); return; }
-    setSavingProfile(true);
-    try {
-      await onSaveProfile({ ...user, name: name.trim(), sex, experienceLevel: experience, age: ageValue, heightCm: heightValue, weightKg: weightValue, avatarUrl, avatarPath });
-      setEditingProfile(false);
-    } catch (error: any) {
-      Alert.alert('Profile not saved', error?.message ?? 'Try again.');
-    } finally {
-      setSavingProfile(false);
-    }
+  const changed=<T,>(setter:(value:T)=>void)=>(value:T)=>{revision.current+=1;setEditVersion(revision.current);setProfileError('');setProfileStatus('Saving…');setter(value);};
+  const persistProfile = ():Promise<boolean> => {
+    if(revision.current===savedRevision.current)return Promise.resolve(true);
+    const version=revision.current;
+    const ageValue=Number(age),heightValue=Number(height);
+    const weightValue=weight.trim()?latestUser.current.weightKg!=null&&weight===weightText(latestUser.current.weightKg,unit)?latestUser.current.weightKg:toKg(Number(weight),unit):undefined;
+    const error=!name.trim()?'Enter your name.':!Number.isInteger(ageValue)||ageValue<13||ageValue>100?'Age must be between 13 and 100.':!Number.isInteger(heightValue)||heightValue<100||heightValue>250?'Height must be between 100 and 250 cm.':weightValue!==undefined&&(!Number.isFinite(weightValue)||weightValue<25||weightValue>400)?`Enter a weight between ${weightText(25,unit)} and ${weightText(400,unit)} ${unit}.`:'';
+    if(error){setProfileError(error);setProfileStatus('');return Promise.resolve(false);}
+    const patch={name:name.trim(),sex,experienceLevel:experience,age:ageValue,heightCm:heightValue,weightKg:weightValue,avatarUrl,avatarPath};
+    saveQueue.current=saveQueue.current.then(async()=>{
+      if(version<=savedRevision.current)return true;
+      try{
+        await saveCallback.current({...latestUser.current,...patch});
+        savedRevision.current=version;
+        if(revision.current===version){setProfileStatus('Saved');setProfileError('');}
+        return true;
+      }catch(problem){setProfileStatus('');setProfileError(problem instanceof Error?problem.message:'Could not save profile. Edit a field or close to retry.');return false;}
+    });
+    return saveQueue.current;
+  };
+  useEffect(()=>{
+    if(revision.current===savedRevision.current)return;
+    const timer=setTimeout(()=>void persistProfile(),600);
+    return()=>clearTimeout(timer);
+  },[editVersion,name,age,height,weight,sex,experience,avatarUrl,avatarPath,unit]);
+  const closeProfileEditor=async()=>{
+    if(uploadingAvatar)return;
+    const version=revision.current;
+    if(await persistProfile()&&version===revision.current)setEditingProfile(false);
   };
 
   const chooseAvatar = async () => {
@@ -162,8 +169,8 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
       if (result.canceled || !uri) return;
       setUploadingAvatar(true);
       const uploaded = await uploadUserAvatar(user.id, uri);
-      setAvatarPath(uploaded.path);
-      setAvatarUrl(uploaded.signedUrl);
+      changed(setAvatarPath)(uploaded.path);
+      changed(setAvatarUrl)(uploaded.signedUrl);
     } catch (error: any) {
       Alert.alert('Photo not updated', error?.message ?? 'Try again.');
     } finally {
@@ -221,18 +228,8 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
 
         <View style={styles.section}>
           <PlanText kind="overline">TRAINING</PlanText>
+          {routineControls}
           <View style={styles.card}>
-            <Pressable accessibilityRole="button" accessibilityLabel="Edit training preferences" onPress={onEditSource} style={({pressed})=>[pressed&&styles.pressed]}>
-              <View style={styles.trainingHead}>
-                <Txt variant="caption" tone="secondary" style={styles.flex}>Your plan</Txt>
-                <Txt variant="caption" tone="accent">Edit</Txt>
-                <Ionicons name="chevron-forward" size={16} color={colors.accent}/>
-              </View>
-              <Fact label="Goal" value={trainingGoal}/>
-              <Fact label="Schedule" value={source?`${source.daysPerWeek} days · ${source.sessionMinutes} min`:'—'}/>
-              <Fact label="Equipment" value={source?equipmentSummary:'—'}/>
-              <Fact label="Limits" value={source?limits:'—'}/>
-            </Pressable>
             <View style={[styles.fact, styles.factLast]}>
               <Txt variant="caption" tone="muted" style={styles.factLabel}>Units</Txt>
               <View style={styles.flex}/>
@@ -262,26 +259,26 @@ export const AccountSurface = ({ user, state, sync, onEditSource, onSaveProfile,
         </Pressable>
       </ScrollView>
 
-      <Sheet visible={editingProfile} onClose={() => setEditingProfile(false)} title="Edit profile">
+      <Sheet visible={editingProfile} onClose={() => void closeProfileEditor()} title="Edit profile">
         <View style={styles.avatarEditor}>
           <View style={styles.avatarLarge}>
             {avatarUrl ? <Image source={{ uri: avatarUrl }} style={styles.avatarImage} /> : <Txt variant="title" tone="accent">{initials}</Txt>}
           </View>
           <Button label={uploadingAvatar ? 'Uploading…' : 'Change photo'} variant="ghost" disabled={uploadingAvatar} onPress={() => void chooseAvatar()} />
         </View>
-        <Field label="name" value={name} onChangeText={setName} />
-        <Field label="age" value={age} onChangeText={(value) => setAge(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix="years" />
-        <Field label="height" value={height} onChangeText={(value) => setHeight(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix={unit === 'lb' && Number(height) >= 100 ? `cm · ${heightText(Number(height), 'lb')}` : 'cm'} />
-        <Field label="weight" value={weight} onChangeText={(value) => setWeight(value.replace(/[^0-9.]/g, '').slice(0, 6))} keyboardType="decimal-pad" suffix={unit} />
+        <Field label="name" value={name} onChangeText={changed(setName)} />
+        <Field label="age" value={age} onChangeText={(value) => changed(setAge)(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix="years" />
+        <Field label="height" value={height} onChangeText={(value) => changed(setHeight)(value.replace(/[^0-9]/g, '').slice(0, 3))} keyboardType="number-pad" suffix={unit === 'lb' && Number(height) >= 100 ? `cm · ${heightText(Number(height), 'lb')}` : 'cm'} />
+        <Field label="weight" value={weight} onChangeText={(value) => changed(setWeight)(value.replace(/[^0-9.]/g, '').slice(0, 6))} keyboardType="decimal-pad" suffix={unit} />
         <Txt variant="label" tone="muted">SEX</Txt>
         <View style={styles.choices}>
-          {(['male', 'female', 'other'] as const).map((value) => <Choice key={value} compact code label={value} selected={sex === value} onPress={() => setSex(value)} />)}
+          {(['male', 'female', 'other'] as const).map((value) => <Choice key={value} compact code label={value} selected={sex === value} onPress={() => changed(setSex)(value)} />)}
         </View>
         <Txt variant="label" tone="muted">EXPERIENCE</Txt>
         <View style={styles.choices}>
-          {(['beginner', 'intermediate', 'advanced'] as const).map((value) => <Choice key={value} compact code label={value} selected={experience === value} onPress={() => setExperience(value)} />)}
+          {(['beginner', 'intermediate', 'advanced'] as const).map((value) => <Choice key={value} compact code label={value} selected={experience === value} onPress={() => changed(setExperience)(value)} />)}
         </View>
-        <Button label="Save profile" loading={savingProfile} onPress={() => void saveProfile()} />
+        {profileError?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{profileError}</Txt>:profileStatus?<Txt variant="caption" tone="muted" accessibilityLiveRegion="polite">{profileStatus}</Txt>:null}
       </Sheet>
     </View>
   );
