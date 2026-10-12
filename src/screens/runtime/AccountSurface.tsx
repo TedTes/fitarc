@@ -20,6 +20,7 @@ type Props = {
   sync: SyncStatus;
   routineControls: ReactNode;
   onUseRoutine:(id:string)=>string|undefined;
+  onRenameRoutine:(id:string,name:string)=>string|undefined;
   onSaveProfile: (profile: User) => void | Promise<void>;
   onLogout: () => void | Promise<void>;
   onDeleteAccount: () => void | Promise<void>;
@@ -61,7 +62,7 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
   </View>
 );
 
-export const AccountSurface = ({ user, active = true, state, sync, routineControls, onUseRoutine, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
+export const AccountSurface = ({ user, active = true, state, sync, routineControls, onUseRoutine, onRenameRoutine, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const {unit,save:saveUnits}=useWeightSettings();
   const [routinesOpen, setRoutinesOpen] = useState(false);
   useEffect(() => {
@@ -274,7 +275,7 @@ export const AccountSurface = ({ user, active = true, state, sync, routineContro
           <Txt variant="caption" tone="danger">{deleting?'Deleting account…':'Delete account'}</Txt>
         </Pressable>
       </ScrollView>
-      {routinesOpen ? <SavedRoutines state={state} onUseRoutine={onUseRoutine} onBack={() => setRoutinesOpen(false)}/> : null}
+      {routinesOpen ? <SavedRoutines state={state} onUseRoutine={onUseRoutine} onRenameRoutine={onRenameRoutine} onBack={() => setRoutinesOpen(false)}/> : null}
 
       <Sheet visible={editingProfile} onClose={() => void closeProfileEditor()} title="Edit profile">
         <View style={styles.avatarEditor}>

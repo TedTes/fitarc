@@ -52,6 +52,7 @@ export type RoutineSetDefaults = Pick<RoutineExercise, 'sets' | 'minReps' | 'max
 export type RoutineFocus = 'build_muscle' | 'lose_fat' | 'strength' | 'maintain';
 export type RoutineWorkout = { id: string; name: string; targetMuscles?: Muscle[]; reuseSelection?: boolean; exercises: RoutineExercise[] };
 export type RoutineDefinition = {
+  name?: string;
   /** Omitted means fixed workouts, preserving existing routines. */
   selectionMode?: 'fixed' | 'pools';
   focus?: RoutineFocus;

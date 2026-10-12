@@ -11,6 +11,7 @@ export const defaultRoutine = (): RoutineDefinition => ({ split: 'auto', workout
 
 /** Convert only when the user explicitly edits a legacy/generated routine. No historical rewrite. */
 export const editableRoutine = (plan: TrainingBlock): RoutineDefinition => ({
+  name: plan.preferences?.routine?.name,
   selectionMode:plan.preferences?.routine?.selectionMode,
   focus:plan.preferences?.routine?.focus,
   setDefaults:plan.preferences?.routine?.setDefaults,

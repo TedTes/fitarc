@@ -2,6 +2,7 @@ import type { RuntimeState, TrainingBlock } from './types';
 import { compileTrainingBlock } from './runtimeService';
 import { editableRoutine } from './routine';
 import { localDate } from './planDates';
+import { createRuntimeId } from './id';
 
 /** Restore choices as a fresh version; old plans and logged sessions remain immutable. */
 export function useSavedRoutine(state:RuntimeState,planId:string):RuntimeState{
@@ -32,4 +33,26 @@ export function savedRoutines(state: RuntimeState): TrainingBlock[] {
     seen.add(key);
     return true;
   });
+}
+
+export const routineName = (plan: TrainingBlock): string =>
+  plan.preferences?.routine?.name?.trim() || plan.slots.map(slot => slot.label).join(' / ');
+
+/** A name edit is a new snapshot, preserving every previously logged workout. */
+export function renameSavedRoutine(state: RuntimeState, planId: string, value: string): RuntimeState {
+  const name = value.trim();
+  if (!name || name.length > 80) throw Error('Enter a routine name of 1–80 characters.');
+  const plans = [...new Map([...(state.blockHistory ?? []), ...(state.block ? [state.block] : [])].map(plan => [plan.id, plan])).values()];
+  const plan = plans.find(item => item.id === planId);
+  if (!plan?.preferences || plan.kind === 'workout') throw Error('This routine is unavailable.');
+  if (name === routineName(plan)) return state;
+  const active = state.block?.id === planId;
+  if (active && state.activeSession) throw Error('Finish your active workout before renaming this routine.');
+  const routine = { ...(plan.preferences.routine ?? editableRoutine(plan)), name };
+  const previous = active && state.source ? state.source : plan.preferences;
+  const preferences = { ...previous, version: previous.version + 1, routine };
+  const renamed = { ...plan, id: createRuntimeId(), version: Math.max(...plans.map(item => item.version)) + 1,
+    createdAt: new Date().toISOString(), preferences, sourceVersion: preferences.version };
+  return { ...state, blockHistory: [...plans, renamed],
+    ...(active ? { block: renamed, source: preferences } : {}) };
 }

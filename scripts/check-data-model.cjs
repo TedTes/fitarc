@@ -185,6 +185,14 @@ async function main() {
   assert.deepEqual(ownedRoundTrip.block.catalog,owned.block.catalog);
   assert.equal((await db.query("select count(*)::int as n from fitarc.fitarc_exercise_catalog where id='user_private_curl'")).rows[0].n,0);
   assert.equal(ownedRoundTrip.sessions.filter(x=>x.status==='committed').length,replanned.sessions.filter(x=>x.status==='committed').length);
+  const {renameSavedRoutine,routineName,savedRoutines}=require('../src/runtime/savedRoutines.ts');
+  const named=renameSavedRoutine(owned,replanned.block.id,'My custom routine');
+  await save(named,8);
+  const namedRoundTrip=(await read()).state;
+  assert(savedRoutines(namedRoundTrip).some(plan=>routineName(plan)==='My custom routine'));
+  assert.equal(namedRoundTrip.block.id,owned.block.id);
+  assert.deepEqual(namedRoundTrip.sessions,owned.sessions);
+  assert.deepEqual(namedRoundTrip.blockHistory.find(plan=>plan.id===replanned.block.id),replanned.block);
   await db.close();
   // Separately verify the entire active migration chain against an empty app schema.
   const freshDb = await PGlite.create();
