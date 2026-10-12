@@ -7,7 +7,7 @@ import { ExerciseDetailsSheet } from './ExerciseMuscles';
 import { MuscleMap } from './MuscleMap';
 import { preferredTargetView } from './muscleTargeting';
 import { muscleList, slotPlain } from './copy';
-import { Txt } from './ui';
+import { IconButton, Txt } from './ui';
 import { StartSessionCard } from './StartSessionCard';
 import { colors, space } from './theme';
 import { CompletedWorkoutMuscleMap, SessionMuscleChips, type TodayStats } from './CompletedWorkoutMuscleMap';
@@ -36,10 +36,7 @@ export const NextWorkoutPreview=({workout,today,stats,celebrationId,onAddExercis
     <ScrollView contentContainerStyle={s.page}>
       <View style={s.header}>
         <Txt variant="title" style={s.title}>Today</Txt>
-        <Pressable accessibilityRole="button" accessibilityLabel="Add exercise to next session" onPress={onAddExercise} hitSlop={10}
-          style={({pressed})=>[s.add,pressed&&s.pressed]}>
-          <Ionicons name="add" size={18} color={colors.accent}/><Txt variant="label" tone="accent">ADD</Txt>
-        </Pressable>
+        <IconButton icon="add" label="Add exercise to next session" onPress={onAddExercise}/>
       </View>
       {workout.finishedToday?<CompletedWorkoutMuscleMap workout={workout} stats={stats} celebrationId={celebrationId} selected={selected} onSelect={toggleMuscle}/>:null}
       <StartSessionCard title={group||'Your workout'} exercises={workout.exercises.length}
@@ -57,4 +54,4 @@ export const NextWorkoutPreview=({workout,today,stats,celebrationId,onAddExercis
     <ExerciseDetailsSheet exercise={inspected} onClose={()=>setInspected(null)}/>
   </View>;
 };
-const s=StyleSheet.create({root:{flex:1},header:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:12},title:{flex:1},page:{padding:space.lg,gap:10},add:{flexDirection:'row',alignItems:'center',gap:2,paddingHorizontal:space.sm,height:30,borderRadius:15,backgroundColor:colors.accentSoft},pressed:{opacity:0.7},chips:{flexDirection:'row',flexWrap:'wrap',gap:6},row:{flexDirection:'row',alignItems:'center',gap:12,paddingTop:12,borderTopWidth:1,borderColor:colors.border},muscle:{width:48,height:60,overflow:'hidden',borderRadius:10},copy:{flex:1,gap:4}});
+const s=StyleSheet.create({root:{flex:1},header:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:12},title:{flex:1},page:{padding:space.lg,gap:10},chips:{flexDirection:'row',flexWrap:'wrap',gap:6},row:{flexDirection:'row',alignItems:'center',gap:12,paddingTop:12,borderTopWidth:1,borderColor:colors.border},muscle:{width:48,height:60,overflow:'hidden',borderRadius:10},copy:{flex:1,gap:4}});

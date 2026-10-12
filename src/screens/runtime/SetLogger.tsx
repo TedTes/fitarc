@@ -1,3 +1,4 @@
+import { matchesGroup, workoutGroup } from '../../runtime/exercisePools';
 import { removeSessionExercise, restoreSessionExercise } from '../../runtime/removeExercise';
 import { SwipeDeleteCard } from './SwipeDeleteCard';
 import { useWeightSettings, WeightRangeSheet } from './WeightSettings';
@@ -199,12 +200,14 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   );
 
   const finishEarly = () => {
-    if(!results.length)return;
+    if(!results.length){notify({tone:'info',title:'Log a set before completing the workout'});return;}
     report(apply(current=>commitRuntimeSession(skipRemainingRuntimeSets(current))),()=>{
       setSheet(null);setRest(null);
     });
   };
 
+  const sessionSlot=state.block?.slots.find(slot=>slot.id===session.slotId);
+  const sessionGroup=workoutGroup(sessionSlot?.label??'');
   const candidates = sheet === 'swap' ? getSwapCandidates(state, exercise.id, 4) : [];
   const closeSheet = () => setSheet(sheet === 'swapDetails' ? 'swap' : sheet === 'swap' ? 'menu' : null);
   const sheetTitle = sheet === 'add' ? 'Add exercise' : sheet === 'swap' ? `Swap ${exercise.name}` : sheet === 'swapDetails' && swapPreview ? swapPreview.name : exercise.name;
@@ -220,14 +223,12 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     <View style={styles.workoutHeader}>
       <View style={styles.titleRow}>
         <Txt variant="heading" style={styles.flex}>Today’s workout</Txt>
-        {startedAt?<Pressable accessibilityRole="button" accessibilityLabel="Finish workout" disabled={!results.length} onPress={finishEarly} style={styles.finish}>
-          <Txt variant="caption" style={styles.finishText}>Finish</Txt>
-        </Pressable>:<IconButton icon="add" label="Add exercise" onPress={()=>setSheet('add')}/>}
+        <IconButton icon="add" label="Add exercise" onPress={()=>setSheet('add')}/>
       </View>
       <Txt variant="mono" tone="muted" style={styles.meta}>
         <Txt variant="mono" style={[styles.meta,{color:startedAt?colors.success:colors.accent}]}>{startedAt?`● ${formatTime(elapsed).padStart(5,'0')} elapsed`:'Ready'}</Txt>{` · ${completed} of ${allSets.length} sets`}
       </Txt>
-      {state.source?.routine?.selectionMode==='pools'?<Txt variant="caption" tone="secondary">{state.block?.slots.find(slot=>slot.id===session.slotId)?.label} · Changes here are for today</Txt>:null}
+      {state.source?.routine?.selectionMode==='pools'?<Txt variant="caption" tone="secondary">{state.block?.slots.find(slot=>slot.id===session.slotId)?.label}</Txt>:null}
       <View style={styles.progressRow} accessibilityLabel={`${completed} of ${allSets.length} sets completed`}>
         {allSets.map(item=><View key={item.id} style={[styles.segment,item.status==='completed'&&styles.segmentDone]}/>)}
       </View>
@@ -251,7 +252,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     </ScrollView>
     {chosen?<>
       <View style={[styles.activeCard,{maxHeight:upcoming.length||finished.length?'78%':'100%'}]} testID="active-exercise-card">
-        <SwipeDeleteCard key={`header-${entry.id}`} label={exercise.name} onDelete={()=>deleteExercise(entry.id)}><View style={styles.activeHeader}>
+        <SwipeDeleteCard key={`header-${entry.id}`} label={exercise.name} onDelete={()=>deleteExercise(entry.id)} onComplete={finishEarly}><View style={styles.activeHeader}>
           <View style={styles.flex}><ExerciseSectionHeader entry={entry} active={true} ready={!startedAt} expanded onPress={()=>selectExercise(null)} onMusclePress={()=>setInspectedExercise(exercise)}/></View>
           <Pressable accessibilityRole="button" accessibilityLabel="Exercise options" onPress={()=>setSheet('menu')} style={styles.smallAction}><Ionicons name="ellipsis-horizontal" size={18} color={colors.textMuted}/></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Collapse current exercise" onPress={()=>selectExercise(null)} style={styles.smallAction}><Ionicons name="chevron-up" size={16} color={colors.textMuted}/></Pressable>
@@ -277,10 +278,11 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       {rangeOpen?<WeightRangeSheet exerciseId={exercise.id} name={exercise.name} onClose={applied=>{setRangeOpen(false);if(applied)setDrafts(previous=>{const next={...previous};entry.sets.filter(set=>set.status==='pending').forEach(set=>{if(next[set.id]){const {load,...rest}=next[set.id];next[set.id]=rest;}});return next;});}}/>:null}
       <ExerciseDetailsSheet exercise={inspectedExercise} onClose={()=>setInspectedExercise(null)}/>
       {sheet==='add'?<TodayExercisePicker
+        title={sessionGroup?`Add to ${sessionGroup.name}`:'Add exercise'}
         initialMuscles={state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.targetMuscles:undefined}
-        catalog={(state.block?.catalog ?? state.catalog ?? []).filter(x=>!session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq))).sort((a,b)=>{const pool=state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.plannedExercises:[];return Number(pool?.some(p=>p.exerciseId===b.id))-Number(pool?.some(p=>p.exerciseId===a.id));})}
+        catalog={(state.block?.catalog ?? state.catalog ?? []).filter(x=>(!sessionGroup||matchesGroup(x,sessionGroup)) && !session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq))).sort((a,b)=>{const pool=state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.plannedExercises:[];return Number(pool?.some(p=>p.exerciseId===b.id))-Number(pool?.some(p=>p.exerciseId===a.id));})}
         onClose={closeSheet}
-        onAdd={exercise=>report(apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${exercise.name} added for today`});})}
+        onAdd={exercise=>report(apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${exercise.name} added`});})}
       />:null}
       <Sheet visible={sheet !== null && sheet !== 'add'} onClose={closeSheet} title={sheetTitle}>
         {sheet === 'menu' ? <>
@@ -341,7 +343,6 @@ const OptionRow = ({ icon, title, detail, onPress, tone, disabled }: {
 const styles = StyleSheet.create({
   flex:{flex:1,minWidth:0},page:{flex:1,minHeight:0,paddingHorizontal:16,paddingTop:8,paddingBottom:8,gap:10},
   workoutHeader:{gap:7},titleRow:{flexDirection:'row',alignItems:'center',gap:8,minHeight:36},
-  finish:{borderWidth:1,borderColor:colors.borderStrong,borderRadius:20,paddingHorizontal:14,minHeight:36,justifyContent:'center'},finishText:{fontSize:12},
   meta:{fontSize:10,lineHeight:15,letterSpacing:0.3},progressRow:{flexDirection:'row',gap:3},segment:{flex:1,height:4,borderRadius:3,backgroundColor:colors.border},segmentDone:{backgroundColor:colors.success},
   upcoming:{flexShrink:1,gap:5},queue:{gap:6},queueCardContent:{paddingHorizontal:8,paddingVertical:7},queueCard:{borderWidth:1,borderColor:colors.border,borderRadius:12,backgroundColor:colors.surface},
   workoutBody:{flex:1,minHeight:0,gap:10},setList:{flexGrow:0,flexShrink:1,minHeight:0},

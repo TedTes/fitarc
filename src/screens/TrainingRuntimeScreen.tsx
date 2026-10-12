@@ -265,12 +265,12 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'solver' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'solver' && styles.surfaceActive, { opacity: surfaceOpacity.solver, transform: [{ translateX: surfaceOffset.solver }] }]}
         >
-          {line}
           {hasTraining ? <TodaySurface
             state={state} apply={apply} notify={notify} active={surface === 'solver'}
             onDockChange={setWorkoutDock} onNewWorkout={()=>setQuickWorkoutOpen(true)}
             onOpenSource={() => { go('account'); }} onOpenWeek={() => go('week')}
           /> : <EmptyToday onAddRoutine={()=>{go('account');}} onLogWorkout={()=>setQuickWorkoutOpen(true)} />}
+          {line?<View pointerEvents="box-none" style={styles.notificationOverlay}><View style={styles.notificationCard}>{line}</View></View>:null}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'block' ? 'auto' : 'none'}
@@ -392,6 +392,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   root: { flex: 1, backgroundColor: colors.ground },
   center: { flex: 1, alignItems: 'stretch', justifyContent: 'center', gap: space.lg, padding: space.xl, backgroundColor: colors.ground },
+  notificationOverlay: { position: 'absolute', top: 8, left: 12, right: 12, zIndex: 20 },
+  notificationCard: { backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.border, overflow: 'hidden', elevation: 8, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
   surfaceStage: { flex: 1, position: 'relative', overflow: 'hidden' },
   surfaceLayer: { ...StyleSheet.absoluteFillObject },
   surfaceActive: { zIndex: 1 },
