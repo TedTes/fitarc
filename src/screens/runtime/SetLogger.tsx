@@ -1,3 +1,5 @@
+import { removeSessionExercise, restoreSessionExercise } from '../../runtime/removeExercise';
+import { SwipeDeleteCard } from './SwipeDeleteCard';
 import { useWeightSettings, WeightRangeSheet } from './WeightSettings';
 import { toKg, weightText } from '../../runtime/weights';
 import { exerciseAlternatives } from '../../runtime/recommendations';
@@ -6,12 +8,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  addRuntimeExercise, correctRuntimeSet, commitRuntimeSession, discardRuntimeSession, getSwapCandidates, recordRuntimeSet, reorderRuntimeExercises, skipRemainingRuntimeSets, skipRuntimeExercise,
+  addRuntimeExercise, correctRuntimeSet, commitRuntimeSession, getSwapCandidates, recordRuntimeSet, skipRemainingRuntimeSets, skipRuntimeExercise,
   restSecondsFor, substituteRuntimeExercise, undoLastRuntimeSet,
 } from '../../runtime';
 import type { ExerciseDefinition, RuntimeState, SessionPrescription, SetPrescription } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
-import { Button, Divider, IconButton, Sheet, Txt } from './ui';
+import { Button, IconButton, Sheet, Txt } from './ui';
 import { describeRuntimeError, muscleList, setsWord } from './copy';
 import { ExerciseDetailsSheet, ExerciseMuscleDetails, ExerciseTargetPreview } from './ExerciseMuscles';
 import { useLayoutMotion } from './useLayoutMotion';
@@ -59,7 +61,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const [selectedExerciseId,setSelectedExerciseId]=useState<string|null|undefined>(undefined);
   const [drafts,setDrafts]=useState<Record<string,Partial<SetRowValues>>>({});
   const [submitting,setSubmitting]=useState(false);
-  const [sheet,setSheet]=useState<null|'menu'|'swap'|'details'|'swapDetails'|'add'|'order'>(null);
+  const [sheet,setSheet]=useState<null|'menu'|'swap'|'details'|'swapDetails'|'add'>(null);
   const [inspectedExercise,setInspectedExercise]=useState<ExerciseDefinition|null>(null);
   const [swapPreview,setSwapPreview]=useState<ExerciseDefinition|null>(null);
   const [clockNow,setClockNow]=useState(Date.now);
@@ -71,6 +73,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     const until=Date.parse(lastResult.completedAt)+duration*1000;
     return until>Date.now()?{until,durationSeconds:duration,exerciseId:lift.exercise.id}:null;
   });
+  const currentApply=useRef(apply); currentApply.current=apply;
   const confirming=useRef(false);
   const previousUnit=useRef(unit);
   useEffect(()=>{
@@ -113,13 +116,17 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     return false;
   };
 
-  const moveExercise = (exerciseId: string, direction: -1 | 1) => {
-    const ids = session.exercises.map((item) => item.exercise.id);
-    const from = ids.indexOf(exerciseId);
-    const to = from + direction;
-    if (from < 0 || to < 0 || to >= ids.length) return;
-    [ids[from], ids[to]] = [ids[to], ids[from]];
-    report(apply((current) => reorderRuntimeExercises(current, ids)), () => setSelectedExerciseId(exerciseId));
+  const deleteExercise = (entryId: string) => {
+    const index=session.exercises.findIndex(item=>item.id===entryId);
+    if(index<0)return;
+    const removed={sessionId:session.id,index,entry:session.exercises[index]};
+    report(currentApply.current(current=>removeSessionExercise(current,entryId)),()=>{
+      setRest(current=>current?.exerciseId===removed.entry.exercise.id?null:current);
+      setSelectedExerciseId(undefined);
+      const logged=removed.entry.sets.filter(set=>set.result).length;
+      notify({tone:'info',title:`${removed.entry.exercise.name} deleted`,message:logged?`${logged} logged sets removed from today.`:undefined,
+        action:{label:'Undo',run:()=>{report(currentApply.current(current=>restoreSessionExercise(current,removed)),()=>setSelectedExerciseId(removed.entry.exercise.id));}}});
+    });
   };
 
   const undoSet = () => {
@@ -198,20 +205,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     });
   };
 
-  const discard = () => Alert.alert(
-    'Discard this session?',
-    `Rolls back the ${setsWord(results.length)} you logged and restores your previous working weights. Can't be undone.`,
-    [{ text: 'Keep session', style: 'cancel' }, {
-      text: 'Discard session', style: 'destructive', onPress: () => {
-        setSheet(null);
-        report(apply(discardRuntimeSession), () => notify({ tone: 'info', title: 'discarded → working weights restored' }));
-      },
-    }]
-  );
-
   const candidates = sheet === 'swap' ? getSwapCandidates(state, exercise.id, 4) : [];
-  const closeSheet = () => setSheet(sheet === 'swapDetails' ? 'swap' : sheet === 'swap' || sheet === 'order' ? 'menu' : null);
-  const sheetTitle = sheet === 'add' ? 'Add exercise' : sheet === 'order' ? 'Exercise order' : sheet === 'swap' ? `Swap ${exercise.name}` : sheet === 'swapDetails' && swapPreview ? swapPreview.name : exercise.name;
+  const closeSheet = () => setSheet(sheet === 'swapDetails' ? 'swap' : sheet === 'swap' ? 'menu' : null);
+  const sheetTitle = sheet === 'add' ? 'Add exercise' : sheet === 'swap' ? `Swap ${exercise.name}` : sheet === 'swapDetails' && swapPreview ? swapPreview.name : exercise.name;
   const allSets=session.exercises.flatMap(item=>item.sets);
   const completed=allSets.filter(item=>item.status==='completed').length;
   const startedAt=session.startedAt??results[0]?.completedAt;
@@ -241,25 +237,25 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     {upcoming.length?<View style={styles.upcoming}>
       {chosen&&upcoming.length?<Txt variant="label" tone="muted" style={styles.meta}>UP NEXT</Txt>:null}
       <View style={styles.queue}>
-        {upcoming.map(item=><View key={item.id} style={styles.queueCard}>
+        {upcoming.map(item=><SwipeDeleteCard key={item.id} label={item.exercise.name} onDelete={()=>deleteExercise(item.id)} style={styles.queueCard} contentStyle={styles.queueCardContent}>
           <ExerciseSectionHeader entry={item} active={false} expanded={false} onPress={()=>selectExercise(item.exercise.id)} onMusclePress={()=>setInspectedExercise(item.exercise)}/>
-        </View>)}
+        </SwipeDeleteCard>)}
       </View>
     </View>:null}
     {finished.length?<View style={styles.completedSection}>
       <Txt variant="label" tone="muted" style={styles.meta}>COMPLETED · {finished.length}</Txt>
-      {finished.map(item=><View key={item.id} style={styles.queueCard}>
+      {finished.map(item=><SwipeDeleteCard key={item.id} label={item.exercise.name} onDelete={()=>deleteExercise(item.id)} style={styles.queueCard} contentStyle={styles.queueCardContent}>
         <ExerciseSectionHeader entry={item} active={false} expanded={false} onPress={()=>selectExercise(item.exercise.id)} onMusclePress={()=>setInspectedExercise(item.exercise)}/>
-      </View>)}
+      </SwipeDeleteCard>)}
     </View>:null}
     </ScrollView>
     {chosen?<>
       <View style={[styles.activeCard,{maxHeight:upcoming.length||finished.length?'78%':'100%'}]} testID="active-exercise-card">
-        <View style={styles.activeHeader}>
+        <SwipeDeleteCard key={`header-${entry.id}`} label={exercise.name} onDelete={()=>deleteExercise(entry.id)}><View style={styles.activeHeader}>
           <View style={styles.flex}><ExerciseSectionHeader entry={entry} active={true} ready={!startedAt} expanded onPress={()=>selectExercise(null)} onMusclePress={()=>setInspectedExercise(exercise)}/></View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Workout options" onPress={()=>setSheet('menu')} style={styles.smallAction}><Ionicons name="ellipsis-horizontal" size={18} color={colors.textMuted}/></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Exercise options" onPress={()=>setSheet('menu')} style={styles.smallAction}><Ionicons name="ellipsis-horizontal" size={18} color={colors.textMuted}/></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Collapse current exercise" onPress={()=>selectExercise(null)} style={styles.smallAction}><Ionicons name="chevron-up" size={16} color={colors.textMuted}/></Pressable>
-        </View>
+        </View></SwipeDeleteCard>
         <ScrollView key={entry.id} testID="active-set-list" style={styles.setList} contentContainerStyle={styles.historyContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
           <View style={styles.targets}>
             <View style={styles.targetCell}><Txt variant="label" tone="muted" style={styles.meta}>SETS</Txt><Txt variant="code">{entry.sets.length}</Txt></View>
@@ -288,23 +284,11 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       />:null}
       <Sheet visible={sheet !== null && sheet !== 'add'} onClose={closeSheet} title={sheetTitle}>
         {sheet === 'menu' ? <>
-        <Txt variant="label" tone="muted">this lift</Txt>
         <OptionRow icon="barbell-outline" title="Weight range" detail={ranges[exercise.id]?`${weightText(ranges[exercise.id].minKg,unit)}–${weightText(ranges[exercise.id].maxKg,unit)} ${unit}`:undefined} onPress={()=>{setSheet(null);setRangeOpen(true);}}/>
-        <OptionRow icon="swap-horizontal" title="Swap lift" onPress={() => setSheet('swap')} />
-        <OptionRow icon="reorder-three" title="Exercise order" onPress={() => setSheet('order')} />
+        <OptionRow icon="swap-horizontal" title="Swap exercise" onPress={() => setSheet('swap')} />
         <OptionRow icon="play-skip-forward" title="Skip exercise" onPress={skipExercise} />
         <OptionRow icon="bandage" tone="danger" title="Report pain" onPress={reportPain} />
-        <Divider />
-        <Txt variant="label" tone="muted">session · {results.length} logged · {progress.pending} pending</Txt>
-        <OptionRow icon="add" title="Add exercise for today" onPress={()=>setSheet('add')} />
-        <OptionRow icon="flag" title="Finish workout" disabled={results.length === 0} onPress={finishEarly} />
-        <OptionRow icon="trash" tone="danger" title="Discard session" onPress={discard} />
         </> : null}
-        {sheet === 'order' ? session.exercises.map((item, index) => <View key={item.id} style={styles.exerciseHeader}>
-          <Txt variant="caption" style={styles.flex}>{item.exercise.name}</Txt>
-          <IconButton icon="chevron-up" label={`Move ${item.exercise.name} earlier`} disabled={index === 0} onPress={() => moveExercise(item.exercise.id, -1)} />
-          <IconButton icon="chevron-down" label={`Move ${item.exercise.name} later`} disabled={index === session.exercises.length - 1} onPress={() => moveExercise(item.exercise.id, 1)} />
-        </View>) : null}
         {sheet === 'details' ? <ExerciseMuscleDetails key={exercise.id} exercise={exercise} reason={entry.reason} /> : null}
         {sheet === 'swap' ? <>
         <Txt variant="caption" tone="secondary">Compare muscle targets before choosing a replacement. Your logged sets stay.</Txt>
@@ -359,7 +343,7 @@ const styles = StyleSheet.create({
   workoutHeader:{gap:7},titleRow:{flexDirection:'row',alignItems:'center',gap:8,minHeight:36},
   finish:{borderWidth:1,borderColor:colors.borderStrong,borderRadius:20,paddingHorizontal:14,minHeight:36,justifyContent:'center'},finishText:{fontSize:12},
   meta:{fontSize:10,lineHeight:15,letterSpacing:0.3},progressRow:{flexDirection:'row',gap:3},segment:{flex:1,height:4,borderRadius:3,backgroundColor:colors.border},segmentDone:{backgroundColor:colors.success},
-  upcoming:{flexShrink:1,gap:5},queue:{gap:6},queueCard:{paddingHorizontal:8,paddingVertical:7,borderWidth:1,borderColor:colors.border,borderRadius:12,backgroundColor:colors.surface},
+  upcoming:{flexShrink:1,gap:5},queue:{gap:6},queueCardContent:{paddingHorizontal:8,paddingVertical:7},queueCard:{borderWidth:1,borderColor:colors.border,borderRadius:12,backgroundColor:colors.surface},
   workoutBody:{flex:1,minHeight:0,gap:10},setList:{flexGrow:0,flexShrink:1,minHeight:0},
   activeCard:{flexShrink:1,minHeight:0,overflow:'hidden',borderWidth:1,borderColor:colors.borderStrong,borderRadius:16,padding:12,backgroundColor:colors.surface},
   workoutContentScroll:{flex:1,minHeight:0},workoutContent:{gap:10},
