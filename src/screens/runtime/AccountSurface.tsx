@@ -61,7 +61,6 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
 export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const {unit,save:saveUnits}=useWeightSettings();
   const [editingProfile, setEditingProfile] = useState(false);
-  const [profileStatus,setProfileStatus]=useState('');
   const [profileError,setProfileError]=useState('');
   const revision=useRef(0),savedRevision=useRef(0);
   const [editVersion,setEditVersion]=useState(0);
@@ -112,7 +111,7 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
 
   const openProfileEditor = () => {
     if(revision.current!==savedRevision.current){setEditingProfile(true);return;}
-    setProfileStatus('');setProfileError('');
+    setProfileError('');
     setName(user.name ?? '');
     setSex(user.sex);
     setExperience(user.experienceLevel);
@@ -124,23 +123,23 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
     setEditingProfile(true);
   };
 
-  const changed=<T,>(setter:(value:T)=>void)=>(value:T)=>{revision.current+=1;setEditVersion(revision.current);setProfileError('');setProfileStatus('Saving…');setter(value);};
+  const changed=<T,>(setter:(value:T)=>void)=>(value:T)=>{revision.current+=1;setEditVersion(revision.current);setProfileError('');setter(value);};
   const persistProfile = ():Promise<boolean> => {
     if(revision.current===savedRevision.current)return Promise.resolve(true);
     const version=revision.current;
     const ageValue=Number(age),heightValue=Number(height);
     const weightValue=weight.trim()?latestUser.current.weightKg!=null&&weight===weightText(latestUser.current.weightKg,unit)?latestUser.current.weightKg:toKg(Number(weight),unit):undefined;
     const error=!name.trim()?'Enter your name.':!Number.isInteger(ageValue)||ageValue<13||ageValue>100?'Age must be between 13 and 100.':!Number.isInteger(heightValue)||heightValue<100||heightValue>250?'Height must be between 100 and 250 cm.':weightValue!==undefined&&(!Number.isFinite(weightValue)||weightValue<25||weightValue>400)?`Enter a weight between ${weightText(25,unit)} and ${weightText(400,unit)} ${unit}.`:'';
-    if(error){setProfileError(error);setProfileStatus('');return Promise.resolve(false);}
+    if(error){setProfileError(error);return Promise.resolve(false);}
     const patch={name:name.trim(),sex,experienceLevel:experience,age:ageValue,heightCm:heightValue,weightKg:weightValue,avatarUrl,avatarPath};
     saveQueue.current=saveQueue.current.then(async()=>{
       if(version<=savedRevision.current)return true;
       try{
         await saveCallback.current({...latestUser.current,...patch});
         savedRevision.current=version;
-        if(revision.current===version){setProfileStatus('Saved');setProfileError('');}
+        if(revision.current===version){setProfileError('');}
         return true;
-      }catch(problem){setProfileStatus('');setProfileError(problem instanceof Error?problem.message:'Could not save profile. Edit a field or close to retry.');return false;}
+      }catch(problem){setProfileError(problem instanceof Error?problem.message:'Could not save profile. Edit a field or close to retry.');return false;}
     });
     return saveQueue.current;
   };
@@ -222,7 +221,7 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
             <Stat value={String(summary.workouts)} label={summary.workouts === 1 ? 'workout' : 'workouts'}/>
             <Stat value={summary.streak ? String(summary.streak) : '—'} label={summary.streak === 1 ? 'week streak' : 'weeks streak'}/>
             <Stat value={`${Math.round(summary.volume / (unit === 'lb' ? 0.45359237 : 1)).toLocaleString()}`} label={`${unit} lifted`}/>
-          </View> : <Txt variant="caption" tone="muted">Finish your first workout to start your stats.</Txt>}
+          </View> : null}
           {summary.best ? <Txt variant="caption" tone="secondary" numberOfLines={1}>Heaviest lift: <Txt variant="caption">{summary.best.name} · {weightText(summary.best.kg, unit)} {unit}</Txt></Txt> : null}
         </View>
 
@@ -278,7 +277,7 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
         <View style={styles.choices}>
           {(['beginner', 'intermediate', 'advanced'] as const).map((value) => <Choice key={value} compact code label={value} selected={experience === value} onPress={() => changed(setExperience)(value)} />)}
         </View>
-        {profileError?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{profileError}</Txt>:profileStatus?<Txt variant="caption" tone="muted" accessibilityLiveRegion="polite">{profileStatus}</Txt>:null}
+        {profileError?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{profileError}</Txt>:null}
       </Sheet>
     </View>
   );

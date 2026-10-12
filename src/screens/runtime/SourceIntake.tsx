@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import type { ExerciseDefinition, TrainingSource } from '../../runtime/types';
 import { RUNTIME_EXERCISES } from '../../runtime/exerciseCatalog';
-import { draftFromRoutine, draftIssues, emptyDraft, sourceFromDraft, valueOf } from '../../routineSetup/draft';
+import { draftFromRoutine, emptyDraft, valueOf } from '../../routineSetup/draft';
 import { editorSettings, mergeRoutineInput, type RoutineEditorInput } from '../../routineSetup/editor';
 import { interpretLocally } from '../../routineSetup/localInterpretation';
 import { hostedRoutineInputEnabled, interpretRoutine } from '../../services/routineInputService';
@@ -30,17 +30,17 @@ export const SourceIntake=({inline=false,initial,sessionActive,onSave,onClose,sy
   });
   const latest=useRef(editor),saveCallback=useRef(onSave),lastSaved=useRef(JSON.stringify(editor)),dirty=useRef(false),request=useRef<AbortController|null>(null),mounted=useRef(true);
   saveCallback.current=onSave;
-  const [busy,setBusy]=useState(false),[voiceBusy,setVoiceBusy]=useState(false),[error,setError]=useState(''),[pending,setPending]=useState(false);
+  const [busy,setBusy]=useState(false),[voiceBusy,setVoiceBusy]=useState(false),[error,setError]=useState('');
   const flush=(value=latest.current)=>{
     if(!dirty.current)return;
-    if(JSON.stringify(value)===lastSaved.current){dirty.current=false;if(mounted.current)setPending(false);return;}
+    if(JSON.stringify(value)===lastSaved.current){dirty.current=false;return;}
     const failure=saveCallback.current(value);
     if(failure){if(mounted.current)setError(failure);return;}
-    dirty.current=false;lastSaved.current=JSON.stringify(value);if(mounted.current)setPending(false);
+    dirty.current=false;lastSaved.current=JSON.stringify(value);
   };
   const update=(next:RoutineEditorInput)=>{
     request.current?.abort();request.current=null;
-    latest.current=next;dirty.current=true;setEditor(next);setPending(true);setError('');setBusy(false);
+    latest.current=next;dirty.current=true;setEditor(next);setError('');setBusy(false);
   };
   useEffect(()=>{const timer=setTimeout(()=>flush(),450);return()=>clearTimeout(timer);},[editor]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;request.current?.abort();flush();};},[]);
@@ -77,14 +77,11 @@ export const SourceIntake=({inline=false,initial,sessionActive,onSave,onClose,sy
     update({...input,draft,...(starter==='muscle'||starter==='fat_loss'?{}:{context:{...input.context,split:starter}})});
   };
   const selectedStarters:RoutineStarter[]=[...(editor.draft.focus==='build_muscle'?['muscle' as const]:editor.draft.focus==='lose_fat'?['fat_loss' as const]:[]),...(['full_body','upper_lower','push_pull_legs'].includes(editor.draft.preferredSplit??'')?[editor.draft.preferredSplit as RoutineStarter]:[])];
-  let issue=editor.draft.workouts.length?draftIssues(editor.draft,catalog)[0]:undefined;
-  if(!issue&&editor.draft.workouts.length){try{sourceFromDraft(editor.draft,editor.settings,catalog);}catch(problem){issue=problem instanceof Error?problem.message:'Check your routine';}}
-  const status=busy?'Updating…':pending||sync==='saving'?'Saving…':sync==='failed'?'Not saved':sync==='conflict'?'Sync conflict':sync==='device'?'Saved on device':sessionActive||issue||editor.text!==editor.interpretedText?'Draft saved':'Saved';
   return <KeyboardAvoidingView style={inline?undefined:styles.flex} behavior={!inline&&Platform.OS==='ios'?'padding':undefined}>
     <RoutineDescription inline={inline} text={editor.text} onChange={text=>update({...latest.current,text})} onBlur={()=>void interpret()} busy={voiceBusy}
       onStarter={selectStarter} selectedStarters={selectedStarters} error={error}
       onLocalReview={hostedRoutineInputEnabled&&error?()=>void interpret(true):undefined}
-      status={<Txt variant="mono" tone="muted" style={styles.status} accessibilityLiveRegion="polite">{status}</Txt>}
+      status={sync==='failed'||sync==='conflict'?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{sync==='failed'?'Changes could not sync.':'Training changed on another device.'}</Txt>:null}
       backAction={<Pressable accessibilityRole="button" accessibilityLabel="Save and go back" onPress={()=>void close()} disabled={voiceBusy} style={styles.close}><Ionicons name="chevron-back" size={26} color={colors.text}/></Pressable>}
       contextControls={<RoutineContextChips value={context} initial={editor.settings} disabled={voiceBusy} onChange={next=>{update({...latest.current,context:next,draft:isPoolPattern(next.split)&&next.split!==latest.current.draft.preferredSplit?groupDraft(applyInputContext(latest.current.draft,next),next.split,catalog):applyInputContext(latest.current.draft,next)});void interpret();}}/>}
       bottomInset={insets.bottom}
@@ -94,4 +91,4 @@ export const SourceIntake=({inline=false,initial,sessionActive,onSave,onClose,sy
     </RoutineDescription>
   </KeyboardAvoidingView>;
 };
-const styles=StyleSheet.create({flex:{flex:1},status:{fontSize:10},close:{width:t.touch,height:t.touch,alignItems:'center',justifyContent:'center'}});
+const styles=StyleSheet.create({flex:{flex:1},close:{width:t.touch,height:t.touch,alignItems:'center',justifyContent:'center'}});
