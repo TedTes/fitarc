@@ -4,7 +4,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +11,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CompilerGlyphs, Scanlines } from '../components/AuthRuntimeVisual';
 import { AthleteBackdrop } from '../components/AthleteBackdrop';
 import { SocialAuthButtons } from '../components/SocialAuthButtons';
