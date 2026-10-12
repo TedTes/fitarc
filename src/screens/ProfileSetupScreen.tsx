@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  Animated, Easing, KeyboardAvoidingView, Platform, ScrollView, StyleSheet,
+  ActivityIndicator, Animated, Easing, KeyboardAvoidingView, Platform, ScrollView, StyleSheet,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -252,13 +252,12 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
         </ScrollView>
       </Animated.View>
       <View style={styles.footer}>
-        <TouchableOpacity accessibilityLabel="Previous step" disabled={stepIndex === 0 || animating || saving}
-          style={[styles.backButton, stepIndex === 0 && styles.backButtonHidden]} onPress={() => moveTo(stepIndex - 1)}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Previous step" accessibilityState={{ disabled: stepIndex === 0 || animating || saving }} disabled={stepIndex === 0 || animating || saving}
+          style={[styles.backButton, stepIndex === 0 && styles.backButtonDisabled]} onPress={() => moveTo(stepIndex - 1)}>
           <Ionicons name="arrow-back" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
-        <TouchableOpacity activeOpacity={0.82} disabled={animating || saving} style={styles.continueButton} onPress={continueFlow}>
-          <Text style={styles.continueText}>{saving ? 'Preparing…' : isLast ? 'Prepare my workout' : 'continue'}</Text>
-          <Ionicons name="arrow-forward" size={18} color={colors.accentText} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={saving ? 'Preparing workout' : isLast ? 'Prepare my workout' : 'Continue'} accessibilityState={{ disabled: animating || saving, busy: saving }} activeOpacity={0.82} disabled={animating || saving} style={styles.continueArrow} onPress={continueFlow}>
+          {saving ? <ActivityIndicator color={colors.accent} accessibilityLabel="Preparing workout" /> : <Ionicons name="arrow-forward" size={30} color={colors.accent} />}
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -300,6 +299,6 @@ const styles = StyleSheet.create({
   metricValueWrap: { minWidth: 88, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 5 }, metricValue: { color: colors.text, fontFamily: monoFace('700') ?? mono, fontSize: 22 }, metricUnit: { color: colors.textMuted, fontFamily: monoFace('400') ?? mono, fontSize: 11 }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
   limitGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }, limitChoice: { minHeight: TOUCH, paddingHorizontal: space.lg, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface }, limitChoiceSelected: { borderColor: colors.warning, backgroundColor: colors.warningSoft }, limitText: { color: colors.textSecondary, fontFamily: monoFace('600') ?? mono, fontSize: 12 }, limitTextSelected: { color: colors.warning },
   compileCard: { marginTop: 34, paddingTop: space.lg, borderTopWidth: 1, borderTopColor: colors.border, gap: space.md }, compileEyebrow: { color: colors.success, fontFamily: monoFace('700') ?? mono, fontSize: 10, letterSpacing: 1.2 }, compileName: { color: colors.text, fontFamily: monoFace('700') ?? mono, fontSize: 18, marginTop: 4 }, compileSummary: { color: colors.textSecondary, fontFamily: monoFace('400') ?? mono, fontSize: 12 },
-  footer: { borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: space.xl, paddingTop: space.md, paddingBottom: space.sm, flexDirection: 'row', alignItems: 'center', gap: space.md }, backButton: { width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center' }, backButtonHidden: { opacity: 0 },
-  continueButton: { flex: 1, minHeight: 54, borderRadius: radius.md, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: space.sm }, continueText: { color: colors.accentText, fontFamily: monoFace('700') ?? mono, fontSize: 14 },
+  footer: { borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: space.xl, paddingTop: space.md, paddingBottom: space.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md }, backButton: { width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center' }, backButtonDisabled: { opacity: 0.35 },
+  continueArrow: { width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center' },
 });
