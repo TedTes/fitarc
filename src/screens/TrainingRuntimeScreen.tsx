@@ -1,3 +1,4 @@
+import { useSavedRoutine } from '../runtime/savedRoutines';
 import { saveWeightSettings } from '../runtime/weights';
 import { WeightSettingsContext } from './runtime/WeightSettings';
 import { saveRoutineEditor, type RoutineEditorInput } from '../routineSetup/editor';
@@ -293,8 +294,9 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'account' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'account' && styles.surfaceActive, { opacity: surfaceOpacity.account, transform: [{ translateX: surfaceOffset.account }] }]}
         >
-          <AccountSurface user={user} state={state} sync={sync}
-            routineControls={surface==='account'?<SourceIntake inline initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} sessionActive={Boolean(state.activeSession)} sync={sync} onSave={saveEditor} onClose={() => {}} />:null}
+          <AccountSurface active={surface === 'account'} user={user} state={state} sync={sync}
+            routineControls={surface==='account'?<SourceIntake key={state.block?.id??'no-plan'} inline initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} sessionActive={Boolean(state.activeSession)} sync={sync} onSave={saveEditor} onClose={() => {}} />:null}
+            onUseRoutine={id=>{const outcome=apply(current=>useSavedRoutine(current,id));if(!outcome.ok)return describeRuntimeError(outcome.error).message;return undefined;}}
             onSaveProfile={onSaveProfile} onLogout={onLogout} onDeleteAccount={onDeleteAccount}/>
 
         </Animated.View>

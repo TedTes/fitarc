@@ -1,7 +1,8 @@
+import { SavedRoutines } from './SavedRoutines';
 import { useWeightSettings } from './WeightSettings';
 import { toKg, weightText } from '../../runtime/weights';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { User } from '../../types/domain';
@@ -14,9 +15,11 @@ import type { SyncStatus } from './useRuntimeController';
 
 type Props = {
   user: User;
+  active?: boolean;
   state: RuntimeState;
   sync: SyncStatus;
   routineControls: ReactNode;
+  onUseRoutine:(id:string)=>string|undefined;
   onSaveProfile: (profile: User) => void | Promise<void>;
   onLogout: () => void | Promise<void>;
   onDeleteAccount: () => void | Promise<void>;
@@ -58,8 +61,14 @@ const Field = ({ label, value, onChangeText, keyboardType = 'default', suffix }:
   </View>
 );
 
-export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
+export const AccountSurface = ({ user, active = true, state, sync, routineControls, onUseRoutine, onSaveProfile, onLogout, onDeleteAccount }: Props) => {
   const {unit,save:saveUnits}=useWeightSettings();
+  const [routinesOpen, setRoutinesOpen] = useState(false);
+  useEffect(() => {
+    if (!routinesOpen || !active) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => { setRoutinesOpen(false); return true; });
+    return () => subscription.remove();
+  }, [routinesOpen, active]);
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileError,setProfileError]=useState('');
   const revision=useRef(0),savedRevision=useRef(0);
@@ -198,7 +207,7 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
 
   return (
     <View style={styles.root}>
-      <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
+      <ScrollView style={routinesOpen ? styles.hidden : undefined} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
         <View style={styles.header}><PlanText kind="title">Profile</PlanText></View>
 
         <View style={styles.card}>
@@ -228,6 +237,14 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
         <View style={styles.section}>
           <PlanText kind="overline">TRAINING</PlanText>
           {routineControls}
+          <View style={styles.accountCard}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Routines" onPress={() => setRoutinesOpen(true)}
+              style={({pressed}) => [styles.accountAction, pressed && styles.pressed]}>
+              <Ionicons name="barbell-outline" size={t.icon} color={colors.textMuted}/>
+              <Txt variant="heading" style={[styles.flex, styles.actionLabel]}>Routines</Txt>
+              <Ionicons name="chevron-forward" size={t.icon} color={colors.textDim}/>
+            </Pressable>
+          </View>
           <View style={styles.card}>
             <View style={[styles.fact, styles.factLast]}>
               <Txt variant="caption" tone="muted" style={styles.factLabel}>Units</Txt>
@@ -257,6 +274,7 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
           <Txt variant="caption" tone="danger">{deleting?'Deleting account…':'Delete account'}</Txt>
         </Pressable>
       </ScrollView>
+      {routinesOpen ? <SavedRoutines state={state} onUseRoutine={onUseRoutine} onBack={() => setRoutinesOpen(false)}/> : null}
 
       <Sheet visible={editingProfile} onClose={() => void closeProfileEditor()} title="Edit profile">
         <View style={styles.avatarEditor}>
@@ -285,6 +303,7 @@ export const AccountSurface = ({ user, state, sync, routineControls, onSaveProfi
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  hidden: { display: 'none' },
   flex: { flex: 1 },
   page: { padding:t.gutter,gap:t.bodyGap },
   header:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:t.pad.small},

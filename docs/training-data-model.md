@@ -2,37 +2,25 @@
 
 Current routine behavior is documented in [routine-first-implementation.md](routine-first-implementation.md). The seven tables below are unchanged; new routines replace the earlier fixed split and six-week assumptions with an ongoing user-controlled sequence.
 
-This implementation starts fresh. No old users, plans, templates, workouts, or JSON runtime snapshots are migrated. It uses the existing 23 exercises as an initial catalog while an external dataset is selected.
+The original September baseline started fresh. The October v4 forward migration preserves existing FitArc routines and workouts. It uses the existing 23 exercises as an initial catalog while an external dataset is selected.
 
-## Data flow
+## Current storage and reuse (schema version 4)
 
-```mermaid
-flowchart TD
-  Dataset[External exercise dataset] --> Draft[Validate and review draft exercises]
-  Draft --> Catalog[Approved exercise catalog]
-  Profile[Profile and current training preferences] --> Plan[Plan revision with frozen preferences and catalog]
-  Catalog --> Plan
-  Plan --> Preview[Today's time, recovery, equipment and workout preview]
-  Preview --> Start[Explicitly start workout]
-  Start --> Sets[Session exercises and sets]
-  Sets --> Log[Actual weight, reps, effort and adjustment on each set]
-  Log --> Derived[Derived working weights and weekly volume]
-  Derived --> Preview
-  Availability[Remaining days and time windows] --> Proposal[Preview remaining-week changes]
-  Derived --> Proposal
-  Proposal --> Accept[User applies changes]
-  Accept --> Plan
-```
+Live settings are explicit columns on `fitarc_profiles`: training split, goal, level, days, minutes, equipment, limitations and routine text. Small structured fields hold schedules, working weights and per-exercise ranges. The mixed `training_preferences` JSON column is removed by `202610130001_profile_settings_and_routine_reuse.sql`.
 
-An **exercise** is a catalog lift. A **session** is one workout. A **plan** is a six-week training cycle with recurring workout slots. Internal function names such as `compileBlock` and `solveSession` remain implementation details. People choose their goal and preferences; a workout-template library is not required.
+Reusable exercise choices live in the existing versioned `fitarc_plans` payload. Its `preferences` field is a historical configuration snapshot, not the removed live profile object. The runtime derives its working source from the profile and current plan. Full `routineEditor` copies are no longer written; the migration removes those redundant copies from historical plan payloads as well.
 
-The seed supplies **23 exercise definitions**, not prewritten workouts. Names and videos alone are insufficient for selection: imported exercises need reviewed muscle, equipment, movement, limitation, increment, setup-time and workload metadata. The importer prepares drafts without publishing them.
+Each actual workout remains in `fitarc_sessions`, with its ordered exercises in `fitarc_session_exercises` and prescribed/actual sets in `fitarc_sets`. Switching routines never overwrites those records.
+
+Completing a normal session saves its exercise selection as a new routine revision for that group. Later occurrences reuse that selection subject to current constraints. Additional workouts do not change the recurring routine. If the user changed routine during an active session, completing the older session does not overwrite the new routine.
+
+Profile has one **Routines** button under Training. It opens a full screen with a back arrow and a horizontally scrolling routine selector. The selected routine’s workouts and exercises appear underneath. The active routine is marked and identical revisions are hidden. Tapping anywhere on a routine card activates that pattern as a fresh revision using current constraints, selects its radio indicator, and shows its workouts below. Switching requires finishing the active session first. No History section or repeat-workout controls are exposed. Actual workout records remain stored.
 
 ## Seven tables in the `fitarc` schema
 
 | Table | Purpose |
 | --- | --- |
-| `fitarc_profiles` | Profile, avatar reference, onboarding values and current training preferences. |
+| `fitarc_profiles` | Profile, avatar reference, onboarding values and explicit current training settings. |
 | `fitarc_exercise_catalog` | Shared definitions, stable IDs, provenance, license and draft/approved/retired status. |
 | `fitarc_plans` | Immutable plan revisions, stable training-cycle group, start date, frozen preferences/catalog, phases, usual weekly workouts, targets and optional accepted remaining-week forecast. |
 | `fitarc_sessions` | Actual proposed/active/completed workouts; references the exact plan revision, or null for future standalone support. |
@@ -42,11 +30,13 @@ The seed supplies **23 exercise definitions**, not prewritten workouts. Names an
 
 All seven tables and both training RPCs belong to the dedicated **`fitarc` schema**. For example, the profile table is `fitarc.fitarc_profiles`. Existing table names are retained; the schema groups them separately from other applications. The app client sets `db.schema` to `TRAINING_SCHEMA` (`fitarc`), so its table and RPC requests target that namespace. Shared auth and avatar storage retain their own APIs.
 
-There are no separate configuration, result, decision or exercise-state tables. `RuntimeState` still exposes result/decision arrays and working-weight maps to the engine; `trainingState.ts` rebuilds these projections from completed set records. The v3 storage DTO does not save a second mutable copy. Pending and skipped sets contain no fabricated actuals. Undo removes the result and adjustment and restores the following prescription it changed.
+There are no separate configuration, result, decision or exercise-state tables. `RuntimeState` still exposes result/decision arrays and working-weight maps to the engine; `trainingState.ts` rebuilds these projections from completed set records. The v4 storage DTO does not save a second mutable copy. Pending and skipped sets contain no fabricated actuals. Undo removes the result and adjustment and restores the following prescription it changed.
 
 Ownership is included in foreign keys. Variable engine artifacts remain JSON within entity rows. One plan revision has a unique UUID; revisions of a cycle share a group UUID and start date. A new cycle receives a new group and date. The current-week cursor may advance without creating another revision. The rest of a saved plan definition is immutable. Sessions retain the exact exercise definitions used, including after catalog changes.
 
-## Remaining-week behavior
+## Legacy remaining-week engine behavior
+
+These engine contracts remain supported internally; the remaining-week editor is no longer exposed in Progress.
 
 In Progress, users choose remaining dates in the current seven-day plan week, time per day, expected recovery and unavailable equipment. The week is anchored to the plan's start date, not automatically Monday. Previewing creates no active workout and writes nothing. Applying an unchanged preview creates a plan revision; intervening training changes require another preview.
 
@@ -59,10 +49,10 @@ Accepted windows and workout forecasts belong to the plan snapshot, not session 
 - The UI applies engine changes immediately. A device queue durably stages each update without waiting for network writes.
 - A separate cloud queue calls `fitarc_save_training`. The database locks the user's revision, validates ownership/relationships, and writes the graph in one transaction.
 - Stable set IDs prevent duplicate results. Mutation IDs make a retry safe after a response is lost.
-- A stale device gets an explicit conflict instead of winning based on its clock. Training remains available locally. Tapping the sync indicator offers **Load cloud version**; before replacement, the device branch is retained under `fitarc:training-runtime:v3:<user-id>:conflict:<id>`.
+- A stale device gets an explicit conflict instead of winning based on its clock. Training remains available locally. Tapping the sync indicator offers **Load cloud version**; before replacement, the device branch is retained under `fitarc:training-runtime:v4:<user-id>:conflict:<id>`.
 - Conflicting branches are not merged automatically. Recovery backups can be inspected through device AsyncStorage tooling; there is no in-app backup browser/export yet.
 - A pending outbox survives restart and retries on load, on the next edit, or via the sync indicator. First sign-in/profile creation needs connectivity. A previously loaded profile and approved catalog are cached for offline startup. Bundled exercises provide the first catalog fallback.
-- New device keys and graph payloads use `v3`. Older v1/v2 keys remain untouched and are not silently interpreted as the new representation. This fresh-start implementation does not migrate old device history.
+- New device keys and graph payloads use `v4`. A one-time reader upgrades v3 device state and pending outbox data, preserving session history and routine text while removing duplicate editor data. Older v1/v2 keys remain untouched.
 
 The transport currently sends the user's complete training graph and reconciles session rows transactionally. This is suitable for the initial small history, but not a claim of incremental sync: large histories should move to paginated reads and operation-based writes. Freezing a large external catalog per plan will also need a versioned catalog-release reference once the catalog size warrants it. Historical records and ownership rules already have separate tables for that evolution.
 
@@ -73,6 +63,8 @@ Prepared migrations, in order:
 1. `202609240001_fresh_training.sql`: dedicated `fitarc` schema, new tables, ownership policies, atomic read/save RPCs.
 2. `202609240002_seed_exercise_catalog.sql`: approved initial 23 exercises with stable IDs matching the bundled catalog.
 3. `202609240003_retire_legacy_training.sql`: drops exactly the 25 audited legacy FitArc tables and the two retired RPC names. This is destructive and assumes the explicitly agreed fresh start. It does not use `CASCADE`; unexpected external dependencies stop the cleanup.
+
+For the existing seven-table deployment, apply only the new `202610130001_profile_settings_and_routine_reuse.sql` forward migration, then launch the matching v4 app. Do not replay the fresh baseline. The RPC transport changes from v3 to v4, so older development builds must be stopped during this change. The forward migration is tested locally; the user subsequently reported applying it and verifying profile persistence after restart.
 
 Deploy the migrations and the matching app together. Add `fitarc` to the Supabase Data API **Exposed schemas** setting while preserving all existing entries for other applications. The migration grants schema usage and explicit table/function permissions; exposing the schema does not replace RLS. See [Supabase custom schemas](https://supabase.com/docs/guides/api/using-custom-schemas). The old app cannot operate after cleanup. The agent did not modify the hosted database; the user later reported manually creating the tables and restoring login. The hosted migration ledger remains unverified. The old migration version remains as a documented no-op in the active migration directory; its original SQL is archived under `supabase/legacy/`. This intentionally resets the baseline without deleting an already-deployed version from the migration ledger. The archived SQL depended on an older exercise table whose creation was never checked in. The local check tests both the clean active chain and cleanup of a legacy fixture.
 

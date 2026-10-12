@@ -2,6 +2,22 @@
 
 Candidate date: 2026-09-27. Steps 01–35 and 37 are implemented. The user subsequently created the hosted tables manually and reported login working after the Data API configuration fix. Grouped commits and a push were then explicitly authorized. The previous legacy decommissioning commits remain unchanged. The baseline report records the earlier 11-table state; it is intentionally historical.
 
+## Current gate: profile storage and history reuse
+
+The October forward migration and matching schema-v4 app are implemented. The user reports applying `202610130001_profile_settings_and_routine_reuse.sql` in SQL Editor and confirms profile changes survive restarting the app. Hosted deployment was user-run, not independently inspected. Do not replay this migration or the September baseline migrations.
+
+Before the new App Store build:
+
+1. Stop old development builds and apply the forward migration to the existing seven-table FitArc schema. It backfills explicit profile columns, removes duplicated editor snapshots, replaces both training RPCs, and drops `training_preferences` atomically.
+2. Launch the matching app. Edit training split and routine text, wait for sync, restart, and inspect `training_split` and `routine_text` in `fitarc_profiles`.
+3. Complete a workout after swapping/removing/adding an exercise. Verify its actual sets remain in history and its choices recur for that group.
+4. Under Profile training settings, tap Routines and select a saved pattern. Confirm its Active marker updates without leaving Profile. Confirm old workout results remain unchanged and duplicate routine revisions are not shown.
+5. Repeat offline/restart/reconnect and account isolation checks before building for TestFlight. Local checks do not replace this hosted/native smoke test.
+
+No new routine tables are required. Historical plan configuration remains in the existing plan payload; there is no live profile preferences object or persisted routine-editor copy.
+
+The sections below record earlier release preparation and do not establish readiness for the current changes.
+
 ## Validation
 
 - TypeScript, runtime contracts, adaptation scenario, embedded PostgreSQL/offline checks, muscle targeting, and landing preview parity pass.
