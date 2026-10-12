@@ -1,14 +1,11 @@
 import { belongsToPlan, datePlusDays } from '../../runtime/planDates';
-import { RemainingWeekEditor } from './RemainingWeekEditor';
-import type { ApplyResult } from './useRuntimeController';
-import type { Notify } from './constants';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { computeWeeklyStatus } from '../../runtime';
 import type { ExerciseDefinition, Muscle, RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
-import { IconButton, ScreenBrand, Sheet, Txt } from './ui';
+import { ScreenBrand, Sheet, Txt } from './ui';
 import { formatSets, muscleLabel } from './copy';
 import { MuscleMap, type MuscleMapTone } from './MuscleMap';
 import { liftsForPart, partLabel } from './muscleParts';
@@ -16,14 +13,13 @@ import { ExerciseDetailsSheet } from './ExerciseMuscles';
 
 type Props = {
   state: RuntimeState; block: TrainingBlock; status: WeeklyStatus;
-  apply: (transform: (state: RuntimeState) => RuntimeState) => ApplyResult; notify: Notify;
 };
 const rowStatus = (item: WeeklyMuscleStatus) => ({
   tone: item.completedSets > item.max ? 'danger' as const : item.completedSets >= item.min ? 'success' as const : 'warning' as const,
 });
 
 /** Only performed sets feed Progress. Keep the body and the first muscle rows visible together. */
-export const WeekSurface = ({ state, block, apply, notify }: Props) => {
+export const WeekSurface = ({ state, block }: Props) => {
   const { height: windowHeight } = useWindowDimensions();
   const [availableHeight, setAvailableHeight] = useState(0);
   const list = useRef<ScrollView>(null);
@@ -32,7 +28,6 @@ export const WeekSurface = ({ state, block, apply, notify }: Props) => {
   const [selectedMuscle, setSelectedMuscle] = useState<Muscle | null>(null);
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
   const [inspectedExercise, setInspectedExercise] = useState<ExerciseDefinition | null>(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
   const mapHeight = Math.max(150, Math.min(220, (availableHeight || windowHeight - 160) * 0.3));
 
   useEffect(() => { setSelectedWeek(block.currentWeek); }, [block.id, block.currentWeek]);
@@ -99,7 +94,6 @@ export const WeekSurface = ({ state, block, apply, notify }: Props) => {
   return <View style={styles.root} onLayout={event => setAvailableHeight(event.nativeEvent.layout.height)}>
     <View style={styles.heading}>
       <View style={styles.flex}><ScreenBrand name="Progress" chip="" /></View>
-      {block.kind !== 'workout' ? <IconButton icon="calendar-outline" label="Change remaining week" onPress={() => setScheduleOpen(true)} /> : null}
     </View>
     <ScrollView horizontal style={styles.weeks} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.weekPicker} accessibilityRole="radiogroup" accessibilityLabel="Select training week">
       {Array.from({ length: Math.max(block.durationWeeks, block.currentWeek) }, (_, i) => i + 1).map(week => <Pressable key={week}
@@ -179,9 +173,6 @@ export const WeekSurface = ({ state, block, apply, notify }: Props) => {
     <Sheet visible={expanded !== null} onClose={() => setExpanded(null)} title="Muscle map" scrollable={false}>
       {expanded ? <MuscleMap view={expanded} onViewChange={setExpanded} tones={muscleTones} selected={selectedMuscle} selectedPart={selectedPart}
         height={Math.round(windowHeight * 0.62)} overview onSelect={selectMuscle} /> : null}
-    </Sheet>
-    <Sheet visible={scheduleOpen} onClose={() => setScheduleOpen(false)} title="Change remaining week">
-      <RemainingWeekEditor state={state} apply={apply} notify={notify} />
     </Sheet>
   </View>;
 };

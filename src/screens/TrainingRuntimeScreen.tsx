@@ -287,7 +287,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'week' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'week' && styles.surfaceActive, { opacity: surfaceOpacity.week, transform: [{ translateX: surfaceOffset.week }] }]}
         >
-          {status && block ? <WeekSurface state={state} block={block} status={status} apply={apply} notify={notify} /> : <EmptyTrainingSurface title="Progress" message="No workouts logged" />}
+          {status && block ? <WeekSurface state={state} block={block} status={status} /> : <EmptyTrainingSurface title="Progress" message="No workouts logged" />}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'account' ? 'auto' : 'none'}
