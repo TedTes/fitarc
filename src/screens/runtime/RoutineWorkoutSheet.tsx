@@ -12,15 +12,16 @@ import { preferredTargetView } from './muscleTargeting';
 import { colors, planTokens as t } from './theme';
 
 export const ExerciseTile=({exercise}:{exercise:ExerciseDefinition})=><View style={s.muscleTile} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"><MuscleMap view={preferredTargetView(exercise)} targets={exercise} height={t.muscleTile} showZoom={false} focusTargets/></View>;
+export const ExercisePickerRow=({exercise,selected=false,onAdd}:{exercise:ExerciseDefinition;selected?:boolean;onAdd:(exercise:ExerciseDefinition)=>void})=><Pressable accessibilityRole="button" accessibilityLabel={`Add ${exercise.name}`} accessibilityState={{disabled:selected}} disabled={selected} onPress={()=>onAdd(exercise)} style={[s.pickerRow,selected&&s.disabled]}>
+  <ExerciseTile exercise={exercise}/><View style={s.flex}><PlanText bold>{exercise.name}</PlanText><PlanText kind="meta">{exercise.primaryMuscles.map(m=>MUSCLE_OPTIONS.find(option=>option.value===m)?.label.toLowerCase()).join(' · ')}</PlanText></View><Ionicons name={selected?'checkmark':'add'} size={t.icon} color={selected?colors.success:colors.accent}/>
+</Pressable>;
 export const ExercisePicker=({catalog,selectedIds,onAdd,initialMuscles=[]}:{catalog:ExerciseDefinition[];selectedIds:string[];onAdd:(exercise:ExerciseDefinition)=>void;initialMuscles?:Muscle[]})=>{
   const [query,setQuery]=useState(''),[muscles,setMuscles]=useState<Muscle[]>(initialMuscles);
   const matches=catalog.filter(exercise=>(!muscles.length||exercise.primaryMuscles.some(m=>muscles.includes(m)))&&exercise.name.toLowerCase().includes(query.trim().toLowerCase()));
   return <View style={s.section}>
     <PlanInput accessibilityLabel="Search exercises" placeholder="Search exercises" value={query} onChangeText={setQuery}/>
     <PlanOptions options={MUSCLE_OPTIONS} value={muscles} onChange={muscle=>setMuscles(current=>toggleValue(current,muscle))}/>
-    {matches.length?matches.map(exercise=>{const selected=selectedIds.includes(exercise.id);return <Pressable key={exercise.id} accessibilityRole="button" accessibilityLabel={`Add ${exercise.name}`} accessibilityState={{disabled:selected}} disabled={selected} onPress={()=>onAdd(exercise)} style={[s.pickerRow,selected&&s.disabled]}>
-      <ExerciseTile exercise={exercise}/><View style={s.flex}><PlanText bold>{exercise.name}</PlanText><PlanText kind="meta">{exercise.primaryMuscles.map(m=>MUSCLE_OPTIONS.find(option=>option.value===m)?.label.toLowerCase()).join(' · ')}</PlanText></View><Ionicons name={selected?'checkmark':'add'} size={t.icon} color={selected?colors.success:colors.accent}/>
-    </Pressable>;}):<PlanText kind="meta">No exercises found</PlanText>}
+    {matches.length?matches.map(exercise=><ExercisePickerRow key={exercise.id} exercise={exercise} selected={selectedIds.includes(exercise.id)} onAdd={onAdd}/>):<PlanText kind="meta">No exercises found</PlanText>}
   </View>;
 };
 
