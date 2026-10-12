@@ -25,12 +25,12 @@ export type ProfileSetupData = {
   injuries: string[];
 };
 
-type Props = { initialName?: string; onComplete: (data: ProfileSetupData) => void };
-type StepKey = 'identity' | 'goal' | 'schedule' | 'context' | 'baseline' | 'limits';
+type Props = { initialName?: string; onComplete: (data: ProfileSetupData) => void | Promise<void> };
+type StepKey = 'identity' | 'goal' | 'schedule' | 'style' | 'context' | 'baseline' | 'limits';
 
 const STEPS: Array<{ key: StepKey; label: string }> = [
   { key: 'identity', label: 'identity' }, { key: 'goal', label: 'objective' },
-  { key: 'schedule', label: 'schedule' }, { key: 'context', label: 'context' },
+  { key: 'schedule', label: 'schedule' }, { key: 'style', label: 'training style' }, { key: 'context', label: 'context' },
   { key: 'baseline', label: 'baseline' }, { key: 'limits', label: 'preferences' },
 ];
 const GOALS: Array<{ label: string; detail: string; value: PrimaryGoal }> = [
@@ -50,8 +50,11 @@ const EQUIPMENT: Array<{ label: string; detail: string; value: EquipmentLevel }>
   { label: 'full gym', detail: 'barbells, cables and machines', value: 'full_gym' },
 ];
 const LIMITATIONS = ['shoulder', 'lower back', 'knee', 'elbow', 'neck'];
-const splitForDays = (days: 3 | 4 | 5): TrainingSplit =>
-  days >= 5 ? 'push_pull_legs' : days === 4 ? 'upper_lower' : 'full_body';
+const TRAINING_STYLES = [
+  {value:'upper_lower',label:'Upper / Lower',detail:'Upper → Lower, alternating each session'},
+  {value:'push_pull_legs',label:'Push / Pull / Legs',detail:'Push → Pull → Legs, then repeat'},
+  {value:'full_body',label:'Full body',detail:'Train across the body each session'},
+] as const;
 
 const StepHeading = ({ eyebrow, title, detail }: { eyebrow: string; title: string; detail: string }) => (
   <View style={styles.stepHeading}>
@@ -62,6 +65,9 @@ const StepHeading = ({ eyebrow, title, detail }: { eyebrow: string; title: strin
 );
 
 export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComplete }) => {
+  const [trainingSplit, setTrainingSplit] = useState<TrainingSplit>('upper_lower');
+  const [saving, setSaving] = useState(false);
+  const submitting = useRef(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [name, setName] = useState(initialName);
   const [sex, setSex] = useState<ProfileSetupData['sex']>('male');
@@ -82,8 +88,8 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
   const isLast = stepIndex === STEPS.length - 1;
   const goalLabel = GOALS.find((item) => item.value === primaryGoal)?.label;
   const summary = useMemo(
-    () => `${goalLabel} · ${daysPerWeek}d · ${sessionMinutes}m · ${equipmentLevel.replace('_', ' ')}`,
-    [daysPerWeek, equipmentLevel, goalLabel, sessionMinutes]
+    () => `${TRAINING_STYLES.find(item=>item.value===trainingSplit)?.label} · ${goalLabel} · ${daysPerWeek}d · ${sessionMinutes}m · ${equipmentLevel.replace('_', ' ')}`,
+    [daysPerWeek, equipmentLevel, goalLabel, sessionMinutes, trainingSplit]
   );
 
   const moveTo = (next: number) => {
@@ -103,14 +109,16 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
     });
   };
 
-  const continueFlow = () => {
+  const continueFlow = async () => {
+    if (submitting.current) return;
     if (activeStep.key === 'identity' && !name.trim()) { setNameError(true); return; }
     if (!isLast) { moveTo(stepIndex + 1); return; }
-    onComplete({
+    submitting.current = true; setSaving(true);
+    try { await onComplete({
       name: name.trim(), sex, age, heightCm, weightKg, experienceLevel,
-      trainingSplit: splitForDays(daysPerWeek), eatingMode: 'maintenance',
+      trainingSplit, eatingMode: 'maintenance',
       primaryGoal, daysPerWeek, sessionMinutes, equipmentLevel, injuries,
-    });
+    }); } finally { submitting.current = false; setSaving(false); }
   };
 
   const Choice = ({ label, detail, selected, onPress }: {
@@ -186,6 +194,10 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
             <Text style={[styles.timeText, sessionMinutes === minutes && styles.timeTextSelected]}>{minutes}m</Text>
           </TouchableOpacity>)}</View>
       </>;
+      case 'style': return <>
+        <StepHeading eyebrow="TRAINING STYLE" title="How do you want to train?" detail="We’ll prepare the first session with exercises that fit your equipment and preferences. You can change the style and exercises later." />
+        <View style={styles.choiceList}>{TRAINING_STYLES.map(item=><Choice key={item.value} label={item.label} detail={item.detail} selected={trainingSplit===item.value} onPress={()=>setTrainingSplit(item.value)}/>)}</View>
+      </>;
       case 'context': return <>
         <StepHeading eyebrow="TRAINING CONTEXT" title="Match the starting dose." detail="Choose your experience and available equipment." />
         <Text style={styles.fieldLabel}>experience</Text>
@@ -215,8 +227,9 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
           </TouchableOpacity>;
         })}</View>
         <View style={styles.compileCard}>
-          <View><Text style={styles.compileEyebrow}>READY TO TRAIN</Text><Text style={styles.compileName}>{name.trim()}</Text></View>
+          <View><Text style={styles.compileEyebrow}>PROFILE READY</Text><Text style={styles.compileName}>{name.trim()}</Text></View>
           <Text style={styles.compileSummary}>{summary}</Text>
+          <Text style={styles.compileSummary}>Your first session will be ready on Today. Adjust exercises as you go.</Text>
         </View>
       </>;
     }
@@ -239,13 +252,13 @@ export const ProfileSetupScreen: React.FC<Props> = ({ initialName = '', onComple
         </ScrollView>
       </Animated.View>
       <View style={styles.footer}>
-        <TouchableOpacity accessibilityLabel="Previous step" disabled={stepIndex === 0 || animating}
+        <TouchableOpacity accessibilityLabel="Previous step" disabled={stepIndex === 0 || animating || saving}
           style={[styles.backButton, stepIndex === 0 && styles.backButtonHidden]} onPress={() => moveTo(stepIndex - 1)}>
           <Ionicons name="arrow-back" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
-        <TouchableOpacity activeOpacity={0.82} disabled={animating} style={styles.continueButton} onPress={continueFlow}>
-          <Text style={styles.continueText}>{isLast ? 'Create my plan' : 'continue'}</Text>
-          <Ionicons name={isLast ? 'flash' : 'arrow-forward'} size={18} color={colors.accentText} />
+        <TouchableOpacity activeOpacity={0.82} disabled={animating || saving} style={styles.continueButton} onPress={continueFlow}>
+          <Text style={styles.continueText}>{saving ? 'Preparing…' : isLast ? 'Prepare my workout' : 'continue'}</Text>
+          <Ionicons name="arrow-forward" size={18} color={colors.accentText} />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>

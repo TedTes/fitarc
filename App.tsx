@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { AthleteLoadingScreen } from './src/components/AthleteBackdrop';
 import { AuthNavigator } from './src/screens/AuthNavigator';
 import { ProfileSetupScreen, type ProfileSetupData } from './src/screens/ProfileSetupScreen';
+import { prepareOnboardingTraining } from './src/runtime/onboarding';
+import { loadRuntimeState, saveRuntimeState } from './src/runtime/runtimeStore';
 import { TrainingRuntimeScreen } from './src/screens/TrainingRuntimeScreen';
 import { fetchUserProfile, saveUserProfile, getSignedAvatarUrl } from './src/services/userProfileService';
 import { completeAuthRedirect } from './src/services/authService';
@@ -59,15 +61,23 @@ function AppContent() {
   const setup = async (data: ProfileSetupData) => {
     if (!account) return;
     try {
-      await saveProfile({
+      const nextProfile: User = {
         ...profile, id: account.id, name: data.name, sex: data.sex, age: data.age,
         heightCm: data.heightCm, weightKg: data.weightKg, experienceLevel: data.experienceLevel,
         trainingSplit: data.trainingSplit, eatingMode: data.eatingMode,
         currentPhysiqueLevel: 1, createdAt: profile?.createdAt ?? new Date().toISOString(),
         planPreferences: { primaryGoal: data.primaryGoal, daysPerWeek: data.daysPerWeek,
           sessionMinutes: data.sessionMinutes, equipmentLevel: data.equipmentLevel, injuries: data.injuries },
-      });
-    } catch { Alert.alert('Profile save failed', 'Please check your connection and try again.'); }
+      };
+      const loaded = await loadRuntimeState(account.id);
+      if (loaded.cloud === 'unavailable') throw new Error('Connect to the internet to prepare your first workout.');
+      if (loaded.cloud === 'conflict') throw new Error('Resolve the saved-workout conflict before completing setup.');
+      const prepared = prepareOnboardingTraining(loaded.state, nextProfile);
+      const saved = await saveRuntimeState(account.id, prepared);
+      if (saved.cloud !== 'synced') throw new Error('Your workout is saved on this device but has not synced. Check your connection and try again.');
+      await saveUserProfile(nextProfile);
+      setProfile(nextProfile);
+    } catch (error) { Alert.alert('Could not prepare your training', error instanceof Error ? error.message : 'Please check your connection and try again.'); }
   };
   if (isLoading || (isAuthenticated && restoring)) return <AthleteLoadingScreen message="Restoring your training…" />;
   if (!isAuthenticated) return <AuthNavigator />;
@@ -82,7 +92,7 @@ function AppContent() {
   </View>;
   if (!profile || !hasRequiredPlanInputs(profile)) return <ProfileSetupScreen
     initialName={String(account?.user_metadata?.full_name ?? account?.user_metadata?.name ?? '')}
-    onComplete={(data) => void setup(data)} />;
+    onComplete={setup} />;
   return <TrainingRuntimeScreen key={profile.id} user={profile} onSaveProfile={saveProfile}
     onLogout={signOut} onDeleteAccount={async () => { await deleteAccount(); await signOut(); }} />;
 }
