@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
+import { withNetworkTimeout } from '../lib/networkTimeout';
 import { RUNTIME_EXERCISES } from '../runtime/exerciseCatalog';
 import { TRAINING_TABLES } from '../runtime/dataModel';
 import { validateCatalog } from '../runtime/catalogValidation';
@@ -11,8 +12,8 @@ export async function loadExerciseCatalog(): Promise<ExerciseDefinition[]> {
   try {
     const definitions: unknown[] = [];
     for (let offset = 0; ; offset += 500) {
-      const { data, error } = await supabase.from(TRAINING_TABLES.exercises)
-        .select('definition').eq('status', 'approved').order('id').range(offset, offset + 499);
+      const { data, error } = await withNetworkTimeout(signal => supabase.from(TRAINING_TABLES.exercises)
+        .select('definition').eq('status', 'approved').order('id').range(offset, offset + 499).abortSignal(signal));
       if (error) throw error;
       definitions.push(...(data ?? []).map((row) => row.definition));
       if (!data || data.length < 500) break;

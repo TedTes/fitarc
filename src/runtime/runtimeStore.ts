@@ -1,6 +1,7 @@
 import { upgradeStoredTraining } from './upgradeStoredTraining';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
+import { withNetworkTimeout } from '../lib/networkTimeout';
 import { loadExerciseCatalog } from '../services/exerciseCatalogService';
 import { toStoredTraining, fromStoredTraining } from './trainingState';
 import { createRuntimeId } from './id';
@@ -28,16 +29,16 @@ const persistence = (userId: string) => {
     writeLocal: async (value) => AsyncStorage.setItem(keyFor(userId), JSON.stringify({ ...value, state: toStoredTraining(value.state), pendingState: value.pendingState ? toStoredTraining(value.pendingState) : undefined })),
     backup: async (value) => AsyncStorage.setItem(`${keyFor(userId)}:conflict:${createRuntimeId()}`, JSON.stringify({ ...value, state: toStoredTraining(value.state), pendingState: value.pendingState ? toStoredTraining(value.pendingState) : undefined })),
     readRemote: async () => {
-      const { data, error } = await supabase.rpc('fitarc_read_training');
+      const { data, error } = await withNetworkTimeout(signal => supabase.rpc('fitarc_read_training').abortSignal(signal));
       if (error) throw error;
       if (data?.userId !== userId) throw new Error('Signed-in account changed.');
       return { ...data, state: data.state ? fromStoredTraining(data.state) : null } as RemoteSnapshot;
     },
     writeRemote: async (state, revision, mutationId) => {
       const payload = toStoredTraining(state);
-      const { data, error } = await supabase.rpc('fitarc_save_training', {
+      const { data, error } = await withNetworkTimeout(signal => supabase.rpc('fitarc_save_training', {
         p_state: payload, p_expected_revision: revision, p_mutation_id: mutationId,
-      });
+      }).abortSignal(signal));
       if (error) throw error;
       return data as { revision: number; conflict: boolean };
     },
