@@ -1,3 +1,4 @@
+import { useWorkoutWorkspace } from './useWorkoutWorkspace';
 import { datePlusDays } from '../../runtime/planDates';
 import { saveWorkoutSchedule } from '../../runtime/workoutSchedule';
 import { WorkoutCalendar } from './WorkoutCalendar';
@@ -204,24 +205,6 @@ const styles=StyleSheet.create({
 const WorkoutWorkspace = ({state,proposal,apply,notify,onDockChange}: Pick<Props,'state'|'apply'|'notify'|'onDockChange'> & {
   proposal: ReturnType<typeof previewTrainingSessionDetailed> | null | undefined;
 }) => {
-  const prepared = useMemo<RuntimeState>(() => proposal ? {
-    ...state, block: state.block ? {...state.block,currentWeek:proposal.weekNumber} : null,
-    activeSession: {...proposal.prescription,status:'active'},
-    sessions:[...state.sessions,{...proposal.prescription,status:'active'}],
-  } : state,[state,proposal]);
-  const [draft,setDraft]=useState<{base:string;state:RuntimeState}|null>(null);
-  const workspace=state.activeSession?state:draft&&draft.base===prepared.activeSession?.id?draft.state:prepared;
-  const update:Props['apply'] = transform => {
-    if(state.activeSession) return apply(transform);
-    try {
-      const next=transform(workspace);
-      const hasLogged=next.setResults.some(result=>result.prescriptionId===workspace.activeSession?.id);
-      if(!hasLogged){setDraft(next.activeSession?{base:prepared.activeSession!.id,state:next}:null);return {ok:true,state:next};}
-      return apply(current=>{
-        if(current.activeSession||current.updatedAt!==state.updatedAt||current.block?.id!==state.block?.id) throw Error('Your workout changed. Reopen Today and try again.');
-        return next;
-      });
-    } catch(error){return {ok:false,error};}
-  };
+  const { workspace, update } = useWorkoutWorkspace(state, proposal, apply);
   return <SetLogger state={workspace} apply={update} notify={notify} onDockChange={onDockChange}/>;
 };

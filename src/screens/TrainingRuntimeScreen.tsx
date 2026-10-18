@@ -23,7 +23,7 @@ import { SourceIntake } from './runtime/SourceIntake';
 import { AccountSurface } from './runtime/AccountSurface';
 import { BlockSurface } from './runtime/BlockSurface';
 import { TodaySurface } from './runtime/TodaySurface';
-import type { WorkoutDockState } from './runtime/SetLogger';
+import { WorkoutRestDock, type WorkoutDockState } from './runtime/WorkoutTimers';
 import { WeekSurface } from './runtime/WeekSurface';
 import { useMonoFonts } from './runtime/fonts';
 import { useLayoutMotion } from './runtime/useLayoutMotion';
@@ -43,7 +43,6 @@ const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typ
   { key: 'account', label: 'Profile', spoken: 'Profile settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Profile, training preferences, and account controls' },
 ];
 const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, account: 3 };
-const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
 const EmptyTrainingSurface = ({ title, message }: { title: string; message: string }) => (
   <View style={{ flex: 1, padding: space.lg, gap: space.lg }}>
@@ -368,18 +367,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
             },
           ]}
         >
-          <View style={styles.dockRow}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Rest timer ${formatClock(workoutDock?.seconds ?? 0)}. Skip rest`} onPress={workoutDock?.onSkip} style={({pressed})=>[styles.dockReadout,pressed&&styles.pressed]}>
-              <Ionicons name="timer-outline" size={22} color={colors.accent}/>
-              <Txt variant="code" style={styles.dockTime}>{formatClock(workoutDock?.seconds ?? 0)}</Txt>
-              <Txt variant="mono" tone="secondary" style={styles.dockLabel}>resting</Txt>
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Skip rest" onPress={workoutDock?.onSkip} style={({pressed})=>[styles.dockAction,pressed&&styles.pressed]}>
-              <Txt variant="code" tone="accent">skip</Txt>
-              <Ionicons name="chevron-forward" size={18} color={colors.accent}/>
-            </Pressable>
-          </View>
-          <View style={styles.dockTrack}><View style={[styles.dockFill,{width:`${Math.min(100,(workoutDock?.seconds??0)/Math.max(1,workoutDock?.durationSeconds??1)*100)}%`}]}/></View>
+          {workoutDock ? <WorkoutRestDock dock={workoutDock}/> : null}
         </Animated.View>
       </Animated.View>
       {quickWorkoutOpen?<NewWorkoutSheet state={state} defaults={defaultSource} apply={apply}
@@ -403,14 +391,7 @@ const styles = StyleSheet.create({
   bottomLayer: { ...StyleSheet.absoluteFillObject },
   tabsLayer: { flexDirection: 'row', backgroundColor: colors.surface },
   dockLayer: { justifyContent: 'center', backgroundColor: colors.surface, paddingHorizontal: space.lg },
-  dockRow: { flexDirection: 'row', alignItems: 'center', minHeight: 52 },
-  dockTrack: { height: 3, borderRadius: 2, overflow: 'hidden', backgroundColor: colors.border },
-  dockFill: { height: 3, backgroundColor: colors.accent },
   tab: { zIndex: 1, flex: 1, minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: 2, paddingTop: space.sm },
   pressed: { opacity: 0.7 },
   liveDot: { position: 'absolute', top: -2, right: -6, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.warning, borderWidth: 1, borderColor: colors.surface },
-  dockReadout: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dockLabel: { fontSize: 11, lineHeight: 14 },
-  dockTime: { color: colors.accent, fontSize: 27, lineHeight: 31, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  dockAction: { minWidth: 64, minHeight: 44, flexDirection: 'row', gap: 4, alignItems: 'center', justifyContent: 'flex-end' },
 });

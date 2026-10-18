@@ -1,6 +1,8 @@
 import { matchesGroup, workoutGroup } from '../../runtime/exercisePools';
-import { removeSessionExercise, restoreSessionExercise } from '../../runtime/removeExercise';
+import { removeSessionExercise, restoreSessionExercise, type RemovedExercise } from '../../runtime/removeExercise';
 import { SwipeDeleteCard } from './SwipeDeleteCard';
+import { WorkoutElapsed, type WorkoutDockState } from './WorkoutTimers';
+export type { WorkoutDockState } from './WorkoutTimers';
 import { useWeightSettings, WeightRangeSheet } from './WeightSettings';
 import { toKg, weightText } from '../../runtime/weights';
 import { exerciseAlternatives } from '../../runtime/recommendations';
@@ -33,12 +35,6 @@ type Props = {
   onDockChange: (dock: WorkoutDockState | null) => void;
 };
 
-export type WorkoutDockState = {
-  seconds: number;
-  durationSeconds: number;
-  onSkip: () => void;
-};
-
 type RestState = { until:number; durationSeconds:number; exerciseId:string };
 
 /** What the engine uses as a replacement's first load. Mirrors substituteRuntimeExercise. */
@@ -65,7 +61,6 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const [sheet,setSheet]=useState<null|'menu'|'swap'|'details'|'swapDetails'|'add'>(null);
   const [inspectedExercise,setInspectedExercise]=useState<ExerciseDefinition|null>(null);
   const [swapPreview,setSwapPreview]=useState<ExerciseDefinition|null>(null);
-  const [clockNow,setClockNow]=useState(Date.now);
   const [rest,setRest]=useState<RestState|null>(()=>{
     if(!lastResult)return null;
     const lift=session?.exercises.find(item=>item.exercise.id===lastResult.exerciseId);
@@ -87,15 +82,12 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const entry=chosen??session?.exercises[0];
   const pendingSet=entry?.sets.find(item=>item.status==='pending');
   const set=pendingSet??entry?.sets[entry.sets.length-1];
-  useEffect(()=>{const timer=setInterval(()=>setClockNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
   const restHasNextSet=Boolean(rest&&session?.exercises.find(entry=>entry.exercise.id===rest.exerciseId)?.sets.some(set=>set.status==='pending'));
-  useEffect(()=>{if(rest&&(clockNow>=rest.until||!restHasNextSet))setRest(null);},[clockNow,rest,restHasNextSet]);
-  const resting=Boolean(rest&&rest.until>clockNow&&restHasNextSet);
-  const secondsLeft=rest?Math.max(0,Math.ceil((rest.until-clockNow)/1000)):0;
+  useEffect(()=>{if(rest&&!restHasNextSet)setRest(null);},[rest,restHasNextSet]);
   const skipRest=useCallback(()=>setRest(null),[]);
   useEffect(()=>{
-    onDockChange(session&&resting&&rest?{seconds:secondsLeft,durationSeconds:rest.durationSeconds,onSkip:skipRest}:null);
-  },[onDockChange,session?.id,resting,secondsLeft,rest?.durationSeconds,skipRest]);
+    onDockChange(session&&restHasNextSet&&rest?{until:rest.until,durationSeconds:rest.durationSeconds,onSkip:skipRest}:null);
+  },[onDockChange,session?.id,restHasNextSet,rest,skipRest]);
   const progress=sessionProgress(state);
   if(session&&!session.exercises.length)return <EmptyWorkoutLogger state={state} apply={apply}/>;
   if(!session||!entry||!set||!progress)return null;
@@ -118,15 +110,23 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   };
 
   const deleteExercise = (entryId: string) => {
-    const index=session.exercises.findIndex(item=>item.id===entryId);
-    if(index<0)return;
-    const removed={sessionId:session.id,index,entry:session.exercises[index]};
-    report(currentApply.current(current=>removeSessionExercise(current,entryId)),()=>{
-      setRest(current=>current?.exerciseId===removed.entry.exercise.id?null:current);
+    let removed: RemovedExercise | undefined;
+    const outcome = currentApply.current(current => {
+      const active = current.activeSession;
+      if (!active || active.id !== session.id) throw Error('This workout has ended.');
+      const index = active.exercises.findIndex(item => item.id === entryId);
+      if (index < 0) throw Error('Exercise already removed.');
+      removed = { sessionId: active.id, index, entry: active.exercises[index] };
+      return removeSessionExercise(current, entryId);
+    });
+    report(outcome,()=>{
+      if (!removed) return;
+      const snapshot = removed;
+      setRest(current=>current?.exerciseId===snapshot.entry.exercise.id?null:current);
       setSelectedExerciseId(undefined);
-      const logged=removed.entry.sets.filter(set=>set.result).length;
-      notify({tone:'info',title:`${removed.entry.exercise.name} deleted`,message:logged?`${logged} logged sets removed from today.`:undefined,
-        action:{label:'Undo',run:()=>{report(currentApply.current(current=>restoreSessionExercise(current,removed)),()=>setSelectedExerciseId(removed.entry.exercise.id));}}});
+      const logged=snapshot.entry.sets.filter(set=>set.result).length;
+      notify({tone:'info',title:`${snapshot.entry.exercise.name} deleted`,message:logged?`${logged} logged sets removed from today.`:undefined,
+        action:{label:'Undo',run:()=>{report(currentApply.current(current=>restoreSessionExercise(current,snapshot)),()=>setSelectedExerciseId(snapshot.entry.exercise.id));}}});
     });
   };
 
@@ -155,7 +155,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       if(!correction){
         const duration=restSecondsFor(state.source?.goal??'hypertrophy',exercise.compound);
         const hasNextSet=outcome.ok&&outcome.state.activeSession?.exercises.find(entry=>entry.exercise.id===exercise.id)?.sets.some(set=>set.status==='pending');
-        setClockNow(Date.now());setRest(hasNextSet?{until:Date.now()+duration*1000,durationSeconds:duration,exerciseId:exercise.id}:null);
+        setRest(hasNextSet?{until:Date.now()+duration*1000,durationSeconds:duration,exerciseId:exercise.id}:null);
       }
     });
     confirming.current=false;setSubmitting(false);
@@ -214,7 +214,6 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const allSets=session.exercises.flatMap(item=>item.sets);
   const completed=allSets.filter(item=>item.status==='completed').length;
   const startedAt=session.startedAt??results[0]?.completedAt;
-  const elapsed=startedAt?Math.max(0,Math.floor((clockNow-Date.parse(startedAt))/1000)):0;
   const upcoming=session.exercises.filter(item=>item.exercise.id!==chosen?.exercise.id&&item.sets.some(s=>s.status==='pending'));
   const finished=session.exercises.filter(item=>item.exercise.id!==chosen?.exercise.id&&!item.sets.some(set=>set.status==='pending')&&item.sets.some(set=>set.result));
   const logged=entry.sets.filter(item=>item.result);
@@ -225,9 +224,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
         <Txt variant="heading" style={styles.flex}>Today’s workout</Txt>
         <IconButton icon="add" label="Add exercise" onPress={()=>setSheet('add')}/>
       </View>
-      <Txt variant="mono" tone="muted" style={styles.meta}>
-        <Txt variant="mono" style={[styles.meta,{color:startedAt?colors.success:colors.accent}]}>{startedAt?`● ${formatTime(elapsed).padStart(5,'0')} elapsed`:'Ready'}</Txt>{` · ${completed} of ${allSets.length} sets`}
-      </Txt>
+      <WorkoutElapsed startedAt={startedAt} completed={completed} total={allSets.length}/>
       {state.source?.routine?.selectionMode==='pools'?<Txt variant="caption" tone="secondary">{state.block?.slots.find(slot=>slot.id===session.slotId)?.label}</Txt>:null}
       <View style={styles.progressRow} accessibilityLabel={`${completed} of ${allSets.length} sets completed`}>
         {allSets.map(item=><View key={item.id} style={[styles.segment,item.status==='completed'&&styles.segmentDone]}/>)}
