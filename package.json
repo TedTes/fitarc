@@ -20,7 +20,8 @@
     "routine-setup:check": "node scripts/check-routine-setup.cjs",
     "workout-summary:check": "node scripts/check-workout-summary.cjs",
     "pools:check": "node scripts/check-exercise-pools.cjs",
-    "next-workout:check": "node scripts/check-next-workout.cjs"
+    "next-workout:check": "node scripts/check-next-workout.cjs",
+    "reliability:check": "node scripts/check-sync-recovery.cjs && node scripts/check-weekly-streak.cjs && node scripts/check-autosave.cjs && node scripts/check-profile-outbox.cjs && node scripts/check-profile-service.cjs && node scripts/check-workout-interactions.cjs && node scripts/check-exercise-removal.cjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -57,6 +58,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@types/react": "~19.1.10",
+    "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2"
   },
   "overrides": {
