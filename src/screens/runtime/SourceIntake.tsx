@@ -1,4 +1,5 @@
 import { groupDraft } from '../../routineSetup/pools';
+import { useFlushOnLeave } from '../../hooks/useFlushOnLeave';
 import { isPoolPattern } from '../../runtime/exercisePools';
 import { useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet } from 'react-native';
@@ -42,6 +43,7 @@ export const SourceIntake=({inline=false,initial,onSave,onClose,sync,catalog=RUN
   };
   useEffect(()=>{const timer=setTimeout(()=>flush(),450);return()=>clearTimeout(timer);},[editor]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;request.current?.abort();flush();};},[]);
+  useFlushOnLeave(() => flush());
   const context:RoutineInputContext={split:editor.draft.preferredSplit,days:(editor.draft.days.value??editor.settings.daysPerWeek) as TrainingSource['daysPerWeek'],minutes:editor.draft.minutes.value??editor.settings.sessionMinutes};
   const interpret=async(local=false)=>{
     const input=latest.current;

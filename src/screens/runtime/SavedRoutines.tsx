@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useFlushOnLeave } from '../../hooks/useFlushOnLeave';
 import { Keyboard, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ExerciseDefinition, RuntimeState } from '../../runtime/types';
@@ -11,7 +12,8 @@ import { ExerciseDetailsSheet } from './ExerciseMuscles';
 import { PlanText } from './PlanKit';
 import { colors, space, planTokens as t } from './theme';
 
-export function SavedRoutines({ state, onUseRoutine, onRenameRoutine, onBack }: {
+export function SavedRoutines({ state, onUseRoutine, onRenameRoutine, onBack, active = true }: {
+  active?: boolean;
   state: RuntimeState;
   onBack: () => void;
   onRenameRoutine: (id: string, name: string) => string | undefined;
@@ -39,6 +41,7 @@ export function SavedRoutines({ state, onUseRoutine, onRenameRoutine, onBack }: 
     }
     setError(onRenameRoutine(pending.id, pending.value) ?? '');
   };
+  useFlushOnLeave(() => finishEditing(), active);
 
   return <View style={styles.screen} onTouchStart={() => { finishingTouch.current = Boolean(pendingName.current); finishEditing(); }}>
     <View style={styles.header}>

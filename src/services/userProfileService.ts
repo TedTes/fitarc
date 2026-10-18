@@ -3,6 +3,9 @@ import { TRAINING_TABLES } from '../runtime/dataModel';
 import { supabase } from '../lib/supabaseClient';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
+import { createProfileOutbox } from './profileOutbox';
+import { createRuntimeId } from '../runtime/id';
+import { withNetworkTimeout } from '../lib/networkTimeout';
 import {
   User,
   ExperienceLevel,
@@ -28,6 +31,34 @@ export type RemoteProfileRow = {
   plan_preferences?: User['planPreferences'] | null;
   created_at: string;
 };
+
+const profileOutboxes = new Map<string, ReturnType<typeof createProfileOutbox<RemoteProfileRow>>>();
+const profileOutbox = (userId: string) => {
+  const existing = profileOutboxes.get(userId);
+  if (existing) return existing;
+  const key = `${profileKey(userId)}:pending`;
+  const outbox = createProfileOutbox<RemoteProfileRow>({
+    createId: createRuntimeId,
+    read: async () => {
+      const raw = await AsyncStorage.getItem(key);
+      if (!raw) return null;
+      const pending = JSON.parse(raw) as { id: string; value: RemoteProfileRow };
+      if (pending.value?.user_id !== userId || !pending.id) throw Error('Invalid saved profile edit.');
+      return pending;
+    },
+    write: value => AsyncStorage.setItem(key, JSON.stringify(value)),
+    clear: () => AsyncStorage.removeItem(key),
+    cache: value => AsyncStorage.setItem(profileKey(userId), JSON.stringify(value)),
+    upload: async value => {
+      const { error } = await withNetworkTimeout(signal => supabase.from(PROFILE_TABLE).upsert(value).abortSignal(signal));
+      if (error) throw error;
+    },
+  });
+  profileOutboxes.set(userId, outbox);
+  return outbox;
+};
+
+export const flushPendingUserProfile = (userId: string) => profileOutbox(userId).flush();
 
 const calculateAgeFromBirthDate = (birthDate?: string | null) => {
   if (!birthDate) return 0;
@@ -85,11 +116,19 @@ export const getSignedAvatarUrl = async (path: string): Promise<string | undefin
 };
 
 export const fetchUserProfile = async (userId: string): Promise<User | null> => {
-  const { data, error } = await supabase
+  const outbox = profileOutbox(userId);
+  await outbox.flush().catch(() => undefined);
+  const pending = await outbox.pending();
+  if (pending) return mapRowToUser(pending.value);
+  const { data, error } = await withNetworkTimeout(signal => supabase
     .from(PROFILE_TABLE)
     .select('*')
     .eq('user_id', userId)
-    .maybeSingle();
+    .abortSignal(signal).maybeSingle());
+
+  // Edits made while this read was in flight take precedence over its old row.
+  const newer = await outbox.pending();
+  if (newer) return mapRowToUser(newer.value);
 
   if (error) {
     const cached = await AsyncStorage.getItem(profileKey(userId));
@@ -130,12 +169,9 @@ export const saveUserProfile = async (user: User): Promise<void> => {
     payload.tracking_preferences = user.trackingPreferences ?? null;
   }
 
-  const { error } = await supabase.from(PROFILE_TABLE).upsert(payload);
-
-  if (error) {
-    throw error;
-  }
-  await AsyncStorage.setItem(profileKey(user.id), JSON.stringify(payload));
+  const outbox = profileOutbox(user.id);
+  await outbox.stage(payload);
+  await outbox.flush();
 };
 
 export const updateTrackingPreferences = async (

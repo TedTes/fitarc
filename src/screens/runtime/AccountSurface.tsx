@@ -1,4 +1,6 @@
 import { SavedRoutines } from './SavedRoutines';
+import { weeklyStreak } from '../../runtime/weeklyStreak';
+import { useFlushOnLeave } from '../../hooks/useFlushOnLeave';
 import { useWeightSettings } from './WeightSettings';
 import { toKg, weightText } from '../../runtime/weights';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -94,12 +96,7 @@ export const AccountSurface = ({ user, active = true, state, sync, routineContro
     const ids = new Set(done.map(session => session.id));
     const results = state.setResults.filter(result => ids.has(result.prescriptionId) && result.completedReps > 0);
     const volume = results.reduce((sum, result) => sum + (result.actualLoadKg ?? result.prescribedLoadKg) * result.completedReps, 0);
-    // Weeks in a row (ending this week or last) with at least one finished workout.
-    const weekOf = (date: string) => Math.floor(Date.parse(`${date}T12:00:00Z`) / (7 * 86400000));
-    const weeks = new Set(done.map(session => weekOf(session.context.date)));
-    let week = weekOf(new Date().toISOString().slice(0, 10)), streak = 0;
-    if (!weeks.has(week)) week -= 1;
-    while (weeks.has(week)) { streak += 1; week -= 1; }
+    const streak = weeklyStreak(done.map(session => session.context.date));
     const best = results.reduce<typeof results[number] | null>((top, result) =>
       (result.actualLoadKg ?? result.prescribedLoadKg) > (top ? top.actualLoadKg ?? top.prescribedLoadKg : 0) ? result : top, null);
     const catalog = [...(state.block?.catalog ?? []), ...(state.catalog ?? [])];
@@ -158,6 +155,7 @@ export const AccountSurface = ({ user, active = true, state, sync, routineContro
     const timer=setTimeout(()=>void persistProfile(),600);
     return()=>clearTimeout(timer);
   },[editVersion,name,age,height,weight,sex,experience,avatarUrl,avatarPath,unit]);
+  useFlushOnLeave(persistProfile, active);
   const closeProfileEditor=async()=>{
     if(uploadingAvatar)return;
     const version=revision.current;
@@ -275,7 +273,7 @@ export const AccountSurface = ({ user, active = true, state, sync, routineContro
           <Txt variant="caption" tone="danger">{deleting?'Deleting account…':'Delete account'}</Txt>
         </Pressable>
       </ScrollView>
-      {routinesOpen ? <SavedRoutines state={state} onUseRoutine={onUseRoutine} onRenameRoutine={onRenameRoutine} onBack={() => setRoutinesOpen(false)}/> : null}
+      {routinesOpen ? <SavedRoutines active={active} state={state} onUseRoutine={onUseRoutine} onRenameRoutine={onRenameRoutine} onBack={() => setRoutinesOpen(false)}/> : null}
 
       <Sheet visible={editingProfile} onClose={() => void closeProfileEditor()} title="Edit profile">
         <View style={styles.avatarEditor}>

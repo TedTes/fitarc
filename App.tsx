@@ -9,7 +9,7 @@ import { ProfileSetupScreen, type ProfileSetupData } from './src/screens/Profile
 import { prepareOnboardingTraining } from './src/runtime/onboarding';
 import { loadRuntimeState, saveRuntimeState } from './src/runtime/runtimeStore';
 import { TrainingRuntimeScreen } from './src/screens/TrainingRuntimeScreen';
-import { fetchUserProfile, saveUserProfile, getSignedAvatarUrl } from './src/services/userProfileService';
+import { fetchUserProfile, saveUserProfile, getSignedAvatarUrl, flushPendingUserProfile } from './src/services/userProfileService';
 import { completeAuthRedirect } from './src/services/authService';
 import { deleteAccount } from './src/services/accountService';
 import { hasRequiredPlanInputs } from './src/utils/planReadiness';
@@ -46,7 +46,9 @@ function AppContent() {
   }, [account?.id, isAuthenticated, attempt]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
-      if (next !== 'active' || !profile?.avatarPath) return;
+      if (next !== 'active' || !profile) return;
+      void flushPendingUserProfile(profile.id).catch(() => undefined);
+      if (!profile.avatarPath) return;
       const id = profile.id;
       void getSignedAvatarUrl(profile.avatarPath).then((avatarUrl) => {
         if (avatarUrl) setProfile((current) => current?.id === id ? { ...current, avatarUrl } : current);
