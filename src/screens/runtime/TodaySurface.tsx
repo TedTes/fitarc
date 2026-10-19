@@ -49,13 +49,14 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
   const [swapTarget,setSwapTarget]=useState<ExerciseDefinition|null>(null);
   const date = todayISO();
   const session = state.activeSession;
-  const previousSession = useRef(session?.id);
+  const previousCommits = useRef(new Set(state.committedSessionIds));
   useEffect(()=>{
-    const previous=previousSession.current;
-    previousSession.current=session?.id;
-    if(previous&&!session&&active&&state.sessions.some(item=>item.id===previous&&item.status==='committed'))setCelebrationId(previous);
+    // A one-exercise preview can be started and finished by the same Done tap.
+    const completed=state.committedSessionIds.find(id=>!previousCommits.current.has(id));
+    previousCommits.current=new Set(state.committedSessionIds);
+    if(completed&&!session&&active)setCelebrationId(completed);
     if(session||!active)setCelebrationId(null);
-  },[session?.id,state.sessions,active]);
+  },[session?.id,state.committedSessionIds,active]);
   useEffect(()=>{
     if(!celebrationId)return;
     const timeout=setTimeout(()=>setCelebrationId(null),2600);

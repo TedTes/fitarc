@@ -75,7 +75,7 @@ export const ExerciseSectionHeader=({entry,active,expanded,ready=false,onMuscleP
           {muscleList(entry.exercise.primaryMuscles)}{prescription?` · ${entry.sets.length} × ${prescription.minReps===prescription.maxReps?prescription.maxReps:`${prescription.minReps}–${prescription.maxReps}`}`:''}
         </Txt>
       </View>
-      {active&&pending?<View style={[styles.setBadge,ready&&{backgroundColor:colors.accentSoft,borderColor:colors.accentSoft}]}><Txt variant="mono" tone={ready?'accent':'success'} style={styles.sectionMeta}>set {pending.setNumber}/{entry.sets.length}</Txt></View>
+      {active&&pending?<View style={[styles.setBadge,ready&&{backgroundColor:colors.accentSoft,borderColor:colors.accentSoft}]}><Txt variant="mono" tone={ready?'accent':'success'} style={styles.sectionMeta}>{entry.sets.length} sets</Txt></View>
         :<Txt variant="mono" tone="muted" style={styles.sectionMeta}>{done}/{entry.sets.length}</Txt>}
       {!active?<Ionicons name={expanded?'chevron-up':'chevron-forward'} size={14} color={colors.textMuted}/>:null}
     </Pressable>

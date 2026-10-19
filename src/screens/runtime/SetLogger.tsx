@@ -1,3 +1,5 @@
+import { completeRuntimeExercise } from '../../runtime/completeExercise';
+import { WorkoutCelebration } from './WorkoutCelebration';
 import { matchesGroup, workoutGroup } from '../../runtime/exercisePools';
 import { removeSessionExercise, restoreSessionExercise, type RemovedExercise } from '../../runtime/removeExercise';
 import { SwipeDeleteCard } from './SwipeDeleteCard';
@@ -11,8 +13,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  addRuntimeExercise, correctRuntimeSet, commitRuntimeSession, getSwapCandidates, recordRuntimeSet, skipRemainingRuntimeSets, skipRuntimeExercise,
-  restSecondsFor, substituteRuntimeExercise, undoLastRuntimeSet,
+  addRuntimeExercise, commitRuntimeSession, correctRuntimeSet, getSwapCandidates, skipRemainingRuntimeSets, skipRuntimeExercise,
+  restSecondsFor, substituteRuntimeExercise,
 } from '../../runtime';
 import type { ExerciseDefinition, RuntimeState, SessionPrescription, SetPrescription } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
@@ -44,7 +46,7 @@ const startingLoad = (state: RuntimeState, exercise: ExerciseDefinition, target:
   return state.workingSets[exercise.id]?.loadKg ?? state.source?.seedWorkingSets.find(item=>item.exerciseId===exercise.id)?.loadKg ?? (exercise.compound?20:10);
 };
 
-/** set.log: one prescription, one signal, the runtime's reply. Everything else is behind the menu. */
+/** Routine-backed exercise dock. Done confirms all displayed sets together. */
 export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   useEffect(() => () => onDockChange(null), [onDockChange]);
   const { animate } = useLayoutMotion();
@@ -58,6 +60,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const [selectedExerciseId,setSelectedExerciseId]=useState<string|null|undefined>(undefined);
   const [drafts,setDrafts]=useState<Record<string,Partial<SetRowValues>>>({});
   const [submitting,setSubmitting]=useState(false);
+  const [celebration,setCelebration]=useState(0);
+  useEffect(()=>{if(!celebration)return;const timer=setTimeout(()=>setCelebration(0),2000);return()=>clearTimeout(timer);},[celebration]);
   const [sheet,setSheet]=useState<null|'menu'|'swap'|'details'|'swapDetails'|'add'>(null);
   const [inspectedExercise,setInspectedExercise]=useState<ExerciseDefinition|null>(null);
   const [swapPreview,setSwapPreview]=useState<ExerciseDefinition|null>(null);
@@ -77,8 +81,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     previousUnit.current=unit;
     setDrafts(current=>Object.fromEntries(Object.entries(current).map(([id,draft])=>[id,draft.load?.trim()&&Number.isFinite(Number(draft.load))?{...draft,load:weightText(toKg(Number(draft.load),old),unit)}:draft])));
   },[unit]);
-  const defaultEntry=session?.exercises.find(item=>item.exercise.id===lastResult?.exerciseId)??session?.exercises[0];
+  const defaultEntry=session?.exercises.find(item=>item.sets.some(set=>set.status==='pending'))??session?.exercises[0];
   const chosen=selectedExerciseId===null?undefined:session?.exercises.find(item=>item.exercise.id===selectedExerciseId)??defaultEntry;
+  useEffect(()=>{confirming.current=false;},[session?.id,chosen?.id]);
   const entry=chosen??session?.exercises[0];
   const pendingSet=entry?.sets.find(item=>item.status==='pending');
   const set=pendingSet??entry?.sets[entry.sets.length-1];
@@ -92,12 +97,20 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   if(session&&!session.exercises.length)return <EmptyWorkoutLogger state={state} apply={apply}/>;
   if(!session||!entry||!set||!progress)return null;
   const exercise=entry.exercise;
-  const lastOfExercise=[...results].reverse().find(result=>result.exerciseId===exercise.id);
-  const canUndo=Boolean(lastOfExercise&&lastResult?.setId===lastOfExercise.setId);
   const remainingHere=entry.sets.filter(item=>item.status==='pending').length;
-  const rowValue=(item:SetPrescription)=>({...setRowValues(item,Boolean(entry.needsBaseline&&!entry.sets[entry.sets.indexOf(item)-1]?.result),unit),...drafts[item.id]});
+  const completedExercise=remainingHere===0&&entry.sets.some(item=>item.status==='completed');
+  const rowValue=(item:SetPrescription)=>({...setRowValues(item,unit),...drafts[item.id]});
+  const startFromScratch=()=>{
+    const outcome=currentApply.current(current=>{
+      if(current.activeSession?.id!==session.id||current.setResults.some(result=>result.prescriptionId===session.id))throw Error('This workout has already started.');
+      return current.activeSession.exercises.reduce((next,item)=>removeSessionExercise(next,item.id),current);
+    });
+    if(outcome.ok){animate();confirming.current=false;setSelectedExerciseId(undefined);setSheet(null);setDrafts({});setRest(null);}
+    else notify({tone:'error',title:'Could not clear workout',message:describeRuntimeError(outcome.error).message});
+  };
   const selectExercise=(id:string|null)=>{
     animate();
+    confirming.current=false;
     setSelectedExerciseId(id);
   };
 
@@ -130,35 +143,50 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     });
   };
 
-  const undoSet = () => {
-    const outcome = apply((current) => {
-      const latest = [...current.setResults].reverse().find((item) => item.prescriptionId === current.activeSession?.id);
-      if (!latest) throw new Error('nothing_to_undo');
-      return undoLastRuntimeSet(current);
+  const done = () => {
+    if(confirming.current||!remainingHere)return;
+    const rows=entry.sets.filter(item=>item.status!=='skipped');
+    if(!rows.length||rows.some(item=>!validSetRow(rowValue(item)))){
+      notify({tone:'info',title:'Check the weight and reps before marking Done'});return;
+    }
+    confirming.current=true;setSubmitting(true);
+    const values=rows.map(item=>{
+      const value=rowValue(item);
+      return {setId:item.id,actualLoadKg:item.result&&value.load===weightText(item.result.actualLoadKg??item.result.prescribedLoadKg,unit)
+        ?(item.result.actualLoadKg??item.result.prescribedLoadKg):value.load===weightText(item.loadKg,unit)?item.loadKg:toKg(Number(value.load),unit),completedReps:Number(value.reps),reportedRir:Number(value.rir)};
     });
-    report(outcome, () => { setRest(null); if(lastResult)setSelectedExerciseId(lastResult.exerciseId); });
+    animate();
+    const outcome=currentApply.current(current=>completeRuntimeExercise(current,session.id,entry.id,values));
+    if(report(outcome,()=>{
+      Keyboard.dismiss();setRest(null);setSheet(null);
+      const next=outcome.ok?outcome.state.activeSession?.exercises.find(item=>item.sets.some(set=>set.status==='pending')):undefined;
+      setSelectedExerciseId(next?.exercise.id??null);
+      setDrafts(previous=>{const next={...previous};rows.forEach(item=>delete next[item.id]);return next;});
+      setCelebration(value=>value+1);
+    })) {
+      // Keep repeated taps locked until the dock switches to the next exercise.
+      setSubmitting(false);
+    } else {confirming.current=false;setSubmitting(false);}
   };
 
-  const submit = (item:SetPrescription) => {
-    const value=rowValue(item);
-    if(confirming.current||item.status==='skipped'||!validSetRow(value))return;
-    confirming.current=true;setSubmitting(true);
-    const values={actualLoadKg:item.result&&value.load===weightText(item.result.actualLoadKg??item.result.prescribedLoadKg,unit)?(item.result.actualLoadKg??item.result.prescribedLoadKg):toKg(Number(value.load),unit),completedReps:Number(value.reps),reportedRir:Number(value.rir)};
-    const correction=item.status==='completed';
-    const outcome=apply(current=>correction?correctRuntimeSet(current,item.id,values):recordRuntimeSet(current,{
-      ...values,prescriptionId:session.id,setId:item.id,exerciseId:exercise.id,
-      prescribedLoadKg:item.loadKg,prescribedMinReps:item.minReps,prescribedMaxReps:item.maxReps,targetRir:item.targetRir,completedAt:new Date().toISOString(),
-    }));
-    report(outcome,()=>{
-      Keyboard.dismiss();
-      setDrafts(previous=>{const next={...previous};delete next[item.id];return next;});
-      if(!correction){
-        const duration=restSecondsFor(state.source?.goal??'hypertrophy',exercise.compound);
-        const hasNextSet=outcome.ok&&outcome.state.activeSession?.exercises.find(entry=>entry.exercise.id===exercise.id)?.sets.some(set=>set.status==='pending');
-        setRest(hasNextSet?{until:Date.now()+duration*1000,durationSeconds:duration,exerciseId:exercise.id}:null);
-      }
-    });
-    confirming.current=false;setSubmitting(false);
+  const changeRow = (item:SetPrescription,patch:Partial<SetRowValues>) => {
+    if(item.status!=='completed'){
+      setDrafts(previous=>({...previous,[item.id]:{...previous[item.id],...patch}}));return;
+    }
+    // Number-picker confirmation saves a correction directly, without completing
+    // the exercise again, advancing the dock, or replaying its celebration.
+    report(currentApply.current(current=>{
+      const active=current.activeSession;
+      const recorded=active?.exercises.find(candidate=>candidate.id===entry.id)?.sets.find(set=>set.id===item.id);
+      if(active?.id!==session.id||recorded?.status!=='completed'||!recorded.result)throw Error('This workout changed. Reopen the exercise.');
+      const value={...setRowValues(recorded,unit),...patch};
+      if(!validSetRow(value))throw Error('Check weight, repetitions and effort.');
+      const load=recorded.result.actualLoadKg??recorded.result.prescribedLoadKg;
+      return correctRuntimeSet(current,item.id,{
+        actualLoadKg:value.load===weightText(load,unit)?load:toKg(Number(value.load),unit),
+        completedReps:Number(value.reps),reportedRir:Number(value.rir),
+      });
+    }),()=>{});
   };
 
   const skipExercise = () => Alert.alert(
@@ -216,7 +244,6 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const startedAt=session.startedAt??results[0]?.completedAt;
   const upcoming=session.exercises.filter(item=>item.exercise.id!==chosen?.exercise.id&&item.sets.some(s=>s.status==='pending'));
   const finished=session.exercises.filter(item=>item.exercise.id!==chosen?.exercise.id&&!item.sets.some(set=>set.status==='pending')&&item.sets.some(set=>set.result));
-  const logged=entry.sets.filter(item=>item.result);
   const targetRest=restSecondsFor(state.source?.goal??'hypertrophy',exercise.compound);
   return (<View style={styles.page}>
     <View style={styles.workoutHeader}>
@@ -248,8 +275,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     </View>:null}
     </ScrollView>
     {chosen?<>
-      <View style={[styles.activeCard,{maxHeight:upcoming.length||finished.length?'78%':'100%'}]} testID="active-exercise-card">
-        <SwipeDeleteCard key={`header-${entry.id}`} label={exercise.name} onDelete={()=>deleteExercise(entry.id)} onComplete={finishEarly}><View style={styles.activeHeader}>
+      <View key={entry.id} style={[styles.activeCard,{maxHeight:upcoming.length||finished.length?'78%':'100%'}]} testID="active-exercise-card">
+        <SwipeDeleteCard key={`header-${entry.id}`} label={exercise.name} onDelete={()=>deleteExercise(entry.id)} onComplete={remainingHere?done:undefined}><View style={styles.activeHeader}>
           <View style={styles.flex}><ExerciseSectionHeader entry={entry} active={true} ready={!startedAt} expanded onPress={()=>selectExercise(null)} onMusclePress={()=>setInspectedExercise(exercise)}/></View>
           <Pressable accessibilityRole="button" accessibilityLabel="Exercise options" onPress={()=>setSheet('menu')} style={styles.smallAction}><Ionicons name="ellipsis-horizontal" size={18} color={colors.textMuted}/></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Collapse current exercise" onPress={()=>selectExercise(null)} style={styles.smallAction}><Ionicons name="chevron-up" size={16} color={colors.textMuted}/></Pressable>
@@ -261,15 +288,18 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
             <View style={styles.targetCell}><Txt variant="label" tone="muted" style={styles.meta}>REST</Txt><Txt variant="code">{formatTime(targetRest)}</Txt></View>
           </View>
           <SetTableHeader/>
-          {entry.sets.map(item=><EditableSetRow key={item.id} set={item} value={rowValue(item)} current={item.id===pendingSet?.id} busy={submitting}
-            onChange={patch=>setDrafts(previous=>({...previous,[item.id]:{...previous[item.id],...patch}}))} onConfirm={()=>submit(item)}/>)}
-          {logged.length?<View style={styles.historyFooter}>
-            {logged.length?<Txt variant="mono" tone="muted" style={styles.meta}>{remainingHere?`${remainingHere} sets left`:'All sets logged'}</Txt>:null}
-            {canUndo?<Pressable accessibilityRole="button" accessibilityLabel="Undo last recorded set" onPress={undoSet} style={styles.smallAction}><Ionicons name="arrow-undo" size={15} color={colors.textMuted}/></Pressable>:null}
-          </View>:null}
+          {entry.sets.map(item=><EditableSetRow key={item.id} set={item} value={rowValue(item)} busy={submitting}
+            onChange={patch=>changeRow(item,patch)}/>)}
         </ScrollView>
+        {remainingHere?<Pressable accessibilityRole="button" accessibilityLabel={`Done with ${exercise.name}`} accessibilityHint="Records this exercise’s sets and opens the next unfinished exercise."
+          disabled={submitting} accessibilityState={{disabled:submitting}} onPress={done} style={({pressed})=>[styles.doneAction,pressed&&styles.pressed]}>
+          <Txt variant="mono" tone="secondary" style={styles.meta}>Done</Txt>
+        </Pressable>:<View style={styles.doneAction} testID="completed-exercise-status">
+          <Txt variant="mono" tone={completedExercise?'success':'muted'} style={styles.meta}>{completedExercise?'Completed':'Skipped'}</Txt>
+        </View>}
       </View>
     </>:null}
+    {celebration?<WorkoutCelebration key={celebration}/>:null}
     </View>
 
       {rangeOpen?<WeightRangeSheet exerciseId={exercise.id} name={exercise.name} onClose={applied=>{setRangeOpen(false);if(applied)setDrafts(previous=>{const next={...previous};entry.sets.filter(set=>set.status==='pending').forEach(set=>{if(next[set.id]){const {load,...rest}=next[set.id];next[set.id]=rest;}});return next;});}}/>:null}
@@ -279,13 +309,15 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
         initialMuscles={state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.targetMuscles:undefined}
         catalog={(state.block?.catalog ?? state.catalog ?? []).filter(x=>(!sessionGroup||matchesGroup(x,sessionGroup)) && !session.exercises.some(e=>e.exercise.id===x.id) && !state.source?.excludedExerciseIds.includes(x.id) && !session.context.unavailableExerciseIds.includes(x.id) && !x.contraindications.some(tag=>state.source?.limitations.includes(tag)) && x.equipment.every(eq=>state.source?.equipment.includes(eq)&&!session.context.unavailableEquipment.includes(eq))).sort((a,b)=>{const pool=state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.plannedExercises:[];return Number(pool?.some(p=>p.exerciseId===b.id))-Number(pool?.some(p=>p.exerciseId===a.id));})}
         onClose={closeSheet}
-        onAdd={exercise=>report(apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2})),()=>{setSheet(null);notify({tone:'info',title:`${exercise.name} added`});})}
+        onAdd={exercise=>report(apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,...(current.source?.routine?.setDefaults??{sets:3,minReps:8,maxReps:12,targetRir:2})})),()=>{setSheet(null);notify({tone:'info',title:`${exercise.name} added`});})}
       />:null}
       <Sheet visible={sheet !== null && sheet !== 'add'} onClose={closeSheet} title={sheetTitle}>
         {sheet === 'menu' ? <>
         <OptionRow icon="barbell-outline" title="Weight range" detail={ranges[exercise.id]?`${weightText(ranges[exercise.id].minKg,unit)}–${weightText(ranges[exercise.id].maxKg,unit)} ${unit}`:undefined} onPress={()=>{setSheet(null);setRangeOpen(true);}}/>
         <OptionRow icon="swap-horizontal" title="Swap exercise" onPress={() => setSheet('swap')} />
         <OptionRow icon="play-skip-forward" title="Skip exercise" onPress={skipExercise} />
+        {!results.length?<OptionRow icon="create-outline" title="Start from scratch" onPress={startFromScratch}/>:null}
+        <OptionRow icon="flag-outline" title="Finish session" onPress={finishEarly} />
         <OptionRow icon="bandage" tone="danger" title="Report pain" onPress={reportPain} />
         </> : null}
         {sheet === 'details' ? <ExerciseMuscleDetails key={exercise.id} exercise={exercise} reason={entry.reason} /> : null}
@@ -349,7 +381,7 @@ const styles = StyleSheet.create({
   activeHeader:{flexShrink:0,flexDirection:'row',alignItems:'center',gap:3},smallAction:{width:32,height:32,alignItems:'center',justifyContent:'center'},
   historyContent:{paddingTop:8,gap:5},
   targets:{flexDirection:'row',gap:8,paddingVertical:6,marginBottom:4,borderTopWidth:1,borderBottomWidth:1,borderColor:colors.border},targetCell:{flex:1,gap:1},
-  historyFooter:{flexDirection:'row',alignItems:'center',justifyContent:'flex-end',gap:8},
+  doneAction:{minHeight:44,alignSelf:'flex-start',justifyContent:'center',minWidth:56},
   exerciseHeader:{flexDirection:'row',alignItems:'center',gap:8},pressed:{opacity:0.7},
   option:{flexDirection:'row',gap:space.md,alignItems:'center',padding:space.lg,borderWidth:1,borderColor:colors.border,borderRadius:radius.md,backgroundColor:colors.surface,minHeight:TOUCH},optionDanger:{borderColor:colors.danger,backgroundColor:colors.dangerSoft},optionDisabled:{opacity:0.5},
 });

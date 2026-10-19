@@ -27,7 +27,7 @@ export const SwipeDeleteCard=({children,onDelete,onComplete,label,style,contentS
     </Pressable>
     </Animated.View>
     {onComplete?<Animated.View pointerEvents="none" style={[s.complete,{opacity:x.interpolate({inputRange:[0,1],outputRange:[0,1],extrapolate:'clamp'})}]}><Ionicons name="checkmark" size={28} color={colors.success}/></Animated.View>:null}
-    <Animated.View {...pan.panHandlers} accessibilityActions={[{name:'delete',label:`Delete ${label}`},...(onComplete?[{name:'completeWorkout',label:'Complete workout'}]:[])]} onAccessibilityAction={e=>{if(e.nativeEvent.actionName==='delete')remove.current();if(e.nativeEvent.actionName==='completeWorkout')complete.current?.();}} style={[s.content,contentStyle,{transform:[{translateX:x}]}]}>{children}</Animated.View>
+    <Animated.View {...pan.panHandlers} accessibilityActions={[{name:'delete',label:`Delete ${label}`},...(onComplete?[{name:'completeWorkout',label:`Complete ${label}`}]:[])]} onAccessibilityAction={e=>{if(e.nativeEvent.actionName==='delete')remove.current();if(e.nativeEvent.actionName==='completeWorkout')complete.current?.();}} style={[s.content,contentStyle,{transform:[{translateX:x}]}]}>{children}</Animated.View>
   </View>;
 };
 const s=StyleSheet.create({frame:{overflow:'hidden',borderRadius:14},actionLayer:{...StyleSheet.absoluteFillObject},delete:{...StyleSheet.absoluteFillObject,backgroundColor:colors.surface,alignItems:'flex-end',justifyContent:'center',paddingRight:24},complete:{position:'absolute',left:0,top:0,bottom:0,width:60,alignItems:'center',justifyContent:'center'},content:{backgroundColor:colors.surface}});

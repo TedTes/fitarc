@@ -34,7 +34,7 @@ export const EmptyWorkoutLogger=({state,apply}:{state:RuntimeState;apply:(fn:(st
     return eligible.slice(0,6);
   },[catalog]);
   const add=(exercise:ExerciseDefinition)=>{
-    const result=apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,sets:3,minReps:8,maxReps:12,targetRir:2}));
+    const result=apply(current=>addRuntimeExercise(current,{exerciseId:exercise.id,...(current.source?.routine?.setDefaults??{sets:3,minReps:8,maxReps:12,targetRir:2})}));
     setError(result.ok?'':result.error instanceof Error?result.error.message:'Could not add exercise');
     if(result.ok)setAdding(false);
   };
