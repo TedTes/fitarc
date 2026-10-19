@@ -234,7 +234,6 @@ export const AccountSurface = ({ user, active = true, state, sync, routineContro
         </View>
 
         <View style={styles.section}>
-          <PlanText kind="overline">TRAINING</PlanText>
           {routineControls}
           <View style={styles.accountCard}>
             <Pressable accessibilityRole="button" accessibilityLabel="Routines" onPress={() => setRoutinesOpen(true)}

@@ -2,90 +2,69 @@ import { groupDraft } from '../../routineSetup/pools';
 import { useFlushOnLeave } from '../../hooks/useFlushOnLeave';
 import { isPoolPattern } from '../../runtime/exercisePools';
 import { useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import type { ExerciseDefinition, TrainingSource } from '../../runtime/types';
 import { RUNTIME_EXERCISES } from '../../runtime/exerciseCatalog';
 import { draftFromRoutine, emptyDraft, valueOf } from '../../routineSetup/draft';
-import { editorSettings, mergeRoutineInput, type RoutineEditorInput } from '../../routineSetup/editor';
-import { interpretLocally } from '../../routineSetup/localInterpretation';
-import { hostedRoutineInputEnabled, interpretRoutine } from '../../services/routineInputService';
+import { editorSettings, type RoutineEditorInput } from '../../routineSetup/editor';
 import { applyInputContext, type RoutineInputContext } from '../../routineSetup/context';
 import { RoutineContextChips } from './RoutineContextChips';
-import { RoutineDescription, type RoutineStarter } from './RoutineDescription';
 import { RoutineDraftReview } from './RoutineDraftReview';
-import { RoutineVoiceInput } from './RoutineVoiceInput';
 import { Txt } from './ui';
 import { colors, planTokens as t } from './theme';
 import type { SyncStatus } from './useRuntimeController';
 
 type Props={inline?:boolean;catalog?:ExerciseDefinition[];initial:TrainingSource;sessionActive?:boolean;sync:SyncStatus;onSave:(editor:RoutineEditorInput)=>string|undefined;onClose:()=>void};
+/** Direct routine controls; existing descriptions remain stored but are no longer interpreted. */
 export const SourceIntake=({inline=false,initial,onSave,onClose,sync,catalog=RUNTIME_EXERCISES}:Props)=>{
   const insets=useSafeAreaInsets();
-  const [editor,setEditor]=useState<RoutineEditorInput>(()=>{
-    const routine=initial.routine;
-    return {settings:editorSettings(initial),text:initial.routineText??'',interpretedText:initial.interpretedRoutineText??'',draft:routine?.split==='custom'&&routine.workouts.length?draftFromRoutine(routine,initial,catalog):emptyDraft()};
-  });
-  const latest=useRef(editor),saveCallback=useRef(onSave),lastSaved=useRef(JSON.stringify(editor)),dirty=useRef(false),request=useRef<AbortController|null>(null),mounted=useRef(true);
+  const [editor,setEditor]=useState<RoutineEditorInput>(()=>({
+    settings:editorSettings(initial),text:initial.routineText??'',interpretedText:initial.interpretedRoutineText??'',
+    draft:initial.routine?.workouts.length?draftFromRoutine(initial.routine,initial,catalog):emptyDraft(),
+  }));
+  const latest=useRef(editor),saveCallback=useRef(onSave),lastSaved=useRef(JSON.stringify(editor)),dirty=useRef(false),mounted=useRef(true);
   saveCallback.current=onSave;
-  const [busy,setBusy]=useState(false),[voiceBusy,setVoiceBusy]=useState(false),[error,setError]=useState('');
-  const flush=(value=latest.current)=>{
+  const [error,setError]=useState('');
+  const flush=()=>{
     if(!dirty.current)return;
-    if(JSON.stringify(value)===lastSaved.current){dirty.current=false;return;}
-    const failure=saveCallback.current(value);
+    if(JSON.stringify(latest.current)===lastSaved.current){dirty.current=false;return;}
+    const failure=saveCallback.current(latest.current);
     if(failure){if(mounted.current)setError(failure);return;}
-    dirty.current=false;lastSaved.current=JSON.stringify(value);
+    dirty.current=false;lastSaved.current=JSON.stringify(latest.current);
   };
-  const update=(next:RoutineEditorInput)=>{
-    request.current?.abort();request.current=null;
-    latest.current=next;dirty.current=true;setEditor(next);setError('');setBusy(false);
-  };
-  useEffect(()=>{const timer=setTimeout(()=>flush(),450);return()=>clearTimeout(timer);},[editor]);
-  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;request.current?.abort();flush();};},[]);
-  useFlushOnLeave(() => flush());
+  const update=(next:RoutineEditorInput)=>{latest.current=next;dirty.current=true;setEditor(next);setError('');};
+  useEffect(()=>{const timer=setTimeout(flush,450);return()=>clearTimeout(timer);},[editor]);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;flush();};},[]);
+  useFlushOnLeave(flush);
   const context:RoutineInputContext={split:editor.draft.preferredSplit,days:(editor.draft.days.value??editor.settings.daysPerWeek) as TrainingSource['daysPerWeek'],minutes:editor.draft.minutes.value??editor.settings.sessionMinutes};
-  const interpret=async(local=false)=>{
-    const input=latest.current;
-    if(input.text===input.interpretedText)return;
-    if(!input.text.trim()){update({...input,interpretedText:input.text});flush();return;}
-    request.current?.abort();const controller=new AbortController();request.current=controller;setBusy(true);setError('');
-    const timeout=setTimeout(()=>controller.abort(),60000);
-    try{
-      const all=[...new Map([...catalog,...input.draft.customExercises].map(item=>[item.id,item])).values()];
-      const parsed=local?interpretLocally(input.text,all):await interpretRoutine(input.text,all,controller.signal);
-      if(!mounted.current||controller.signal.aborted||request.current!==controller||latest.current!==input)return;
-      const merged=mergeRoutineInput(input.draft,applyInputContext(parsed,input.context??{}));
-      const draft=input.draft.selectionMode==='pools'&&isPoolPattern(merged.preferredSplit)
-        ?groupDraft(merged,merged.preferredSplit,all):merged;
-      const next={...input,interpretedText:input.text,draft};
-      update(next);flush(next);
-    }catch(problem){if(mounted.current&&request.current===controller)setError(controller.signal.aborted?'Could not update workouts. Your input is saved.':problem instanceof Error?problem.message:'Could not read your routine.');}
-    finally{clearTimeout(timeout);if(mounted.current&&request.current===controller){request.current=null;setBusy(false);}}
-  };
-  const close=async()=>{if(voiceBusy)return;await interpret();flush();if(mounted.current)onClose();};
-  const selectStarter=(starter:RoutineStarter)=>{
-    const input=latest.current;
-    let draft=input.draft;
-    if(starter==='muscle'||starter==='fat_loss')draft={...draft,focus:starter==='muscle'?'build_muscle':'lose_fat',goal:valueOf('hypertrophy')};
-    else{
-      draft=groupDraft(draft,starter,catalog);
-    }
-    update({...input,draft,...(starter==='muscle'||starter==='fat_loss'?{}:{context:{...input.context,split:starter}})});
-  };
-  const selectedStarters:RoutineStarter[]=[...(editor.draft.focus==='build_muscle'?['muscle' as const]:editor.draft.focus==='lose_fat'?['fat_loss' as const]:[]),...(['full_body','upper_lower','push_pull_legs'].includes(editor.draft.preferredSplit??'')?[editor.draft.preferredSplit as RoutineStarter]:[])];
-  return <KeyboardAvoidingView style={inline?undefined:styles.flex} behavior={!inline&&Platform.OS==='ios'?'padding':undefined}>
-    <RoutineDescription inline={inline} text={editor.text} onChange={text=>update({...latest.current,text})} onBlur={()=>void interpret()} busy={voiceBusy}
-      onStarter={selectStarter} selectedStarters={selectedStarters} error={error}
-      onLocalReview={hostedRoutineInputEnabled&&error?()=>void interpret(true):undefined}
-      status={sync==='failed'||sync==='conflict'?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{sync==='failed'?'Changes could not sync.':'Training changed on another device.'}</Txt>:null}
-      backAction={<Pressable accessibilityRole="button" accessibilityLabel="Save and go back" onPress={()=>void close()} disabled={voiceBusy} style={styles.close}><Ionicons name="chevron-back" size={26} color={colors.text}/></Pressable>}
-      contextControls={<RoutineContextChips value={context} initial={editor.settings} disabled={voiceBusy} onChange={next=>{update({...latest.current,context:next,draft:isPoolPattern(next.split)&&next.split!==latest.current.draft.preferredSplit?groupDraft(applyInputContext(latest.current.draft,next),next.split,catalog):applyInputContext(latest.current.draft,next)});void interpret();}}/>}
-      bottomInset={insets.bottom}
-      voiceControl={<RoutineVoiceInput disabled={busy} onBusy={setVoiceBusy} onError={setError} onTranscript={transcript=>{const input=latest.current;update({...input,text:input.text.trim()?`${input.text.trim()}\n${transcript}`:transcript});void interpret();}}/>}>
+  const Container=inline?View:ScrollView;
+  return <View style={inline?undefined:styles.flex}>
+    {!inline?<View style={styles.header}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={()=>{flush();onClose();}} style={styles.close}><Ionicons name="chevron-back" size={26} color={colors.text}/></Pressable>
+      <Txt variant="title">Your routine</Txt>
+    </View>:null}
+    <Container {...(inline?{style:styles.content}:{contentContainerStyle:[styles.content,{paddingBottom:Math.max(insets.bottom,16)}]})}>
+      {sync==='failed'||sync==='conflict'?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{sync==='failed'?'Changes could not sync.':'Training changed on another device.'}</Txt>:null}
+      <View style={styles.section}><Txt variant="label" tone="muted" style={styles.label}>SCHEDULE</Txt>
+        <RoutineContextChips value={context} initial={editor.settings} disabled={false} onChange={next=>update({...latest.current,context:next,
+          draft:isPoolPattern(next.split)&&next.split!==latest.current.draft.preferredSplit?groupDraft(applyInputContext(latest.current.draft,next),next.split,catalog):applyInputContext(latest.current.draft,next)})}/>
+      </View>
+      <View style={styles.section}><Txt variant="label" tone="muted" style={styles.label}>GOAL</Txt><View style={styles.choices}>
+        {([{value:'build_muscle',label:'Build muscle'},{value:'lose_fat',label:'Lose fat'}] as const).map(goal=><Pressable key={goal.value} accessibilityRole="button" accessibilityLabel={goal.label}
+          accessibilityState={{selected:editor.draft.focus===goal.value}} onPress={()=>update({...latest.current,draft:{...latest.current.draft,focus:goal.value,goal:valueOf('hypertrophy')}})}
+          style={({pressed})=>[styles.choice,editor.draft.focus===goal.value&&styles.selected,pressed&&styles.pressed]}>
+          <Ionicons name="add" size={12} color={colors.accent}/><Txt variant="heading" style={styles.choiceLabel}>{goal.label}</Txt>
+        </Pressable>)}
+      </View></View>
       <RoutineDraftReview embedded draft={editor.draft} initial={editor.settings} catalog={catalog}
         onChange={draft=>update({...latest.current,draft})} onSettingsChange={settings=>update({...latest.current,settings:editorSettings(settings)})}/>
-    </RoutineDescription>
-  </KeyboardAvoidingView>;
+      {error?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{error}</Txt>:null}
+    </Container>
+  </View>;
 };
-const styles=StyleSheet.create({flex:{flex:1},close:{width:t.touch,height:t.touch,alignItems:'center',justifyContent:'center'}});
+const styles=StyleSheet.create({flex:{flex:1},content:{gap:14},header:{flexDirection:'row',alignItems:'center',paddingBottom:16},close:{width:t.touch,height:t.touch,alignItems:'center',justifyContent:'center'},
+  section:{gap:9,marginTop:4},label:{fontSize:9,lineHeight:14,letterSpacing:1},choices:{flexDirection:'row',flexWrap:'wrap',gap:8},
+  choice:{minHeight:36,flexDirection:'row',alignItems:'center',gap:5,paddingHorizontal:12,borderWidth:1,borderColor:colors.borderStrong,borderRadius:22,backgroundColor:colors.surface},
+  choiceLabel:{fontSize:12,lineHeight:17},selected:{borderColor:colors.accent,backgroundColor:colors.accentSoft},pressed:{opacity:0.8}});

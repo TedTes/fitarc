@@ -15,7 +15,6 @@ module.exports = ({ config }) => {
   });
 
   plugins.push('expo-apple-authentication');
-  plugins.push(['expo-audio', { microphonePermission: 'Allow FitArc to record your routine when you choose voice input.', recordAudioAndroid: true }]);
   if (iosUrlScheme) {
     plugins.push([GOOGLE_PLUGIN, { iosUrlScheme }]);
   }

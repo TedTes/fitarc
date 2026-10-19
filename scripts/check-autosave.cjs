@@ -9,8 +9,7 @@ mockFile('src/services/userProfileService.ts',{uploadUserAvatar:async()=>({})});
 mockFile('src/screens/runtime/WeightSettings.tsx',{useWeightSettings:()=>({unit:'kg',ranges:{},save:()=>{}})});
 const {AccountSurface}=require('../src/screens/runtime/AccountSurface.tsx');
 const {SavedRoutines}=require('../src/screens/runtime/SavedRoutines.tsx');
-for(const name of ['RoutineContextChips','RoutineDescription','RoutineDraftReview','RoutineVoiceInput'])mockFile(`src/screens/runtime/${name}.tsx`,{[name]:name});
-mockFile('src/services/routineInputService.ts',{hostedRoutineInputEnabled:false,interpretRoutine:async()=>{throw Error('not requested');}});
+for(const name of ['RoutineContextChips','RoutineDraftReview'])mockFile(`src/screens/runtime/${name}.tsx`,{[name]:name});
 const {SourceIntake}=require('../src/screens/runtime/SourceIntake.tsx');
 const state=prepareOnboardingTraining({...emptyRuntimeState(),catalog:RUNTIME_EXERCISES},{id:'test',trainingSplit:'upper_lower',experienceLevel:'beginner',planPreferences:{daysPerWeek:4,sessionMinutes:60,equipmentLevel:'full_gym',injuries:[]}},()=>0.4);
 const user={id:'test',name:'Alex',sex:'male',experienceLevel:'beginner',age:25,heightCm:175,weightKg:70,createdAt:'2026-10-17T12:00:00Z'};
@@ -39,11 +38,13 @@ async function main(){
 
   const edits=[];
   tree=await render(React.createElement(SourceIntake,{inline:true,initial:state.source,sync:'synced',onClose:()=>{},onSave:value=>{edits.push(value);}}));
-  await act(async()=>tree.root.findByType('RoutineDescription').props.onChange('Upper / lower on weekdays'));
-  await act(async()=>appState('inactive'));assert.equal(edits.at(-1).text,'Upper / lower on weekdays');
+  assert.equal(tree.root.findAllByType('TextInput').length,0,'Routine controls have no free-text or voice input');
+  assert.equal(tree.root.findByType('RoutineDraftReview').props.draft.preferredSplit,'upper_lower','Saved routine populates the controls');
+  await act(async()=>tree.root.findByType('RoutineContextChips').props.onChange({days:3,minutes:45,split:'upper_lower'}));
+  await act(async()=>appState('inactive'));assert.equal(edits.at(-1).draft.days.value,3);assert.equal(edits.at(-1).draft.minutes.value,45);
   await act(async()=>appState('active'));
-  await act(async()=>tree.root.findByType('RoutineDescription').props.onChange('New text before switching tabs'));
-  await act(async()=>tree.unmount());assert.equal(edits.at(-1).text,'New text before switching tabs');
+  await act(async()=>tree.root.findByType('RoutineContextChips').props.onChange({days:4,minutes:60,split:'full_body'}));
+  await act(async()=>tree.unmount());assert.equal(edits.at(-1).draft.preferredSplit,'full_body');
 
   const renames=[];
   const routineProps={state,onUseRoutine:()=>{throw Error('Name editing must not activate a routine');},onRenameRoutine:(id,name)=>{renames.push({id,name});},onBack:()=>{}};
@@ -58,6 +59,6 @@ async function main(){
   await act(async()=>input().props.onFocus());await act(async()=>input().props.onChangeText('Before back'));
   await act(async()=>tree.unmount());assert.equal(renames.at(-1).name,'Before back');
   assert.equal(h.listeners.size,0);
-  console.log('Autosave: profile serialization, validation, failed-save retry, background/tab/unmount flush, routine text and name edits passed.');
+  console.log('Autosave: profile serialization, validation, failed-save retry, background/tab/unmount flush, routine controls and name edits passed.');
 }
 main().then(()=>h.restore()).catch(e=>{h.restore();console.error(e);process.exitCode=1;});
