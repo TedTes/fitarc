@@ -60,8 +60,8 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const [selectedExerciseId,setSelectedExerciseId]=useState<string|null|undefined>(undefined);
   const [drafts,setDrafts]=useState<Record<string,Partial<SetRowValues>>>({});
   const [submitting,setSubmitting]=useState(false);
-  const [celebration,setCelebration]=useState(0);
-  useEffect(()=>{if(!celebration)return;const timer=setTimeout(()=>setCelebration(0),2000);return()=>clearTimeout(timer);},[celebration]);
+  const [celebration,setCelebration]=useState<{count:number;id:string}|null>(null);
+  useEffect(()=>{if(!celebration)return;const timer=setTimeout(()=>setCelebration(null),2000);return()=>clearTimeout(timer);},[celebration]);
   const [sheet,setSheet]=useState<null|'menu'|'swap'|'details'|'swapDetails'|'add'>(null);
   const [inspectedExercise,setInspectedExercise]=useState<ExerciseDefinition|null>(null);
   const [swapPreview,setSwapPreview]=useState<ExerciseDefinition|null>(null);
@@ -162,7 +162,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       const next=outcome.ok?outcome.state.activeSession?.exercises.find(item=>item.sets.some(set=>set.status==='pending')):undefined;
       setSelectedExerciseId(next?.exercise.id??null);
       setDrafts(previous=>{const next={...previous};rows.forEach(item=>delete next[item.id]);return next;});
-      setCelebration(value=>value+1);
+      setCelebration(value=>({count:(value?.count??0)+1,id:entry.id}));
     })) {
       // Keep repeated taps locked until the dock switches to the next exercise.
       setSubmitting(false);
@@ -271,6 +271,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
       <Txt variant="label" tone="muted" style={styles.meta}>COMPLETED · {finished.length}</Txt>
       {finished.map(item=><SwipeDeleteCard key={item.id} label={item.exercise.name} onDelete={()=>deleteExercise(item.id)} style={styles.queueCard} contentStyle={styles.queueCardContent}>
         <ExerciseSectionHeader entry={item} active={false} expanded={false} onPress={()=>selectExercise(item.exercise.id)} onMusclePress={()=>setInspectedExercise(item.exercise)}/>
+        {celebration?.id===item.id?<WorkoutCelebration key={celebration.count} variant="exercise"/>:null}
       </SwipeDeleteCard>)}
     </View>:null}
     </ScrollView>
@@ -299,7 +300,6 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
         </View>}
       </View>
     </>:null}
-    {celebration?<WorkoutCelebration key={celebration}/>:null}
     </View>
 
       {rangeOpen?<WeightRangeSheet exerciseId={exercise.id} name={exercise.name} onClose={applied=>{setRangeOpen(false);if(applied)setDrafts(previous=>{const next={...previous};entry.sets.filter(set=>set.status==='pending').forEach(set=>{if(next[set.id]){const {load,...rest}=next[set.id];next[set.id]=rest;}});return next;});}}/>:null}
@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
   meta:{fontSize:10,lineHeight:15,letterSpacing:0.3},progressRow:{flexDirection:'row',gap:3},segment:{flex:1,height:4,borderRadius:3,backgroundColor:colors.border},segmentDone:{backgroundColor:colors.success},
   upcoming:{flexShrink:1,gap:5},queue:{gap:6},queueCardContent:{paddingHorizontal:8,paddingVertical:7},queueCard:{borderWidth:1,borderColor:colors.border,borderRadius:12,backgroundColor:colors.surface},
   workoutBody:{flex:1,minHeight:0,gap:10},setList:{flexGrow:0,flexShrink:1,minHeight:0},
-  activeCard:{flexShrink:1,minHeight:0,overflow:'hidden',borderWidth:1,borderColor:colors.borderStrong,borderRadius:16,padding:12,backgroundColor:colors.surface},
+  activeCard:{flexShrink:1,minHeight:0,overflow:'hidden',borderWidth:1,borderColor:colors.accentBorder,borderRadius:16,padding:12,backgroundColor:colors.surfaceRaised},
   workoutContentScroll:{flex:1,minHeight:0},workoutContent:{gap:10},
   completedSection:{gap:6},
   activeHeader:{flexShrink:0,flexDirection:'row',alignItems:'center',gap:3},smallAction:{width:32,height:32,alignItems:'center',justifyContent:'center'},
