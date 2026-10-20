@@ -144,13 +144,16 @@ export const MuscleMap = memo(({
     ? [...masks.filter(mask=>!BACK_GROUP_CONTOURS.some(group=>group.muscle===mask.muscle)), ...BACK_GROUP_CONTOURS]
     : masks;
   const drawOrder = [...visibleMasks].sort((a, b) => layer(a.muscle, a.part) - layer(b.muscle, b.part));
-  const touchMasks = sessionComparison ? visibleMasks : masks;
+  // Each traced muscle is its own tap target. In the comparison view the merged group outlines sit underneath,
+  // so a tap in the hairline gap between two parts still selects the whole group instead of missing.
+  const touchMasks = sessionComparison && view === 'back' ? [...BACK_GROUP_CONTOURS, ...masks] : masks;
+  const partFocused = (muscle: Muscle, part: string) => muscle === selected && (selectedPart === null || part === selectedPart);
   // Comparison view: one dimming layer over the whole picture with every done/next (or the selected) muscle
   // cut out of it, so those muscles stay at their natural brightness while the rest of the body recedes.
   // The cut-outs are drawn with a wide stroke so the hairline gaps between neighbouring parts (e.g. the three
   // quad heads) stay lit instead of showing the dimming through as dark seams.
-  const lit = sessionComparison ? visibleMasks.filter(({ muscle }) => selected
-    ? muscle === selected
+  const lit = sessionComparison ? visibleMasks.filter(({ muscle, part }) => selected
+    ? partFocused(muscle, part)
     : sessionComparison.completed.includes(muscle) || sessionComparison.next.includes(muscle))
     // Weekly overview: trained muscles stay lit, untrained ones recede; a selection stands alone.
     : overview ? masks.filter(({ muscle }) => selected ? muscle === selected : Boolean(tones[muscle]))
@@ -161,36 +164,38 @@ export const MuscleMap = memo(({
     if (sessionComparison) {
       const completed = sessionComparison.completed.includes(muscle);
       const next = sessionComparison.next.includes(muscle);
-      const focused = muscle === selected;
+      const focused = partFocused(muscle, part);
       const dimmed = selected !== null && !focused;
       // Done today: green fill. Coming next: blue fill (not red, which reads as a warning). Both: green with
       // a blue outline. A selection is shown by brightening that muscle and dimming the rest -- never by
       // outlining each part, which makes multi-part groups (quads, hamstrings) read as stitched seams.
       // Spotlight: the body is dimmed and these muscles are cut out of the dimming (see `spotlight` below),
       // so "next" keeps natural skin with only a faint cool tint; "done" glows green.
+      // The selected muscle also gets a thin light edge so it separates from a same-coloured neighbour.
       const base = completed ? 0.32 : next ? 0.1 : 0;
+      const both = completed && next;
       return {
         color: completed ? colors.success : colors.next,
-        fill: focused ? completed ? 0.6 : 0.4 : dimmed ? base * 0.35 : base,
-        strokeColor: colors.next,
-        stroke: completed && next ? dimmed ? 0.3 : 0.9 : 0,
-        width: 3,
+        fill: focused ? completed ? 0.52 : 0.34 : dimmed ? base * 0.35 : base,
+        strokeColor: both ? colors.next : colors.text,
+        stroke: dimmed ? 0 : both ? 0.9 : focused ? 0.7 : 0,
+        width: both ? 3 : 2.5,
       };
     }
     if (targets) {
       const role = muscleTargetRole(targets, muscle);
       const focused = muscle === selected && (selectedPart === null || part === selectedPart);
-      // Lit by the spotlight; primary gets a light warm lift, assisting is pulled halfway back toward the dimmed body.
-      return {
-        color: role === 'secondary' && !focused ? '#000000' : colors.accent,
-        fill: focused ? 0.3 : role === 'primary' ? 0.16 : role === 'secondary' ? 0.28 : 0,
-        stroke: 0,
-        width: 0,
-        strokeColor: colors.accent,
-      };
+      // Lit by the spotlight. Primary: warm fill with a solid edge. Assisting: no tint, pulled slightly back toward
+      // the dimmed body, with only a faint edge -- the same filled vs hollow split as the legend dots.
+      // The selected muscle keeps its fill and swaps to a light edge.
+      if (focused) return { color: colors.accent, fill: 0.3, stroke: 0.75, width: 2.5, strokeColor: colors.text };
+      if (role === 'primary') return { color: colors.accent, fill: 0.2, stroke: 0.85, width: 2.5, strokeColor: colors.accent };
+      if (role === 'secondary') return { color: '#000000', fill: 0.16, stroke: 0.4, width: 1.5, strokeColor: colors.accent };
+      return { color: colors.accent, fill: 0, stroke: 0, width: 0, strokeColor: colors.accent };
     }
+    if (overview && tones[muscle] && muscle === selected) return { color: toneColor(tones[muscle]), fill: 0.46, stroke: 0.7, width: 2.5, strokeColor: colors.text };
     const style = overview && tones[muscle]
-      ? { color: toneColor(tones[muscle]), fill: muscle === selected ? 0.5 : selected ? 0.1 : 0.3, stroke: 0, width: 0 }
+      ? { color: toneColor(tones[muscle]), fill: selected ? 0.1 : 0.3, stroke: 0, width: 0 }
       : overview ? { color: colors.text, fill: 0, stroke: 0, width: 0 }
       : look(tones[muscle], emphasisOf(muscle, part));
     return { ...style, strokeColor: style.color };
@@ -229,7 +234,8 @@ export const MuscleMap = memo(({
                   fill={style.color}
                   fillOpacity={covered ? style.fill * 0.6 : style.fill}
                   stroke={style.strokeColor}
-                  strokeOpacity={style.stroke}
+                  // Muscles under the shorts keep their tint but never an edge, which would trace the clothing.
+                  strokeOpacity={covered && targets ? 0 : style.stroke}
                   strokeWidth={style.width}
                   strokeLinejoin="round"
                   strokeDasharray={covered ? '8 6' : undefined}
@@ -240,7 +246,7 @@ export const MuscleMap = memo(({
             {/* Drawn under the muscle touch targets, so it only receives taps that miss every muscle. */}
             {onBackgroundPress ? <Rect x="0" y="0" width={size.width} height={size.height} fill="#000000" fillOpacity={0.001}
               onPress={onBackgroundPress} accessible={false} /> : null}
-            {/* Comparison taps follow the group surface; detail views retain individual parts. */}
+            {/* Individual parts on top; in the comparison view, group outlines underneath catch taps in the gaps. */}
             {onSelect ? touchMasks.map(({ muscle, part, label, hit }) => {
               const name = label ? `Select ${label}, part of ${muscle}` : 'Select ' + muscle;
               const isSelected = emphasisOf(muscle, part) === 'active';

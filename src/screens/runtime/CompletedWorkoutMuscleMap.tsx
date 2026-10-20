@@ -5,6 +5,7 @@ import type { NextWorkout } from '../../runtime/nextWorkout';
 import type { Muscle } from '../../runtime/types';
 import { MuscleMap } from './MuscleMap';
 import { muscleLabel } from './copy';
+import { partLabel } from './muscleParts';
 import { Sheet, Txt } from './ui';
 import { colors, space } from './theme';
 import { WorkoutCelebration } from './WorkoutCelebration';
@@ -34,8 +35,21 @@ export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId, selec
   const [expanded, setExpanded] = useState<'front' | 'back' | null>(null);
   const { height: screenHeight } = useWindowDimensions();
   const comparison = { completed, next };
+  // A tap on the body picks one traced muscle (e.g. lats) and tapping it again clears it. A chip, or a tap in the
+  // gap between parts, picks the whole group.
+  const [picked, setPicked] = useState<{ muscle: Muscle; part: string } | null>(null);
+  const selectedPart = picked && picked.muscle === selected ? picked.part : null;
+  const selectPart = (muscle: Muscle, part: string) => {
+    const whole = part === muscle;
+    if (muscle !== selected) { setPicked(whole ? null : { muscle, part }); onSelect(muscle); return; }
+    if (whole ? selectedPart === null : part === selectedPart) { setPicked(null); onSelect(muscle); return; }
+    setPicked(whole ? null : { muscle, part });
+  };
+  const selectGroup = (muscle: Muscle) => { setPicked(null); onSelect(muscle); };
+  // Mask labels carry tracing notes such as "(surface region)"; only the anatomical name is shown.
+  const partName = selectedPart ? partLabel(selectedPart)?.replace(/\s*\((?:[^)]*(?:surface|clothing|visible)[^)]*)\)/i, '') ?? null : null;
   const facts = stats ? [`${stats.sets} sets`, stats.volumeKg > 0 ? `${Math.round(stats.volumeKg).toLocaleString()} kg` : null, stats.minutes ? `${stats.minutes} min` : null].filter(Boolean).join(' · ') : '';
-  const chips = (muscles: readonly Muscle[], tone: 'done' | 'next') => <SessionMuscleChips muscles={muscles} tone={tone} selected={selected} onSelect={onSelect} />;
+  const chips = (muscles: readonly Muscle[], tone: 'done' | 'next') => <SessionMuscleChips muscles={muscles} tone={tone} selected={selected} onSelect={selectGroup} />;
 
   return <View style={s.root} testID="completed-workout-muscle-map">
     <View style={s.done}>
@@ -45,7 +59,7 @@ export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId, selec
     </View>
     <View style={s.bodies}>
       {(['front', 'back'] as const).map((view) => <View key={view} style={s.body}>
-        <MuscleMap view={view} selected={selected} onSelect={onSelect}
+        <MuscleMap view={view} selected={selected} selectedPart={selectedPart} onSelect={selectPart}
           sessionComparison={comparison} height={200} showZoom={false} onBackgroundPress={() => setExpanded(view)} />
         <Pressable accessibilityRole="button" accessibilityLabel={`Open the ${view} muscle map full screen`} onPress={() => setExpanded(view)}
           hitSlop={10} style={({ pressed }) => [s.expand, pressed && s.pressed]}>
@@ -54,15 +68,17 @@ export const CompletedWorkoutMuscleMap = ({ workout, stats, celebrationId, selec
       </View>)}
     </View>
     <View style={s.summary}>
+      {partName ? <Txt variant="caption" tone="secondary" accessibilityLiveRegion="polite">{partName}</Txt> : null}
       {completed.length ? <View style={s.line}><Ionicons name="checkmark" size={15} color={colors.success} /><Txt variant="caption" tone="secondary">Done</Txt>{chips(completed, 'done')}</View> : null}
     </View>
     {celebrationId ? <WorkoutCelebration key={celebrationId} /> : null}
     {/* Full-screen look: same done/next colours, with the map's own zoom, drag and front/back flip.
         Not scrollable, so a drag moves the zoomed body rather than the sheet. */}
     <Sheet visible={expanded !== null} onClose={() => setExpanded(null)} title="Muscle map" scrollable={false}>
-      {expanded ? <MuscleMap view={expanded} onViewChange={setExpanded} selected={selected} onSelect={onSelect}
+      {expanded ? <MuscleMap view={expanded} onViewChange={setExpanded} selected={selected} selectedPart={selectedPart} onSelect={selectPart}
         sessionComparison={comparison} height={Math.round(screenHeight * 0.6)} /> : null}
       <View style={s.summary}>
+        {partName ? <Txt variant="caption" tone="secondary" accessibilityLiveRegion="polite">{partName}</Txt> : null}
         {completed.length ? <View style={s.line}><Ionicons name="checkmark" size={15} color={colors.success} /><Txt variant="caption" tone="secondary">Done</Txt>{chips(completed, 'done')}</View> : null}
         {next.length ? <View style={s.line}><Ionicons name="arrow-forward" size={15} color={colors.next} /><Txt variant="caption" tone="secondary">Next</Txt>{chips(next, 'next')}</View> : null}
       </View>
