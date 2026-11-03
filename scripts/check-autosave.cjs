@@ -17,9 +17,10 @@ async function main(){
   const saves=[];let gate=null,fail=false;
   const props={user,state,sync:'synced',routineControls:null,onUseRoutine:()=>{},onRenameRoutine:()=>{},onLogout:()=>{},onDeleteAccount:()=>{},onSaveProfile:async value=>{saves.push(value);if(gate)await gate.promise;if(fail)throw Error('offline');}};
   let tree=await render(React.createElement(AccountSurface,props));
-  const edit=()=>tree.root.findByProps({accessibilityLabel:'Edit profile'}).props.onPress();
+  assert.equal(tree.root.findAllByProps({accessibilityLabel:'Edit profile'}).length,0,'Profile fields are directly editable');
+  assert.equal(tree.root.findAllByType('Sheet').length,0,'No separate profile editor sheet');
   const change=(label,value)=>tree.root.findByProps({accessibilityLabel:label}).props.onChangeText(value);
-  await act(async()=>edit());await act(async()=>change('name','Alex updated'));
+  await act(async()=>change('name','Alex updated'));
   assert.equal(saves.length,0);
   await act(async()=>appState('inactive'));
   assert.equal(saves.length,1,'Background flushes before debounce');assert.equal(saves[0].name,'Alex updated');
