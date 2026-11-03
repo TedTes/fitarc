@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Modal, PanResponder, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { previewTrainingSessionDetailed, solveTrainingSession } from '../../runtime';
+import { previewTrainingSessionDetailed } from '../../runtime';
 import { repeatWorkoutExercises, startAdditionalWorkout } from '../../runtime/freeWorkout';
 import { localDate } from '../../runtime/planDates';
 import { workoutStartChoices, type WorkoutStartSource } from '../../runtime/workoutStart';
@@ -64,7 +64,7 @@ export const NewWorkoutSheet=({state,defaults,apply,onClose,onStarted}:Props)=>{
   const start=()=>{
     if(!available||starting.current||closing.current)return;
     starting.current=true;
-    const result=apply(current=>source==='routine'?solveTrainingSession(current,context):startAdditionalWorkout(current,defaults,source==='previous'?repeated:[],source==='previous'?name:'Workout'));
+    const result=apply(current=>startAdditionalWorkout(current,defaults,source==='routine'?rows.map(row=>({exerciseId:row.exercise.id,sets:row.sets,minReps:row.minReps??8,maxReps:row.maxReps??12,targetRir:preview?.session?.exercises.find(e=>e.exercise.id===row.exercise.id)?.sets[0]?.targetRir??2})):source==='previous'?repeated:[],source==='empty'?'Freestyle':name));
     if(!result.ok){starting.current=false;setError(result.error instanceof Error?result.error.message:'Could not start workout');return;}
     onStarted();
   };
@@ -74,14 +74,14 @@ export const NewWorkoutSheet=({state,defaults,apply,onClose,onStarted}:Props)=>{
       <Animated.View accessibilityViewIsModal accessibilityLabel="Start workout preview" onAccessibilityEscape={close} style={[s.sheet,{height:sheetHeight,paddingBottom:Math.max(insets.bottom,t.pad.medium),transform:[{translateY:position}]}]}>
         <View accessibilityLabel="Drag to dismiss start workout" style={s.handle} {...gestures.panHandlers}><View style={s.grip}/></View>
         <View style={s.header}><View style={s.titleDrag} {...gestures.panHandlers}><Txt variant="heading" style={s.title}>Start workout</Txt></View><Pressable accessibilityRole="button" accessibilityLabel="Close start workout" onPress={close} style={s.close}><View style={s.closeFace}><Ionicons name="close" size={t.icon} color={colors.textMuted}/></View></Pressable></View>
-        <View style={s.segments}><PlanOptions segments options={[{value:'routine',label:'Routine'},{value:'previous',label:'Previous'},{value:'empty',label:'Empty'}]} value={source} onChange={value=>{setSource(value as WorkoutStartSource);setError('');}}/></View>
+        <View style={s.segments}><PlanOptions segments options={[{value:'routine',label:'From plan'},{value:'previous',label:'Repeat'},{value:'empty',label:'Empty'}]} value={source} onChange={value=>{setSource(value as WorkoutStartSource);setError('');}}/></View>
         <ScrollView style={s.scroll} contentContainerStyle={s.preview}>
           {source==='routine'&&choices.routine&&choices.routine.slots.length>1?<PlanOptions options={choices.routine.slots.map(slot=>({value:slot.id,label:slotPlain(slot)}))} value={routineId??''} onChange={id=>{setRoutineId(id);setError('');}}/>:null}
           {source==='previous'&&choices.previous.length>1?<ScrollView horizontal showsHorizontalScrollIndicator={false}><PlanOptions options={choices.previous.map(session=>({value:session.id,label:`${nameOf(session)} · ${session.context.date}`}))} value={previousId??''} onChange={id=>{setPreviousId(id);setError('');}}/></ScrollView>:null}
           {source==='empty'?<Txt variant="mono" tone="muted" style={s.hint}>Start blank, add exercises as you go</Txt>:rows.length?<>
             <View><Txt variant="heading" style={s.day}>{name}</Txt><Txt variant="mono" tone="muted" style={s.meta}>{rows.length} exercises · {rows.reduce((sum,item)=>sum+item.sets,0)} sets{source==='previous'?` · ${previous!.context.date}`:''}</Txt></View>
             {rows.map(row=><View key={row.exercise.id} style={s.row}><ExerciseTile exercise={row.exercise}/><View style={s.flex}><Txt variant="heading" style={s.exercise}>{row.exercise.name}</Txt><Txt variant="mono" tone="muted" style={s.meta}>{row.sets} × {row.minReps===row.maxReps?row.maxReps:`${row.minReps}–${row.maxReps}`}</Txt></View></View>)}
-          </>:<Txt variant="mono" tone="muted" style={s.hint}>{preview?.error||(source==='routine'?'No routine yet':'No previous workouts')}</Txt>}
+          </>:<Txt variant="mono" tone="muted" style={s.hint}>{preview?.error||(source==='routine'?'No plan yet':'No previous workouts')}</Txt>}
           {error?<Txt tone="danger" accessibilityRole="alert">{error}</Txt>:null}
         </ScrollView>
         <View style={s.footer}><PlanButton label={source==='empty'?'Start empty workout':available?`Start ${name}`:'Start workout'} disabled={!available} onPress={start}/></View>

@@ -1,17 +1,20 @@
-import { belongsToPlan, datePlusDays } from '../../runtime/planDates';
+import { datePlusDays } from '../../runtime/planDates';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { goalProgress, logConditioning } from '../../runtime/goalProgress';
+import type { ApplyResult } from './useRuntimeController';
 import { computeWeeklyStatus } from '../../runtime';
 import type { ExerciseDefinition, Muscle, RuntimeState, TrainingBlock, WeeklyMuscleStatus, WeeklyStatus } from '../../runtime';
-import { colors, radius, space, TOUCH } from './theme';
-import { ScreenBrand, Sheet, Txt } from './ui';
+import { colors, radius, space } from './theme';
+import { Button, Sheet, Txt } from './ui';
 import { formatSets, muscleLabel } from './copy';
 import { MuscleMap, type MuscleMapTone } from './MuscleMap';
 import { liftsForPart, partLabel } from './muscleParts';
 import { ExerciseDetailsSheet } from './ExerciseMuscles';
 
 type Props = {
+  apply?: (fn:(state:RuntimeState)=>RuntimeState)=>ApplyResult;
   state: RuntimeState; block: TrainingBlock; status: WeeklyStatus;
 };
 const rowStatus = (item: WeeklyMuscleStatus) => ({
@@ -19,7 +22,8 @@ const rowStatus = (item: WeeklyMuscleStatus) => ({
 });
 
 /** Only performed sets feed Progress. Keep the body and the first muscle rows visible together. */
-export const WeekSurface = ({ state, block }: Props) => {
+export const WeekSurface = ({ state, block, apply }: Props) => {
+  const [conditioning,setConditioning]=useState(false),[minutes,setMinutes]=useState(''),[error,setError]=useState('');
   const { height: windowHeight } = useWindowDimensions();
   const [availableHeight, setAvailableHeight] = useState(0);
   const list = useRef<ScrollView>(null);
@@ -38,7 +42,7 @@ export const WeekSurface = ({ state, block }: Props) => {
 
   const weekData = (week: number) => {
     const start = datePlusDays(block.startedOn, (week - 1) * 7), end = datePlusDays(start, 7);
-    const sessions = state.sessions.filter(session => belongsToPlan(session, block) && session.context.date >= start && session.context.date < end);
+    const sessions = state.sessions.filter(session => session.context.date >= start && session.context.date < end);
     const exercises = new Map<string, { exercise: ExerciseDefinition; sets: number }>();
     const setIds = new Set<string>();
     let workouts = 0;
@@ -62,6 +66,9 @@ export const WeekSurface = ({ state, block }: Props) => {
   const weeks = useMemo(() => Array.from({ length: weekCount }, (_, i) => weekData(i + 1)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [block, state.sessions, state.setResults, weekCount]);
+  const weekStart=datePlusDays(block.startedOn,(selectedWeek-1)*7);
+  const goalStats=goalProgress(state,weekStart,datePlusDays(weekStart,7));
+  const volumeGoal=block.goal==='hypertrophy';
   const recorded = weeks[selectedWeek - 1] ?? weekData(selectedWeek);
   const onTarget = (item: WeeklyMuscleStatus) => item.completedSets >= item.min;
   /** Share of muscles that reached the bottom of their weekly range. */
@@ -93,14 +100,24 @@ export const WeekSurface = ({ state, block }: Props) => {
 
   return <View style={styles.root} onLayout={event => setAvailableHeight(event.nativeEvent.layout.height)}>
     <View style={styles.heading}>
-      <View style={styles.flex}><ScreenBrand name="Progress" chip="" /></View>
+      {/* Same title style as Plan and Profile; the screen names the week it is showing. */}
+      <View style={styles.flex}><Txt variant="title" accessibilityRole="header">Week {selectedWeek}{selectedWeek===block.currentWeek?<Txt variant="caption" tone="muted"> · this week</Txt>:null}</Txt></View>
     </View>
+    <View style={{paddingHorizontal:space.lg,gap:4}}>
+      <Txt variant="caption" tone="muted">{block.goal==='strength'?`${goalStats.records} strength records this week`:volumeGoal?'Weekly muscle volume':`${goalStats.sessions} / ${state.source?.daysPerWeek??3} training sessions · ${goalStats.conditioningMinutes} conditioning min`}</Txt>
+      {apply&&(block.goal==='fat_loss'||block.goal==='general')?<Button label="Log conditioning" variant="ghost" onPress={()=>setConditioning(true)}/>:null}
+    </View>
+    <Sheet visible={conditioning} title="Log conditioning" onClose={()=>setConditioning(false)}>
+      <TextInput accessibilityLabel="Conditioning minutes" placeholder="Minutes" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={minutes} onChangeText={setMinutes} style={{color:colors.text,padding:16,borderWidth:1,borderColor:colors.border}}/>
+      {error?<Txt tone="danger">{error}</Txt>:null}
+      <Button label="Log" onPress={()=>{const result=apply?.(current=>logConditioning(current,Number(minutes)));if(result?.ok){setConditioning(false);setMinutes('');setError('');}else if(result)setError(result.error instanceof Error?result.error.message:'Could not log conditioning');}}/>
+    </Sheet>
     <ScrollView horizontal style={styles.weeks} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.weekPicker} accessibilityRole="radiogroup" accessibilityLabel="Select training week">
       {Array.from({ length: Math.max(block.durationWeeks, block.currentWeek) }, (_, i) => i + 1).map(week => <Pressable key={week}
         accessibilityRole="radio" accessibilityLabel={`Week ${week}${week === block.currentWeek ? ', current week' : ''}, ${Math.round(weekScore(week) * 100)} percent of muscles on target`}
         accessibilityState={{ checked: week === selectedWeek }} onPress={() => setSelectedWeek(week)}
         style={({ pressed }) => [styles.weekChoice, week === selectedWeek && styles.weekChoiceSelected, pressed && styles.pressed]}>
-        <Txt variant="code" tone={week === selectedWeek ? 'accent' : week > block.currentWeek ? 'muted' : 'secondary'}>W{week}</Txt>
+        <Txt variant="mono" tone={week === selectedWeek ? 'accent' : week > block.currentWeek ? 'muted' : 'secondary'} style={styles.weekLabel}>W{week}</Txt>
         <View style={styles.weekTrack}><View style={[styles.weekFill, { width: `${Math.round(weekScore(week) * 100)}%` }]} /></View>
       </Pressable>)}
     </ScrollView>
@@ -117,14 +134,14 @@ export const WeekSurface = ({ state, block }: Props) => {
       </View>)}
     </View>
     <View style={styles.key} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-      {([['On target', colors.success], ['In progress', colors.warning], ['Over', colors.danger]] as const).map(([label, color]) =>
+      {([[volumeGoal?'On target':'Coverage', colors.success], ['In progress', colors.warning], ['Over', colors.danger]] as const).map(([label, color]) =>
         <View key={label} style={styles.keyItem}><View style={[styles.keyDot, { backgroundColor: color }]} /><Txt variant="mono" tone="muted">{label}</Txt></View>)}
       <View style={styles.keyItem}><View style={[styles.keyDot, styles.keyDim]} /><Txt variant="mono" tone="muted">Not trained</Txt></View>
     </View>
 
     <View style={styles.listHeading}>
       <View style={styles.flex}>
-        <Txt variant="caption" tone="secondary">{recorded.workouts} {recorded.workouts === 1 ? 'workout' : 'workouts'} · {recorded.sets} {recorded.sets === 1 ? 'set' : 'sets'} · <Txt variant="caption" tone={hit === recorded.muscles.length ? 'success' : 'primary'}>{hit}/{recorded.muscles.length} on target</Txt></Txt>
+        <Txt variant="caption" tone="secondary">{recorded.workouts} {recorded.workouts === 1 ? 'workout' : 'workouts'} · {recorded.sets} {recorded.sets === 1 ? 'set' : 'sets'} · <Txt variant="caption" tone={hit === recorded.muscles.length ? 'success' : 'primary'}>{hit}/{recorded.muscles.length} {volumeGoal?'on target':'coverage'}</Txt></Txt>
         {behind ? <Txt variant="caption" tone="muted" numberOfLines={1}>{muscleLabel(behind.muscle)} needs the most work</Txt> : null}
       </View>
       {selectedMuscle ? <Pressable accessibilityRole="button" accessibilityLabel="Clear muscle selection" onPress={() => { setSelectedMuscle(null); setSelectedPart(null); }} style={styles.clear}>
@@ -136,7 +153,7 @@ export const WeekSurface = ({ state, block }: Props) => {
       {muscles.map((item, index) => {
         const selected = selectedMuscle === item.muscle, status = rowStatus(item);
         const scale = Math.max(item.max * 1.15, item.completedSets, 1);
-        const plain = item.completedSets > item.max ? `${formatSets(item.completedSets - item.max)} over` : onTarget(item) ? 'on target' : item.completedSets === 0 ? 'not started' : `${formatSets(item.min - item.completedSets)} to go`;
+        const plain = item.completedSets > item.max ? `${formatSets(item.completedSets - item.max)} over` : onTarget(item) ? (volumeGoal?'on target':'covered') : item.completedSets === 0 ? 'not started' : `${formatSets(item.min - item.completedSets)} to go`;
         const fillColor = item.completedSets > item.max ? colors.danger : onTarget(item) ? colors.success : colors.warning;
         const target = block.kind === 'workout' ? 0 : block.weeklySetBudget[item.muscle] ?? 0;
         return <View key={item.muscle} style={[index > 0 && styles.rowDivider, selected && styles.muscleSelected]}>
@@ -146,7 +163,7 @@ export const WeekSurface = ({ state, block }: Props) => {
             <View style={styles.flex}>
               <View style={styles.rowTop}>
                 <Txt variant="caption" tone={selected ? 'accent' : 'primary'} numberOfLines={1} style={[styles.muscleName, styles.flex]}>{muscleLabel(item.muscle)}</Txt>
-                <Txt variant="mono" tone={status.tone} style={styles.statusText}>{plain}</Txt>
+                <Txt variant="mono" tone={item.completedSets===0?'muted':status.tone} style={styles.statusText}>{plain}</Txt>
               </View>
               {selected && selectedPart && partLabel(selectedPart) ? <Txt variant="caption" tone="secondary">{partLabel(selectedPart)}</Txt> : null}
               <View style={styles.barRow}>
@@ -179,10 +196,10 @@ export const WeekSurface = ({ state, block }: Props) => {
 
 const styles = StyleSheet.create({
   root:{flex:1,paddingTop:space.lg},flex:{flex:1,minWidth:0},heading:{flexDirection:'row',alignItems:'center',paddingHorizontal:space.lg,gap:space.sm},
-  weeks:{flexGrow:0,flexShrink:0,marginTop:space.sm},weekPicker:{paddingHorizontal:space.lg,gap:space.sm},
-  weekChoice:{minWidth:50,minHeight:TOUCH,gap:4,paddingHorizontal:space.sm,borderWidth:1,borderColor:colors.border,borderRadius:radius.md,alignItems:'center',justifyContent:'center',backgroundColor:colors.surface},
+  weeks:{flexGrow:0,flexShrink:0,marginTop:space.sm},weekPicker:{paddingHorizontal:space.lg,gap:6},
+  weekChoice:{minWidth:44,minHeight:38,gap:3,paddingHorizontal:space.sm,borderWidth:1,borderColor:colors.border,borderRadius:19,alignItems:'center',justifyContent:'center',backgroundColor:colors.surface},
   weekChoiceSelected:{borderColor:colors.accent,backgroundColor:colors.accentSoft},
-  weekTrack:{width:28,height:3,borderRadius:2,overflow:'hidden',backgroundColor:colors.border},weekFill:{height:'100%',backgroundColor:colors.success},
+  weekLabel:{fontSize:12,lineHeight:14},weekTrack:{width:20,height:2,borderRadius:2,overflow:'hidden',backgroundColor:colors.border},weekFill:{height:'100%',backgroundColor:colors.success},
   rowTop:{flexDirection:'row',alignItems:'center',gap:space.sm},barRow:{flexDirection:'row',alignItems:'center',gap:space.sm,marginTop:6},
   bar:{flex:1,height:6,borderRadius:3,backgroundColor:colors.surfaceRaised},
   barFill:{height:'100%',borderRadius:3},

@@ -1,14 +1,11 @@
-import { useSavedRoutine, renameSavedRoutine } from '../runtime/savedRoutines';
 import { saveWeightSettings } from '../runtime/weights';
 import { WeightSettingsContext } from './runtime/WeightSettings';
-import { saveRoutineEditor, type RoutineEditorInput } from '../routineSetup/editor';
-import { editableRoutine } from '../runtime/routine';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User } from '../types/domain';
-import { compileNextRuntimeBlock, createRuntimeId, getRuntimeWeekView } from '../runtime';
+import { createRuntimeId, getRuntimeWeekView } from '../runtime';
 import type { TrainingSource } from '../runtime';
 import { colors, space } from './runtime/theme';
 import { Banner, Button, ChromeContext, ScreenBrand, Txt } from './runtime/ui';
@@ -19,9 +16,9 @@ import { DUMBBELLS, FULL_GYM, Notify, Surface } from './runtime/constants';
 import { EventLine, RuntimeEvent } from './runtime/EventLog';
 import { sessionProgress } from './runtime/selectors';
 import { useRuntimeController } from './runtime/useRuntimeController';
-import { SourceIntake } from './runtime/SourceIntake';
 import { AccountSurface } from './runtime/AccountSurface';
-import { BlockSurface } from './runtime/BlockSurface';
+import { PlanSurface } from './runtime/PlanSurface';
+import { TodayPlanContext } from './runtime/TodayPlanContext';
 import { TodaySurface } from './runtime/TodaySurface';
 import { WorkoutRestDock, type WorkoutDockState } from './runtime/WorkoutTimers';
 import { WeekSurface } from './runtime/WeekSurface';
@@ -38,9 +35,9 @@ type Props = {
 
 const TABS: Array<{ key: Surface; label: string; spoken: string; icon: keyof typeof Ionicons.glyphMap; iconOn: keyof typeof Ionicons.glyphMap; hint: string }> = [
   { key: 'solver', label: 'Today', spoken: 'Today’s workout', icon: 'barbell-outline', iconOn: 'barbell', hint: "Today's workout, fitted to current conditions" },
-  { key: 'block', label: 'My plan', spoken: 'My training plan', icon: 'layers-outline', iconOn: 'layers', hint: 'Your training plan' },
+  { key: 'block', label: 'Plan', spoken: 'My training plan', icon: 'layers-outline', iconOn: 'layers', hint: 'Your training plan' },
   { key: 'week', label: 'Progress', spoken: 'Training progress', icon: 'stats-chart-outline', iconOn: 'stats-chart', hint: "This week's dose and fatigue" },
-  { key: 'account', label: 'Profile', spoken: 'Profile settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Profile, training preferences, and account controls' },
+  { key: 'account', label: 'Profile', spoken: 'Profile settings', icon: 'person-circle-outline', iconOn: 'person-circle', hint: 'Account and global preferences' },
 ];
 const SURFACE_INDEX: Record<Surface, number> = { solver: 0, block: 1, week: 2, account: 3 };
 
@@ -59,9 +56,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const loading = stateLoading || !fontsReady;
   const [surface, setSurface] = useState<Surface>('solver');
   const [quickWorkoutOpen, setQuickWorkoutOpen] = useState(false);
-  const hasSavedPlan = Boolean(state.source && state.block?.slots.length && state.block.kind !== 'workout');
-  const hasProgress = Boolean(state.block && (hasSavedPlan || state.sessions.length || state.setResults.length));
-  const visibleTabs = useMemo(() => TABS.filter(tab => tab.key !== 'block'), [hasSavedPlan, hasProgress]);
+  const visibleTabs = TABS;
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [fresh, setFresh] = useState<{ id: number; action?: { label: string; run: () => void } } | null>(null);
   const [dismissedId, setDismissedId] = useState<number | null>(null);
@@ -88,7 +83,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
       id: createRuntimeId(),
       userId: user.id,
       version: 1,
-      goal: preferences?.primaryGoal === 'get_stronger' ? 'strength' : 'hypertrophy',
+      goal: preferences?.primaryGoal === 'get_stronger' ? 'strength' : preferences?.primaryGoal === 'lose_fat' ? 'fat_loss' : preferences?.primaryGoal === 'general_fitness' ? 'general' : 'hypertrophy',
       experience: user.experienceLevel === 'advanced' ? 'advanced' : 'intermediate',
       daysPerWeek: days,
       sessionMinutes: preferences?.sessionMinutes ?? 60,
@@ -157,13 +152,21 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
     surfaceOffset[previous].stopAnimation();
     surfaceOpacity[surface].setValue(0);
     surfaceOffset[surface].setValue(direction * 18);
+    // An interrupted switch (fast taps, a reload) can leave a third layer part-faded; layers sit on
+    // transparent backgrounds, so it would show through the active tab. Hide every uninvolved layer.
+    (Object.keys(surfaceOpacity) as Surface[]).forEach((key) => {
+      if (key === surface || key === previous) return;
+      surfaceOpacity[key].stopAnimation();
+      surfaceOpacity[key].setValue(0);
+      surfaceOffset[key].setValue(0);
+    });
 
     Animated.parallel([
       Animated.timing(surfaceOpacity[previous], { toValue: 0, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
       Animated.timing(surfaceOffset[previous], { toValue: direction * -12, duration: 190, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(surfaceOpacity[surface], { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(surfaceOffset[surface], { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-    ]).start(() => surfaceOffset[previous].setValue(0));
+    ]).start(({ finished }) => { surfaceOffset[previous].setValue(0); if (finished) surfaceOpacity[previous].setValue(0); });
     previousSurface.current = surface;
   }, [surface, surfaceOffset, surfaceOpacity]);
 
@@ -182,26 +185,6 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
   const go = useCallback((next: Surface) => {
     setSurface(next);
   }, []);
-
-  const saveEditor = useCallback((editor:RoutineEditorInput) => {
-    const outcome=apply(current=>saveRoutineEditor(current,editor,[...new Map([...(current.catalog??[]),...(current.block?.catalog??[])].map(item=>[item.id,item])).values()]));
-    return outcome.ok?undefined:describeRuntimeError(outcome.error).message;
-  },[apply]);
-
-
-  const nextBlock = useCallback(() => {
-    const outcome = apply(compileNextRuntimeBlock);
-    if (!outcome.ok) {
-      const problem = describeRuntimeError(outcome.error);
-      notify({ tone: 'error', title: `Plan update failed · ${problem.message}`, sticky: true });
-      return;
-    }
-    notify({
-      tone: 'success', title: 'Your training plan is ready',
-      message: 'Working weights carried over. The pipeline restarted at accumulate, week 1.',
-      action: { label: 'Today', run: () => setSurface('solver') },
-    });
-  }, [apply, notify]);
 
   const onSyncPress = () => {
     if (sync === 'conflict') {
@@ -264,11 +247,12 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'solver' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'solver' && styles.surfaceActive, { opacity: surfaceOpacity.solver, transform: [{ translateX: surfaceOffset.solver }] }]}
         >
-          {hasTraining ? <TodaySurface
+          <TodayPlanContext state={state} defaults={defaultSource} apply={apply} active={surface==='solver'}/>
+          {hasTraining ? <TodaySurface key={state.activeSession?.id??state.block?.id}
             state={state} apply={apply} notify={notify} active={surface === 'solver'}
             onDockChange={setWorkoutDock} onNewWorkout={()=>setQuickWorkoutOpen(true)}
-            onOpenSource={() => { go('account'); }} onOpenWeek={() => go('week')}
-          /> : <EmptyToday onAddRoutine={()=>{go('account');}} onLogWorkout={()=>setQuickWorkoutOpen(true)} />}
+            onOpenSource={() => { go('block'); }} onOpenWeek={() => go('week')}
+          /> : <EmptyToday onAddRoutine={()=>{go('block');}} onLogWorkout={()=>setQuickWorkoutOpen(true)} />}
           {line?<View pointerEvents="box-none" style={styles.notificationOverlay}><View style={styles.notificationCard}>{line}</View></View>:null}
         </Animated.View>
         <Animated.View
@@ -277,7 +261,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'block' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'block' && styles.surfaceActive, { opacity: surfaceOpacity.block, transform: [{ translateX: surfaceOffset.block }] }]}
         >
-          {hasSavedPlan && block ? <BlockSurface state={state} block={block} sessionActive={inSession} onNextBlock={nextBlock} onEditRoutine={() => { go('account'); }} /> : <EmptyTrainingSurface title="My plan" message="No plan yet" />}
+          <PlanSurface state={state} defaults={defaultSource} apply={apply} active={surface==='block'} sync={sync}/>
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'week' ? 'auto' : 'none'}
@@ -285,7 +269,7 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           importantForAccessibility={surface === 'week' ? 'auto' : 'no-hide-descendants'}
           style={[styles.surfaceLayer, surface === 'week' && styles.surfaceActive, { opacity: surfaceOpacity.week, transform: [{ translateX: surfaceOffset.week }] }]}
         >
-          {status && block ? <WeekSurface state={state} block={block} status={status} /> : <EmptyTrainingSurface title="Progress" message="No workouts logged" />}
+          {status && block ? <WeekSurface apply={apply} state={state} block={block} status={status} /> : <EmptyTrainingSurface title="Progress" message="No workouts logged" />}
         </Animated.View>
         <Animated.View
           pointerEvents={surface === 'account' ? 'auto' : 'none'}
@@ -294,9 +278,6 @@ export const TrainingRuntimeScreen = ({ user, onSaveProfile, onLogout, onDeleteA
           style={[styles.surfaceLayer, surface === 'account' && styles.surfaceActive, { opacity: surfaceOpacity.account, transform: [{ translateX: surfaceOffset.account }] }]}
         >
           <AccountSurface active={surface === 'account'} user={user} state={state} sync={sync}
-            routineControls={surface==='account'?<SourceIntake key={state.block?.id??'no-plan'} inline initial={hasSavedPlan && state.source && state.block ? { ...state.source, routine: state.source.routine?.split === 'custom' ? state.source.routine : editableRoutine(state.block) } : { ...(state.source ?? defaultSource), routine: undefined }} catalog={[...new Map([...(state.catalog ?? []), ...(state.block?.catalog ?? [])].map(x=>[x.id,x])).values()]} sessionActive={Boolean(state.activeSession)} sync={sync} onSave={saveEditor} onClose={() => {}} />:null}
-            onUseRoutine={id=>{const outcome=apply(current=>useSavedRoutine(current,id));if(!outcome.ok)return describeRuntimeError(outcome.error).message;return undefined;}}
-            onRenameRoutine={(id,name)=>{const outcome=apply(current=>renameSavedRoutine(current,id,name));if(!outcome.ok)return describeRuntimeError(outcome.error).message;return undefined;}}
             onSaveProfile={onSaveProfile} onLogout={onLogout} onDeleteAccount={onDeleteAccount}/>
 
         </Animated.View>

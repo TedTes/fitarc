@@ -18,7 +18,7 @@ import {
 } from '../../runtime';
 import type { ExerciseDefinition, RuntimeState, SessionPrescription, SetPrescription } from '../../runtime';
 import { colors, radius, space, TOUCH } from './theme';
-import { Button, IconButton, Sheet, Txt } from './ui';
+import { Button, Sheet, Txt } from './ui';
 import { describeRuntimeError, muscleList, setsWord } from './copy';
 import { ExerciseDetailsSheet, ExerciseMuscleDetails, ExerciseTargetPreview } from './ExerciseMuscles';
 import { useLayoutMotion } from './useLayoutMotion';
@@ -31,6 +31,7 @@ import type { ApplyResult } from './useRuntimeController';
 import type { Notify } from './constants';
 
 type Props = {
+  onNewWorkout?: () => void;
   state: RuntimeState;
   apply: (transform: (current: RuntimeState) => RuntimeState) => ApplyResult;
   notify: Notify;
@@ -47,7 +48,7 @@ const startingLoad = (state: RuntimeState, exercise: ExerciseDefinition, target:
 };
 
 /** Routine-backed exercise dock. Done confirms all displayed sets together. */
-export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
+export const SetLogger = ({ state, apply, notify, onDockChange, onNewWorkout }: Props) => {
   useEffect(() => () => onDockChange(null), [onDockChange]);
   const { animate } = useLayoutMotion();
   const {unit,ranges}=useWeightSettings();
@@ -69,7 +70,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
     if(!lastResult)return null;
     const lift=session?.exercises.find(item=>item.exercise.id===lastResult.exerciseId);
     if(!lift?.sets.some(set=>set.status==='pending'))return null;
-    const duration=restSecondsFor(state.source?.goal??'hypertrophy',lift?.exercise.compound??false);
+    const duration=lift?.restSeconds??restSecondsFor(state.source?.goal??'hypertrophy',lift?.exercise.compound??false);
     const until=Date.parse(lastResult.completedAt)+duration*1000;
     return until>Date.now()?{until,durationSeconds:duration,exerciseId:lift.exercise.id}:null;
   });
@@ -103,7 +104,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const startFromScratch=()=>{
     const outcome=currentApply.current(current=>{
       if(current.activeSession?.id!==session.id||current.setResults.some(result=>result.prescriptionId===session.id))throw Error('This workout has already started.');
-      return current.activeSession.exercises.reduce((next,item)=>removeSessionExercise(next,item.id),current);
+      const cleared=current.activeSession.exercises.reduce((next,item)=>removeSessionExercise(next,item.id),current);
+      const blank={...cleared.activeSession!,exerciseQueue:cleared.activeSession!.exerciseQueue?{...cleared.activeSession!.exerciseQueue,advances:false}:undefined};
+      return {...cleared,activeSession:blank,sessions:cleared.sessions.map(item=>item.id===blank.id?blank:item)};
     });
     if(outcome.ok){animate();confirming.current=false;setSelectedExerciseId(undefined);setSheet(null);setDrafts({});setRest(null);}
     else notify({tone:'error',title:'Could not clear workout',message:describeRuntimeError(outcome.error).message});
@@ -244,15 +247,16 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
   const startedAt=session.startedAt??results[0]?.completedAt;
   const upcoming=session.exercises.filter(item=>item.exercise.id!==chosen?.exercise.id&&item.sets.some(s=>s.status==='pending'));
   const finished=session.exercises.filter(item=>item.exercise.id!==chosen?.exercise.id&&!item.sets.some(set=>set.status==='pending')&&item.sets.some(set=>set.result));
-  const targetRest=restSecondsFor(state.source?.goal??'hypertrophy',exercise.compound);
+  const targetRest=entry.restSeconds??restSecondsFor(state.source?.goal??'hypertrophy',exercise.compound);
   return (<View style={styles.page}>
     <View style={styles.workoutHeader}>
       <View style={styles.titleRow}>
-        <Txt variant="heading" style={styles.flex}>Today’s workout</Txt>
-        <IconButton icon="add" label="Add exercise" onPress={()=>setSheet('add')}/>
+        {/* The group is the workout's name; the style above it and the timer below give the rest of the context. */}
+        <Txt variant="title" numberOfLines={1} style={styles.flex}>{(state.source?.routine?.selectionMode==='pools'?state.block?.slots.find(slot=>slot.id===session.slotId)?.label:undefined)??'Today’s workout'}</Txt>
+        <Pressable accessibilityRole="button" accessibilityLabel={onNewWorkout?"New freestyle workout":"Add exercise"} onPress={onNewWorkout??(()=>setSheet('add'))} hitSlop={6}
+          style={({pressed})=>[styles.headerAction,pressed&&styles.pressed]}><Ionicons name="add" size={20} color={colors.text}/></Pressable>
       </View>
-      <WorkoutElapsed startedAt={startedAt} completed={completed} total={allSets.length}/>
-      {state.source?.routine?.selectionMode==='pools'?<Txt variant="caption" tone="secondary">{state.block?.slots.find(slot=>slot.id===session.slotId)?.label}</Txt>:null}
+      <WorkoutElapsed pausedMs={session.pausedMs} startedAt={startedAt} completed={completed} total={allSets.length}/>
       <View style={styles.progressRow} accessibilityLabel={`${completed} of ${allSets.length} sets completed`}>
         {allSets.map(item=><View key={item.id} style={[styles.segment,item.status==='completed'&&styles.segmentDone]}/>)}
       </View>
@@ -293,8 +297,9 @@ export const SetLogger = ({ state, apply, notify, onDockChange }: Props) => {
             onChange={patch=>changeRow(item,patch)}/>)}
         </ScrollView>
         {remainingHere?<Pressable accessibilityRole="button" accessibilityLabel={`Done with ${exercise.name}`} accessibilityHint="Records this exercise’s sets and opens the next unfinished exercise."
-          disabled={submitting} accessibilityState={{disabled:submitting}} onPress={done} style={({pressed})=>[styles.doneAction,pressed&&styles.pressed]}>
-          <Txt variant="mono" tone="secondary" style={styles.meta}>Done</Txt>
+          disabled={submitting} accessibilityState={{disabled:submitting}} onPress={done} style={({pressed})=>[styles.doneAction,styles.donePill,pressed&&styles.pressed,submitting&&styles.doneBusy]}>
+          <Ionicons name="checkmark" size={16} color={colors.accent}/>
+          <Txt variant="caption" tone="accent" style={styles.doneText}>Done</Txt>
         </Pressable>:<View style={styles.doneAction} testID="completed-exercise-status">
           <Txt variant="mono" tone={completedExercise?'success':'muted'} style={styles.meta}>{completedExercise?'Completed':'Skipped'}</Txt>
         </View>}
@@ -382,6 +387,10 @@ const styles = StyleSheet.create({
   historyContent:{paddingTop:8,gap:5},
   targets:{flexDirection:'row',gap:8,paddingVertical:6,marginBottom:4,borderTopWidth:1,borderBottomWidth:1,borderColor:colors.border},targetCell:{flex:1,gap:1},
   doneAction:{minHeight:44,alignSelf:'flex-start',justifyContent:'center',minWidth:56},
+  // Right-aligned under the sets, where the thumb lands after entering the last value.
+  donePill:{alignSelf:'flex-end',flexDirection:'row',alignItems:'center',gap:6,minHeight:40,marginTop:6,paddingHorizontal:16,borderRadius:20,borderWidth:1,borderColor:colors.accentBorder,backgroundColor:colors.accentSoft},
+  doneText:{fontWeight:'700'},doneBusy:{opacity:0.5},
+  headerAction:{width:38,height:38,borderRadius:19,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:colors.border,backgroundColor:colors.surface},
   exerciseHeader:{flexDirection:'row',alignItems:'center',gap:8},pressed:{opacity:0.7},
   option:{flexDirection:'row',gap:space.md,alignItems:'center',padding:space.lg,borderWidth:1,borderColor:colors.border,borderRadius:radius.md,backgroundColor:colors.surface,minHeight:TOUCH},optionDanger:{borderColor:colors.danger,backgroundColor:colors.dangerSoft},optionDisabled:{opacity:0.5},
 });

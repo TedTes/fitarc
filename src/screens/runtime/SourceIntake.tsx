@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import type { ExerciseDefinition, TrainingSource } from '../../runtime/types';
 import { RUNTIME_EXERCISES } from '../../runtime/exerciseCatalog';
-import { draftFromRoutine, emptyDraft, valueOf } from '../../routineSetup/draft';
+import { draftFromRoutine, emptyDraft } from '../../routineSetup/draft';
 import { editorSettings, type RoutineEditorInput } from '../../routineSetup/editor';
 import { applyInputContext, type RoutineInputContext } from '../../routineSetup/context';
 import { RoutineContextChips } from './RoutineContextChips';
@@ -43,21 +43,14 @@ export const SourceIntake=({inline=false,initial,onSave,onClose,sync,catalog=RUN
   return <View style={inline?undefined:styles.flex}>
     {!inline?<View style={styles.header}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={()=>{flush();onClose();}} style={styles.close}><Ionicons name="chevron-back" size={26} color={colors.text}/></Pressable>
-      <Txt variant="title">Your routine</Txt>
+      <Txt variant="title">Plan settings</Txt>
     </View>:null}
-    <Container {...(inline?{style:styles.content}:{contentContainerStyle:[styles.content,{paddingBottom:Math.max(insets.bottom,16)}]})}>
+    <Container {...(inline?{style:styles.content}:{contentContainerStyle:[styles.content,{paddingHorizontal:16,paddingBottom:Math.max(insets.bottom,16)}]})}>
       {sync==='failed'||sync==='conflict'?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{sync==='failed'?'Changes could not sync.':'Training changed on another device.'}</Txt>:null}
       <View style={styles.section}><Txt variant="label" tone="muted" style={styles.label}>SCHEDULE</Txt>
         <RoutineContextChips value={context} initial={editor.settings} disabled={false} onChange={next=>update({...latest.current,context:next,
           draft:isPoolPattern(next.split)&&next.split!==latest.current.draft.preferredSplit?groupDraft(applyInputContext(latest.current.draft,next),next.split,catalog):applyInputContext(latest.current.draft,next)})}/>
       </View>
-      <View style={styles.section}><Txt variant="label" tone="muted" style={styles.label}>GOAL</Txt><View style={styles.choices}>
-        {([{value:'build_muscle',label:'Build muscle'},{value:'lose_fat',label:'Lose fat'}] as const).map(goal=><Pressable key={goal.value} accessibilityRole="button" accessibilityLabel={goal.label}
-          accessibilityState={{selected:editor.draft.focus===goal.value}} onPress={()=>update({...latest.current,draft:{...latest.current.draft,focus:goal.value,goal:valueOf('hypertrophy')}})}
-          style={({pressed})=>[styles.choice,editor.draft.focus===goal.value&&styles.selected,pressed&&styles.pressed]}>
-          <Ionicons name="add" size={12} color={colors.accent}/><Txt variant="heading" style={styles.choiceLabel}>{goal.label}</Txt>
-        </Pressable>)}
-      </View></View>
       <RoutineDraftReview embedded draft={editor.draft} initial={editor.settings} catalog={catalog}
         onChange={draft=>update({...latest.current,draft})} onSettingsChange={settings=>update({...latest.current,settings:editorSettings(settings)})}/>
       {error?<Txt variant="caption" tone="danger" accessibilityLiveRegion="polite">{error}</Txt>:null}

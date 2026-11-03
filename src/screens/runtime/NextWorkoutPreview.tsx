@@ -6,20 +6,12 @@ import type { ExerciseDefinition, Muscle } from '../../runtime/types';
 import { ExerciseDetailsSheet } from './ExerciseMuscles';
 import { MuscleMap } from './MuscleMap';
 import { preferredTargetView } from './muscleTargeting';
-import { muscleList, slotPlain } from './copy';
+import { dayLabel, muscleList, slotPlain } from './copy';
 import { IconButton, Txt } from './ui';
 import { StartSessionCard } from './StartSessionCard';
 import { colors, space } from './theme';
 import { CompletedWorkoutMuscleMap, SessionMuscleChips, type TodayStats } from './CompletedWorkoutMuscleMap';
 
-/** Compact relative days; include the date for sessions more than a week away. */
-const dayLabel=(date:string,today:string)=>{
-  const days=Math.round((Date.parse(`${date}T12:00:00`)-Date.parse(`${today}T12:00:00`))/86400000);
-  if(days<=0)return 'Today';
-  if(days===1)return 'Tmrw';
-  if(days<7)return new Date(`${date}T12:00:00`).toLocaleDateString('en',{weekday:'short'});
-  return new Date(`${date}T12:00:00`).toLocaleDateString('en',{month:'short',day:'numeric'});
-};
 
 export const NextWorkoutPreview=({workout,today,stats,celebrationId,onAddExercise,onCalendar,onUse}:{workout:NextWorkout;today:string;stats?:TodayStats;celebrationId?:string|null;onAddExercise:()=>void;onCalendar:()=>void;onUse:()=>void})=>{
   const [inspected,setInspected]=useState<ExerciseDefinition|null>(null);
@@ -36,7 +28,7 @@ export const NextWorkoutPreview=({workout,today,stats,celebrationId,onAddExercis
     <ScrollView contentContainerStyle={s.page}>
       <View style={s.header}>
         <Txt variant="title" style={s.title}>Today</Txt>
-        <IconButton icon="add" label="Add exercise to next session" onPress={onAddExercise}/>
+        <IconButton icon="add" label="New freestyle workout" onPress={onAddExercise}/>
       </View>
       {workout.finishedToday?<CompletedWorkoutMuscleMap workout={workout} stats={stats} celebrationId={celebrationId} selected={selected} onSelect={toggleMuscle}/>:null}
       <StartSessionCard title={group||'Your workout'} exercises={workout.exercises.length}

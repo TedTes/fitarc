@@ -8,14 +8,21 @@ import { colors } from './theme';
 export type WorkoutDockState = { until: number; durationSeconds: number; onSkip: () => void };
 export const formatWorkoutTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-export const WorkoutElapsed = memo(function WorkoutElapsed({ startedAt, completed, total }: {
-  startedAt?: string; completed: number; total: number;
+/** Session length: m:ss under an hour, then h:mm:ss, then whole days and hours for a workout left open. */
+export const formatElapsed = (seconds: number) => {
+  if (seconds < 3600) return formatWorkoutTime(seconds).padStart(5, '0');
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds % 3600 / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h`;
+};
+
+export const WorkoutElapsed = memo(function WorkoutElapsed({ startedAt, completed, total, pausedMs = 0 }: {
+  pausedMs?: number; startedAt?: string; completed: number; total: number;
 }) {
   const now = useForegroundClock(Boolean(startedAt));
-  const elapsed = startedAt ? Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1000)) : 0;
+  const elapsed = startedAt ? Math.max(0, Math.floor((now - Date.parse(startedAt) - pausedMs) / 1000)) : 0;
   return <Txt variant="mono" tone="muted" style={styles.meta}>
     <Txt variant="mono" style={[styles.meta, { color: startedAt ? colors.success : colors.accent }]}>
-      {startedAt ? `● ${formatWorkoutTime(elapsed).padStart(5, '0')} elapsed` : 'Ready'}
+      {startedAt ? `● ${formatElapsed(elapsed)} elapsed` : 'Ready'}
     </Txt>{` · ${completed} of ${total} sets`}
   </Txt>;
 });

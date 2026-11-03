@@ -23,6 +23,7 @@ const ExerciseEditor=({item,catalog,onChange,onPrivate}:{item:DraftExercise;cata
     <PlanButton label={choosing?'Close exercise search':'Change exercise'} variant="ghost" onPress={()=>setChoosing(!choosing)}/>
     {choosing?<><ExercisePicker catalog={catalog} selectedIds={[]} onAdd={exercise=>{onChange({...item,exerciseId:exercise.id,name:exercise.name,basis:null});setChoosing(false);}}/><CustomExerciseForm onAdd={exercise=>{onPrivate(exercise);setChoosing(false);}}/></>:null}
     <SetTargetControls value={{sets:item.sets.value??3,minReps:item.minReps.value??8,maxReps:item.maxReps.value??12,targetRir:item.targetRir.value??2}} onChange={value=>onChange({...item,sets:valueOf(value.sets),minReps:valueOf(value.minReps),maxReps:valueOf(value.maxReps),targetRir:valueOf(value.targetRir)})}/>
+    <PlanGroup label="REST OVERRIDE (SECONDS)"><PlanInput accessibilityLabel="Rest seconds" keyboardType="number-pad" placeholder="Goal default" value={item.restSeconds===undefined?'':String(item.restSeconds)} onChangeText={text=>onChange({...item,restSeconds:text.trim()?Number(text):undefined})}/></PlanGroup>
     <PlanGroup label="STARTING WEIGHT"><PlanInput accessibilityLabel={`${item.name} Starting weight`} value={item.weight.value===null?'':String(item.weight.value)} keyboardType="decimal-pad" onChangeText={text=>onChange({...item,weight:numberValue(text),unit:item.unit??'kg'})}/></PlanGroup>
     {item.weight.value!==null?<>
       <PlanOptions segments options={[{value:'kg' as const,label:'kg'},{value:'lb' as const,label:'lb'}]} value={item.unit??'kg'} onChange={unit=>onChange({...item,unit})}/>
@@ -50,7 +51,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,scheduleRequest
   return <View style={planStyles.root}>
     <PlanGroup label="WORKOUT STRUCTURE">
       <PlanOptions options={[{value:'upper_lower' as const,label:'Upper / lower'},{value:'push_pull_legs' as const,label:'Push / pull / legs'},{value:'full_body' as const,label:'Full body'},{value:'custom' as const,label:'Custom groups'}]} value={pools?(draft.preferredSplit??'custom'):[]} onChange={pattern=>{animate();onChange(isPoolPattern(pattern)?groupDraft(draft,pattern,all):{...draft,selectionMode:'pools',preferredSplit:'custom'});}}/>
-      <PlanText kind="meta">{pools?`${draft.workouts.map(w=>w.name).join(' → ')} → repeat. Each workout picks from its pool.`:'Choose a pattern to organize your exercises into pools.'}</PlanText>
+      <PlanText kind="meta">{pools?`${draft.workouts.map(w=>w.name).join(' → ')} → repeat. Each session continues from the next exercises in its queue.`:'Choose a pattern to organize your exercise queues.'}</PlanText>
     </PlanGroup>
     {!embedded?<><PlanText kind="overline">PLAN</PlanText>
     <PlanPanel title="Schedule & goal" summary={`${days} days/week · ${minutes} min · ${GOAL_OPTIONS.find(option=>option.value===focus)?.label.toLowerCase()}`} open={open==='schedule'} onToggle={()=>toggle('schedule')}>
@@ -62,9 +63,9 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,scheduleRequest
     <PlanPanel title="Set defaults" summary={`${defaults.sets} sets · ${defaults.minReps}–${defaults.maxReps} reps · ${defaults.targetRir} rir`} open={open==='defaults'} onToggle={()=>toggle('defaults')}>
       <SetTargetControls value={defaults} onChange={setDefaults=>onChange({...draft,setDefaults})}/>
     </PlanPanel>
-    {!pools?<>
+    <>
     <View style={[planStyles.count,styles.sectionHead]}>
-      <PlanText kind="overline">{pools?'EXERCISE POOLS':'WORKOUTS'} · {draft.workouts.length}</PlanText>
+      <PlanText kind="overline">{pools?'EXERCISE QUEUES':'WORKOUTS'} · {draft.workouts.length}</PlanText>
       <View style={styles.sectionEnd}>
         <PlanText kind="meta" success={complete}>{complete?'✓ complete':'incomplete'}</PlanText>
         <PlanAdd label={pools?'Add group':'Add workout'} disabled={draft.workouts.length>=14} onPress={()=>setNewWorkout(true)}/>
@@ -88,7 +89,7 @@ export const RoutineDraftReview=({draft,initial,catalog,onChange,scheduleRequest
         onAdd={exercise=>{changeWorkout(addingWorkout.id,{exercises:[...addingWorkout.exercises,exerciseFromDefaults(exercise,defaults)]});setAddingTo(null);}}/>:null}
     </Sheet>
     {newWorkout?<RoutineWorkoutSheet catalog={all} defaults={defaults} position={draft.workouts.length} onCancel={()=>setNewWorkout(false)} onAdd={workout=>{onChange({...draft,workouts:[...draft.workouts,workout]});setNewWorkout(false);setOpen(null);}}/>:null}
-    </>:null}
+    </>
   </View>;
 };
 const styles=StyleSheet.create({sectionHead:{alignItems:'center'},sectionEnd:{flexDirection:'row',alignItems:'center',gap:10}});

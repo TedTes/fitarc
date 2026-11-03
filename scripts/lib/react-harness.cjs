@@ -35,7 +35,7 @@ mocks.set('react-native', native);
 mocks.set('@expo/vector-icons', { Ionicons: 'Ionicons' });
 mocks.set('react-native-safe-area-context', { useSafeAreaInsets: () => ({ bottom: 0 }) });
 mockFile('src/screens/runtime/ui.tsx', { Txt: 'Txt', Button: 'Button', IconButton: 'IconButton', Sheet: 'Sheet', Choice: 'Choice' });
-mockFile('src/screens/runtime/PlanKit.tsx', { PlanText: 'PlanText' });
+mockFile('src/screens/runtime/PlanKit.tsx', { PlanText: 'PlanText', PlanOptions: 'PlanOptions' });
 mockFile('src/screens/runtime/MuscleMap.tsx', { MuscleMap: 'MuscleMap' });
 mockFile('src/screens/runtime/ExerciseMuscles.tsx', { ExerciseDetailsSheet: 'ExerciseDetailsSheet', ExerciseMuscleDetails: 'ExerciseMuscleDetails', ExerciseTargetPreview: 'ExerciseTargetPreview' });
 let now = Date.parse('2026-10-17T16:00:00Z'), sequence = 0;

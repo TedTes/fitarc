@@ -87,7 +87,7 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
     const span=times.length>1?Math.round((Math.max(...times)-Math.min(...times))/60000):0;
     return {sets:done.length,volumeKg:done.reduce((sum,result)=>sum+(result.actualLoadKg??result.prescribedLoadKg)*result.completedReps,0),minutes:span>=5?span:null};
   },[state.sessions,state.setResults,date]);
-  if(nextWorkout)return <><NextWorkoutPreview workout={nextWorkout} today={date} stats={todayStats} celebrationId={active?celebrationId:null} onAddExercise={()=>setPanel('next-add')} onCalendar={()=>setPanel('calendar')} onUse={()=>{
+  if(nextWorkout)return <><NextWorkoutPreview workout={nextWorkout} today={date} stats={todayStats} celebrationId={active?celebrationId:null} onAddExercise={onNewWorkout} onCalendar={()=>setPanel('calendar')} onUse={()=>{
     const outcome=apply(current=>startAdditionalWorkout(current,current.source!,nextWorkout.exercises.map(({exercise,...item})=>({...item,exerciseId:exercise.id})),nextWorkout.name,date));
     if(!outcome.ok)notify({tone:'error',title:'Could not prepare workout',message:describeRuntimeError(outcome.error).message});
   }}/>
@@ -121,7 +121,7 @@ export const TodaySurface = ({ state, apply, notify, active, onDockChange, onOpe
   const omitted=chosenSlot?.plannedExercises.filter(p=>!entries.some(e=>e.exercise.id===(replacements[p.exerciseId]??p.exerciseId)))??[];
   const inspectedEntry=entries.find(e=>e.exercise.id===detailsId);
   const recoveryLabel=recovery==='yes'?'Ready':recovery==='meh'?'Tired':'Very tired';
-  if(session||proposal) return <WorkoutWorkspace state={state} proposal={proposal} apply={apply} notify={notify} onDockChange={onDockChange}/>;
+  if(session||proposal) return <WorkoutWorkspace state={state} proposal={proposal} apply={apply} notify={notify} onDockChange={onDockChange} onNewWorkout={onNewWorkout}/>;
   return <View style={styles.root}>
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
       <View style={styles.hero}><View style={styles.copy}><ScreenBrand name="Today" chip="" /></View><IconButton label="New workout" icon="add" onPress={onNewWorkout}/></View>
@@ -203,9 +203,9 @@ const styles=StyleSheet.create({
 });
 
 /** A prepared workout is local until its first confirmed set. Browsing never calls apply. */
-const WorkoutWorkspace = ({state,proposal,apply,notify,onDockChange}: Pick<Props,'state'|'apply'|'notify'|'onDockChange'> & {
+const WorkoutWorkspace = ({state,proposal,apply,notify,onDockChange,onNewWorkout}: Pick<Props,'state'|'apply'|'notify'|'onDockChange'|'onNewWorkout'> & {
   proposal: ReturnType<typeof previewTrainingSessionDetailed> | null | undefined;
 }) => {
   const { workspace, update } = useWorkoutWorkspace(state, proposal, apply);
-  return <SetLogger state={workspace} apply={update} notify={notify} onDockChange={onDockChange}/>;
+  return <SetLogger onNewWorkout={state.activeSession?undefined:onNewWorkout} state={workspace} apply={update} notify={notify} onDockChange={onDockChange}/>;
 };

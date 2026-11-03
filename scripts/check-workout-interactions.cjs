@@ -43,9 +43,10 @@ async function main(){
   assert.equal(state.activeSession.exercises.length,ids.length-2);
   await act(async()=>tree.unmount());
 
-  let workout=service.solveTrainingSession(base(),context);
-  workout=service.recordRuntimeSet(workout,result(workout));
-  const original=workout.activeSession.exercises[0];
+  let workout=service.solveTrainingSession(base(),{...context,minutesAvailable:30});
+  const original=workout.activeSession.exercises.find(entry=>service.getSwapCandidates(workout,entry.exercise.id,8).length);
+  assert(original,'Swap fixture needs an eligible alternative outside the selected queue batch');
+  workout=service.recordRuntimeSet(workout,result(workout,original));
   const replacement=service.getSwapCandidates(workout,original.exercise.id,8)[0];assert(replacement);
   workout=service.substituteRuntimeExercise(workout,original.exercise.id,replacement.id);
   assert.equal(workout.setResults.length,1,'Swap preserves recorded sets');

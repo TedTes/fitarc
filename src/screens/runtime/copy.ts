@@ -33,8 +33,8 @@ export const slotPlain = (slot: Pick<TrainingSlot, 'label'> | undefined | null) 
   slot ? SLOT_PLAIN[slot.label] ?? slot.label : 'Session';
 
 export const limitationLabel = (item: string) => item.charAt(0).toUpperCase() + item.slice(1);
-export const goalLabel = (goal: 'hypertrophy' | 'strength') => goal === 'strength' ? 'strength' : 'hypertrophy';
-export const goalPlain = (goal: 'hypertrophy' | 'strength') => goal === 'strength' ? 'get stronger' : 'build muscle';
+export const goalLabel = (goal: import('../../runtime/types').RuntimeGoal) => ({hypertrophy:'Build muscle',strength:'Strength',fat_loss:'Fat loss',general:'General fitness'}[goal]);
+export const goalPlain = (goal: import('../../runtime/types').RuntimeGoal) => goalLabel(goal);
 
 export const PHASE_COPY: Record<BlockPhaseKind, { name: string; plain: string; purpose: string }> = {
   accumulate: { name: 'Build', plain: 'build volume', purpose: 'Build volume at a comfortable effort.' },
@@ -200,4 +200,13 @@ export const describeRuntimeError = (error: unknown): { title: string; message: 
     default:
       return { title: 'That did not apply', message: code && !code.includes('_') ? code : 'Nothing was changed. Try again.' };
   }
+};
+
+/** Compact relative days; include the date for sessions more than a week away. */
+export const dayLabel=(date:string,today:string)=>{
+  const days=Math.round((Date.parse(`${date}T12:00:00`)-Date.parse(`${today}T12:00:00`))/86400000);
+  if(days<=0)return 'Today';
+  if(days===1)return 'Tmrw';
+  if(days<7)return new Date(`${date}T12:00:00`).toLocaleDateString('en',{weekday:'short'});
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en',{month:'short',day:'numeric'});
 };
