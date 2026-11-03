@@ -19,7 +19,7 @@ export function projectTrainingState(state: RuntimeState): RuntimeState {
     setResults.push(result); decisions.push(decision);
   }
   return { ...state, setResults, decisions, workingSets,
-    activeSession: state.sessions.find((session) => session.status !== 'committed') ?? null,
+    activeSession: state.sessions.find((session) => (session.status === 'active' || session.status === 'proposed')) ?? null,
     committedSessionIds: state.sessions.filter((session) => session.status === 'committed').map((session) => session.id) };
 }
 
@@ -34,7 +34,7 @@ export function fromStoredTraining(stored: StoredTrainingState): RuntimeState {
   if (stored.schemaVersion !== 4 || !Array.isArray(stored.plans) || !Array.isArray(stored.sessions)) throw new Error('Unsupported training data format.');
   const ids = new Set<string>();
   const sessions = stored.sessions as SessionPrescription[];
-  if (sessions.filter((session) => session.status !== 'committed').length > 1) throw new Error('More than one workout is active.');
+  if (sessions.filter((session) => (session.status === 'active' || session.status === 'proposed')).length > 1) throw new Error('More than one workout is active.');
   for (const session of sessions) for (const entry of session.exercises) for (const set of entry.sets) {
     if (ids.has(set.id)) throw new Error('Duplicate set ID.');
     ids.add(set.id);

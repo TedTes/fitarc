@@ -17,16 +17,18 @@ export const editableRoutine = (plan: TrainingBlock): RoutineDefinition => ({
   setDefaults:plan.preferences?.routine?.setDefaults,
   limitationNote:plan.preferences?.routine?.limitationNote,
   customExercises: plan.preferences?.routine?.customExercises,
-  preferredSplit: plan.preferences?.routine?.preferredSplit ?? plan.preferences?.routine?.split,
+  preferredSplit: plan.preferences?.routine?.preferredSplit ?? plan.preferences?.routine?.split ?? plan.preferences?.trainingSplit ?? 'auto',
   split: 'custom', progression: plan.preferences?.routine?.progression ?? defaultProgression(),
   workouts: plan.slots.map(slot => {
     const targetMuscles = plan.preferences?.routine?.workouts.find(workout=>workout.id===slot.id)?.targetMuscles;
-    return { id: slot.id, name: slot.label, reuseSelection:plan.preferences?.routine?.workouts.find(workout=>workout.id===slot.id)?.reuseSelection, ...(targetMuscles ? { targetMuscles } : {}), exercises: slot.plannedExercises.map(item => ({
+    const reuseSelection = plan.preferences?.routine?.workouts.find(workout=>workout.id===slot.id)?.reuseSelection;
+    return { id: slot.id, name: slot.label, ...(reuseSelection !== undefined ? {reuseSelection} : {}), ...(targetMuscles ? { targetMuscles } : {}), exercises: slot.plannedExercises.map(item => ({
     exerciseId: item.exerciseId, sets: item.sets,
     minReps: item.prescription?.minReps ?? plan.phases[0].minReps,
     maxReps: item.prescription?.maxReps ?? plan.phases[0].maxReps,
     targetRir: item.prescription?.targetRir ?? plan.phases[0].targetRir,
     startingLoadKg: item.prescription?.startingLoadKg,
+    ...(item.prescription?.restSeconds !== undefined ? {restSeconds:item.prescription.restSeconds} : {}),
     })) };
   }),
 });
@@ -67,6 +69,7 @@ export const validateRoutineSource = (source: TrainingSource, catalog: ExerciseD
       if (!catalog.some(x => x.id === item.exerciseId)) throw Error('An exercise is missing from the available catalog.');
       if (exercises.has(item.exerciseId)) throw Error('Use one entry per exercise in a workout; adjust its set count instead.');
       exercises.add(item.exerciseId);
+      if(item.restSeconds!==undefined&&(!Number.isInteger(item.restSeconds)||item.restSeconds<0||item.restSeconds>900))throw Error('Rest must be 0–900 seconds.');
       if (!Number.isInteger(item.sets) || item.sets < 1 || item.sets > 20
         || !Number.isInteger(item.minReps) || item.minReps < 1 || !Number.isInteger(item.maxReps) || item.maxReps < item.minReps || item.maxReps > 99
         || !Number.isInteger(item.targetRir) || item.targetRir < 0 || item.targetRir > 5

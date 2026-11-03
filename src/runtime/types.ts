@@ -1,4 +1,4 @@
-export type RuntimeGoal = 'hypertrophy' | 'strength';
+export type RuntimeGoal = 'hypertrophy' | 'strength' | 'fat_loss' | 'general';
 export type RuntimeExperience = 'intermediate' | 'advanced';
 export type RecoveryState = 'yes' | 'meh' | 'no';
 export type BlockPhaseKind = 'accumulate' | 'intensify' | 'peak' | 'deload';
@@ -40,6 +40,7 @@ export type ProgressionSettings = {
   increments: Record<string, number>;
 };
 export type RoutineExercise = {
+  restSeconds?: number;
   exerciseId: string;
   sets: number;
   minReps: number;
@@ -213,6 +214,7 @@ export type SetPrescription = {
 };
 
 export type PrescribedExercise = {
+  restSeconds?: number;
   id: string;
   exercise: ExerciseDefinition;
   priority: number;
@@ -222,6 +224,8 @@ export type PrescribedExercise = {
 };
 
 export type SessionPrescription = {
+  /** Frozen batch continuation, applied only by a committed session with logged work. */
+  exerciseQueue?: { key: string; nextExerciseId: string; advances: boolean };
   /** First confirmed set, independent of when the prescription was prepared. */
   startedAt?: string;
   finishedAt?: string;
@@ -235,7 +239,10 @@ export type SessionPrescription = {
   phase: BlockPhaseKind;
   estimatedMinutes: number;
   exercises: PrescribedExercise[];
-  status: 'proposed' | 'active' | 'committed';
+  status: 'proposed' | 'active' | 'paused' | 'committed';
+  pausedAt?: string;
+  pausedMs?: number;
+  conditioningMinutes?: number;
   explanation: string;
   createdAt: string;
 };

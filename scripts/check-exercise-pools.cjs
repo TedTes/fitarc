@@ -29,7 +29,7 @@ assert(p.exercises.every(e=>matchesGroup(e.exercise,GROUP_TEMPLATES.upper_lower[
 assert(ready.block.slots[0].plannedExercises.length>p.exercises.length,'pool is bigger than the session');
 assert(computeWeeklyStatus(ready.block,[],[]).muscles.every(m=>m.completedSets===0),'pool and preview never credit actual progress');
 assert.equal(nextRoutineSlot(ready.block,[p],date).label,'Upper','opening does not advance');
-assert.equal(nextRoutineSlot(ready.block,[{...p,status:'committed'}],date).label,'Upper','empty completion does not advance');
+assert.equal(nextRoutineSlot(ready.block,[{...p,status:'committed',exerciseQueue:{...p.exerciseQueue,advances:false}}],date).label,'Upper','empty completion does not advance');
 let active=solveTrainingSession(ready,context);assert.deepEqual(ids(active.activeSession),ids(p));
 let logged=logFirst(active),finished=commitRuntimeSession(skipRemainingRuntimeSets(logged));
 assert.equal(nextRoutineSlot(finished.block,finished.sessions,datePlusDays(date,12)).label,'Lower','rest days do not advance');
@@ -56,8 +56,10 @@ assert(previewTrainingSession(constrained,context).exercises.every(e=>e.exercise
 // Session-only mutations retain both logged work and the saved pool.
 const routineBefore=JSON.stringify(logged.source.routine),setBefore=JSON.stringify(logged.setResults);
 const target=logged.activeSession.exercises[0].exercise.id;
-const swapped=substituteRuntimeExercise(logged,target,getSwapCandidates(logged,target)[0].id);
-assert.equal(JSON.stringify(swapped.source.routine),routineBefore);assert.equal(JSON.stringify(swapped.setResults),setBefore);
+const swapInput=logFirst(solveTrainingSession(ready,{...context,minutesAvailable:30}));
+const swapTarget=swapInput.activeSession.exercises.find(e=>getSwapCandidates(swapInput,e.exercise.id).length).exercise.id;
+const swapped=substituteRuntimeExercise(swapInput,swapTarget,getSwapCandidates(swapInput,swapTarget)[0].id);
+assert.equal(JSON.stringify(swapped.source.routine),routineBefore);assert.equal(JSON.stringify(swapped.setResults),JSON.stringify(swapInput.setResults));
 const skipped=skipRuntimeExercise(logged,target,false);
 assert.equal(skipped.activeSession.exercises[0].sets.filter(s=>s.status==='completed').length,1);
 assert(!skipped.activeSession.exercises[0].sets.some(s=>s.status==='pending'));
@@ -73,14 +75,7 @@ assert(actual.muscles.some(m=>m.completedSets>0),'completed sets feed Progress')
 const restored=fromStoredTraining(toStoredTraining(ready));
 assert.equal(restored.source.routine.selectionMode,'pools');
 assert.deepEqual(draftFromRoutine(editableRoutine(restored.block),restored.source,catalog).workouts.map(w=>w.exercises.length),makeDraft('upper_lower').workouts.map(w=>w.exercises.length));
-// Deterministic rotation of equivalent accessories, with a stable main lift and priority to coverage.
-const definitions=[catalog.find(e=>e.id==='back_squat'),...['a','b','c'].map(id=>({...catalog.find(e=>e.id==='calf_raise'),id}))];
-const plans=definitions.map(e=>({exerciseId:e.id,sets:3,selection:{reasons:[]}}));
-const slot={id:'rotation',label:'Lower',targetMuscles:['quads','calves'],plannedExercises:plans};
-const first=selectPoolPlans(slot,source,definitions,{...context,minutesAvailable:30});
-const history=[{status:'committed',context,createdAt:'2026-01-01',exercises:first.map(p=>({exercise:definitions.find(e=>e.id===p.exerciseId),sets:[{status:'completed',result:{completedReps:10}}]}))}];
-const second=selectPoolPlans(slot,source,definitions,{...context,minutesAvailable:30},history);
-assert.equal(second[0].exerciseId,first[0].exerciseId);assert(second.some(e=>!first.some(p=>p.exerciseId===e.exerciseId)),'rotate equivalent less-recent accessories');
+// Queue rotation is verified end-to-end in check-exercise-queues.cjs.
 // Hundreds of catalog entries stay in the pool, without inflating a workout or forecast.
 const many=Array.from({length:120},(_,i)=>({...catalog.find(e=>e.id==='calf_raise'),id:`bulk_${i}`}));
 let large=makeDraft('upper_lower');large.workouts[1].exercises.push(...many.map(e=>({...large.workouts[1].exercises[0],id:e.id,exerciseId:e.id,name:e.name})));

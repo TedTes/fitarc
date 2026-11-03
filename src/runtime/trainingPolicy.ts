@@ -27,7 +27,7 @@ export const weeklyTargetsFor = (
   goal: RuntimeGoal,
   experience: RuntimeExperience
 ): Record<Muscle, { min: number; max: number }> => {
-  const base = goal === 'strength' ? STRENGTH_TARGETS : HYPERTROPHY_TARGETS;
+  const base = goal === 'hypertrophy' ? HYPERTROPHY_TARGETS : STRENGTH_TARGETS;
   const offset = experience === 'advanced' ? 2 : 0;
   return Object.fromEntries(
     MUSCLES.map((muscle) => [muscle, {
@@ -64,5 +64,6 @@ export const secondaryMuscleCredit = 0.5;
 /** Rest is part of the prescribed dose, so the runtime owns it rather than asking the user. */
 export const restSecondsFor = (goal: RuntimeGoal, compound: boolean): number => {
   if (goal === 'strength') return compound ? 180 : 90;
+  if(goal==='general')return compound?90:60;
   return compound ? 120 : 75;
 };

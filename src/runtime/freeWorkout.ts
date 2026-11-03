@@ -52,7 +52,7 @@ export const startAdditionalWorkout = (
   const block={...ready.block!,currentWeek:planWeek(ready.block!,date)},source=ready.source!;
   ready={...ready,block};
   const session: import('./types').SessionPrescription = {
-    id:createRuntimeId(),name,blockId:block.id,planGroupId:block.groupId??block.id,blockVersion:block.version,
+    id:createRuntimeId(),name,blockId:null,blockVersion:block.version,
     slotId:createRuntimeId(),context:{date,minutesAvailable:source.sessionMinutes,recovery:'yes',unavailableEquipment:[],unavailableExerciseIds:source.excludedExerciseIds,extraWorkout:true},
     phase:block.phases.find(p=>block.currentWeek>=p.startWeek&&block.currentWeek<=p.endWeek)?.kind??block.phases[0].kind,
     estimatedMinutes:0,exercises:[],status:'active',explanation:'',createdAt:new Date().toISOString(),

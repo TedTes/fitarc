@@ -74,6 +74,7 @@ async function main() {
   await db.query('select fitarc.fitarc_save_training($1::jsonb,0,$2::uuid)',[JSON.stringify(oldPayload),createRuntimeId()]);
   await db.exec('reset role;');
   await db.exec(fs.readFileSync('supabase/migrations/202610130001_profile_settings_and_routine_reuse.sql','utf8'));
+  await db.exec(fs.readFileSync('supabase/migrations/202611020001_paused_workouts.sql','utf8'));
   const migrated=(await db.query('select training_split,routine_text,training_days_per_week from fitarc.fitarc_profiles where user_id=$1',[migrationUser])).rows[0];
   assert.equal(migrated.training_split,'upper_lower');assert.equal(migrated.routine_text,'My saved routine text');assert.equal(migrated.training_days_per_week,legacy.source.daysPerWeek);
   assert.equal((await db.query('select count(*)::int as n from fitarc.fitarc_sets where user_id=$1',[migrationUser])).rows[0].n,legacy.sessions.flatMap(s=>s.exercises.flatMap(e=>e.sets)).length);
@@ -189,10 +190,23 @@ async function main() {
   const named=renameSavedRoutine(owned,replanned.block.id,'My custom routine');
   await save(named,8);
   const namedRoundTrip=(await read()).state;
-  assert(savedRoutines(namedRoundTrip).some(plan=>routineName(plan)==='My custom routine'));
+  assert(savedRoutines(namedRoundTrip).some(plan=>routineName(plan)==='My custom routine'),'Rename retains style identity');
+  assert.equal(savedRoutines(namedRoundTrip).filter(p=>p.id===replanned.block.id).length,0,'Old revisions do not create extra style cards');
   assert.equal(namedRoundTrip.block.id,owned.block.id);
   assert.deepEqual(namedRoundTrip.sessions,owned.sessions);
   assert.deepEqual(namedRoundTrip.blockHistory.find(plan=>plan.id===replanned.block.id),replanned.block);
+  const {pauseWorkout}=require('../src/runtime/sessionSwitching.ts');
+  const {startAdditionalWorkout}=require('../src/runtime/freeWorkout.ts');
+  const paused=pauseWorkout(namedRoundTrip);
+  const parallel=startAdditionalWorkout(paused,paused.source,[],'Freestyle');
+  await save(parallel,9);
+  const resumedData=(await read()).state;
+  assert.equal(resumedData.sessions.filter(s=>s.status==='paused').length,1);
+  assert.equal(resumedData.activeSession.id,parallel.activeSession.id);
+  assert.equal(resumedData.activeSession.blockId,null);
+  const invalidParallel=structuredClone(parallel);
+  invalidParallel.sessions.find(s=>s.status==='paused').status='active';
+  await assert.rejects(save(invalidParallel,10),'Database still forbids two foreground workouts');
   await db.close();
   // Separately verify the entire active migration chain against an empty app schema.
   const freshDb = await PGlite.create();

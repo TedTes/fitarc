@@ -1,8 +1,8 @@
-import { selectPoolPlans, workoutGroup, matchesGroup } from './exercisePools';
+import { selectPoolPlans, exerciseQueueProgress, workoutGroup, matchesGroup } from './exercisePools';
 import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
 import { suggestWorkoutLoad } from './progression';
-import { MUSCLES, secondaryMuscleCredit } from './trainingPolicy';
+import { MUSCLES, secondaryMuscleCredit, restSecondsFor } from './trainingPolicy';
 import { arbitratePrescription } from './arbitration';
 import { RUNTIME_EXERCISES } from './exerciseCatalog';
 import { selectExercises } from './exerciseSelector';
@@ -41,7 +41,7 @@ export const solveSession = (input: {
     if (replacementId && (!original || !exerciseAlternatives(original,catalog,input.source,input.sessions ?? [],input.context).some(x=>x.exercise.id===replacementId))) throw Error('A selected replacement no longer fits today’s constraints.');
     const exercise = catalog.find((candidate) => candidate.id === (replacementId ?? plan.exerciseId));
     if (!exercise || (group && !matchesGroup(exercise, group)) || input.source.excludedExerciseIds.includes(exercise.id) || exercise.contraindications.some((item) => input.source.limitations.includes(item)) || exercise.equipment.some((item) => !input.source.equipment.includes(item)) || unavailableExercises.has(exercise.id) || exercise.equipment.some((item) => unavailableEquipment.has(item))) return [];
-    return [{ exercise, prescription: plan.prescription ? {...plan.prescription,exerciseId:exercise.id,startingLoadKg:replacementId?undefined:plan.prescription.startingLoadKg} : undefined, plannedSets: plan.sets, reason: replacementId ? `Your chosen replacement for ${original!.name}` : plan.selection.reasons.join(' · ') }];
+    return [{ exercise, queueExerciseId: plan.exerciseId, prescription: plan.prescription ? {...plan.prescription,exerciseId:exercise.id,startingLoadKg:replacementId?undefined:plan.prescription.startingLoadKg} : undefined, plannedSets: plan.sets, reason: replacementId ? `Your chosen replacement for ${original!.name}` : plan.selection.reasons.join(' · ') }];
   }).slice(0, exerciseLimit);
   const fallback = selectExercises({
     catalog: groupCatalog, source: input.source,
@@ -51,7 +51,7 @@ export const solveSession = (input: {
     unavailableEquipment: input.context.unavailableEquipment,
     limit: exerciseLimit,
   }).map((exercise) => ({
-    exercise, prescription: undefined,
+    exercise, queueExerciseId: exercise.id, prescription: undefined,
     plannedSets: Math.max(2, Math.min(4, Math.floor((slot.plannedExercises?.reduce((sum, plan) => sum + plan.sets, 0) ?? exerciseLimit * 3) / Math.max(1, exerciseLimit)))),
     reason: `${slot.label}: selected within current constraints`,
   }));
@@ -82,6 +82,7 @@ export const solveSession = (input: {
     const loadKg = suggestion?.loadKg ?? seed?.loadKg ?? prescription?.startingLoadKg ?? (exercise.compound ? 20 : 10);
     return {
       id: createRuntimeId(), exercise, priority: index + 1,
+      restSeconds: prescription?.restSeconds ?? restSecondsFor(input.source.goal, exercise.compound),
       ...(range?{needsBaseline:false}:suggestion ? {needsBaseline: !suggestion.baselineKnown} : {}),
       reason: `${reason} · ${{within_constraints:'Fits your current preferences',recovery_meh:'Fewer sets for today’s recovery',recovery_no:'Reduced work for today’s recovery',deload_override:'Reduced work for recovery',weekly_volume_cap:'Adjusted for this week’s completed work'}[arbitration.reasonCode] ?? 'Adjusted for today'}${suggestion ? ` · ${suggestion.explanation}` : ''}`,
       sets: Array.from({ length: allowedSets }, (_, setIndex) => ({
@@ -106,10 +107,13 @@ export const solveSession = (input: {
       : entry);
   }
   const estimatedMinutes = Math.ceil(estimate());
+  // Capture the batch that actually fits, before later swaps/reorders/removals can change its identity.
+  const last = selected.filter(item=>exercises.some(entry=>entry.exercise.id===item.exercise.id)).at(-1);
+  const exerciseQueue = pools && last ? exerciseQueueProgress(slot,last.queueExerciseId,!input.context.extraWorkout && !input.context.workoutId) : undefined;
   return {
     id: createRuntimeId(), blockId: input.block.id, planGroupId: input.block.groupId ?? input.block.id, blockVersion: input.block.version,
     slotId: slot.id, context: input.context, phase: phase.kind,
-    estimatedMinutes, exercises,
+    estimatedMinutes, exercises, ...(exerciseQueue ? {exerciseQueue} : {}),
     status: 'proposed',
     explanation: input.context.recovery === 'yes'
       ? `Workout fits a ${input.context.minutesAvailable}-minute budget.`

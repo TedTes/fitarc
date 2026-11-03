@@ -1,5 +1,8 @@
 import type { ExerciseDefinition, RuntimeState, TrainingSource } from '../runtime/types';
 import { compileTrainingBlock } from '../runtime/runtimeService';
+import { currentStylePlans, trainingStyle } from '../runtime/trainingStyles';
+import { pauseWorkout, resumeStyleWorkout } from '../runtime/sessionSwitching';
+import { editableRoutine } from '../runtime/routine';
 import { sourceFromDraft, type RoutineDraft } from './draft';
 import type { RoutineInputContext } from './context';
 
@@ -16,12 +19,17 @@ export const saveRoutineEditor=(state:RuntimeState,input:RoutineEditorInput,cata
     let candidate:TrainingSource;
     try{candidate=sourceFromDraft(input.draft,{...input.settings,version:previous.version},catalog);}catch{return next;}
     candidate={...candidate,...text,trainingSplit:candidate.routine?.preferredSplit??candidate.routine?.split??previous.trainingSplit};
+    const switching = trainingStyle(candidate) !== trainingStyle(state.block?.preferences ?? previous);
+    const saved = switching ? currentStylePlans(state.block,state.blockHistory).find(plan=>trainingStyle(plan.preferences)===trainingStyle(candidate)) : undefined;
+    // Selecting an existing style resumes its own saved queues, not a regrouping of another style.
+    if(saved) candidate={...candidate,routine:editableRoutine(saved)};
     if(!state.block||configuration(candidate)!==configuration(previous)){
-      const compiled=compileTrainingBlock({...state,activeSession:null},candidate);
-      next={...compiled,source:compiled.source,activeSession:state.activeSession,
+      const compiled=compileTrainingBlock({...(switching?pauseWorkout(state):state),block:saved??state.block,activeSession:null},candidate);
+      next={...compiled,source:compiled.source,activeSession:switching?null:state.activeSession,
         blockHistory:[...new Map([...(state.blockHistory??[]),...(state.block?[state.block]:[])].map(plan=>[plan.id,plan])).values()]};
     }
   }
+  if(trainingStyle(next.block?.preferences)!==trainingStyle(state.block?.preferences))next=resumeStyleWorkout(next);
   if(!input.draft.workouts.length&&!state.block){
     next={...next,source:{...next.source!,daysPerWeek:(input.draft.days.value??previous.daysPerWeek) as TrainingSource['daysPerWeek'],
       sessionMinutes:input.draft.minutes.value??previous.sessionMinutes,goal:input.draft.goal.value??previous.goal}};

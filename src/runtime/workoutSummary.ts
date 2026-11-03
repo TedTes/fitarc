@@ -12,7 +12,7 @@ export const workoutSummary = (session: SessionPrescription, history: SessionPre
   const first = session.startedAt ?? logged.map(item => item.result.completedAt).sort()[0];
   const start = Date.parse(first ?? '');
   const end = Date.parse(session.finishedAt ?? '');
-  const seconds = Number.isFinite(start) && Number.isFinite(end) && end >= start ? Math.floor((end - start) / 1000) : null;
+  const seconds = Number.isFinite(start) && Number.isFinite(end) && end >= start ? Math.max(0,Math.floor((end - start - (session.pausedMs??0)) / 1000)) : null;
   const volumeKg = logged.reduce((sum, { result }) => sum + (result.actualLoadKg ?? result.prescribedLoadKg) * result.completedReps, 0);
   const reps = logged.reduce((sum, { result }) => sum + result.completedReps, 0);
   const prior = history.filter(item => item.id !== session.id && item.status === 'committed').flatMap(recorded)

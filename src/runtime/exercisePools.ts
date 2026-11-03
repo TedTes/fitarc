@@ -1,4 +1,3 @@
-import { datePlusDays } from './planDates';
 import type { ExerciseDefinition, Muscle, RoutineDefinition, SessionContext, SessionPrescription, TrainingSlot, TrainingSource } from './types';
 
 export type PoolPattern = 'upper_lower' | 'push_pull_legs' | 'full_body';
@@ -29,49 +28,42 @@ export const matchesGroup = (exercise:ExerciseDefinition, group:{name:string;mus
   return true;
 };
 
-/** Deterministic, read-only selection. Pool order defines the main lift; the rest fills coverage gaps. */
-export const selectPoolPlans = (slot:TrainingSlot, source:TrainingSource, catalog:ExerciseDefinition[], context:SessionContext, sessions:SessionPrescription[] = []) => {
-  const group=workoutGroup(slot.label);
+/** Identity follows the saved order, not the plan revision/name or its set targets. */
+export const exerciseQueueKey = (slot: TrainingSlot) => JSON.stringify([slot.id, slot.plannedExercises.map(plan => plan.exerciseId)]);
+
+/** A completion carries the continuation point; previews and active sessions never move it. */
+export const exerciseQueueCursor = (slot: TrainingSlot, context: SessionContext, sessions: SessionPrescription[]) => {
+  const key = exerciseQueueKey(slot);
+  const latest = sessions.map((session,index) => ({session,index})).filter(({session}) =>
+    session.status === 'committed' && session.slotId === slot.id && session.context.date <= context.date
+    && session.exerciseQueue?.key === key && session.exerciseQueue.advances)
+    .sort((a,b) => b.session.context.date.localeCompare(a.session.context.date)
+      || (b.session.finishedAt ?? b.session.createdAt).localeCompare(a.session.finishedAt ?? a.session.createdAt) || b.index-a.index)[0]?.session;
+  return latest?.exerciseQueue?.nextExerciseId;
+};
+
+export const exerciseQueueProgress = (slot: TrainingSlot, lastExerciseId: string, advances = true) => {
+  const index = slot.plannedExercises.findIndex(plan => plan.exerciseId === lastExerciseId);
+  if (index < 0 || !slot.plannedExercises.length) return undefined;
+  return { key: exerciseQueueKey(slot), nextExerciseId: slot.plannedExercises[(index+1)%slot.plannedExercises.length].exerciseId, advances };
+};
+
+/** Read the next contiguous eligible batch. Never rank, pin a main lift, or mutate the saved order. */
+export const selectPoolPlans = (slot:TrainingSlot, source:TrainingSource, catalog:ExerciseDefinition[], context:SessionContext, sessions:SessionPrescription[] = [], cursor?:string) => {
+  const group=workoutGroup(slot.label) ?? {name:slot.label,muscles:slot.targetMuscles};
   const definitions=new Map(catalog.map(e=>[e.id,e]));
-  const candidates=slot.plannedExercises.filter(plan=>{
+  const next=cursor ?? exerciseQueueCursor(slot,context,sessions);
+  const start=Math.max(0,slot.plannedExercises.findIndex(plan=>plan.exerciseId===next));
+  const ordered=[...slot.plannedExercises.slice(start),...slot.plannedExercises.slice(0,start)];
+  const seen=new Set<string>();
+  const candidates=ordered.filter(plan=>{
     const exercise=definitions.get(plan.exerciseId);
-    return exercise && (!group || matchesGroup(exercise,group)) && !source.excludedExerciseIds.includes(exercise.id) && !context.unavailableExerciseIds.includes(exercise.id)
-      && exercise.equipment.every(e=>source.equipment.includes(e)&&!context.unavailableEquipment.includes(e))
-      && !exercise.contraindications.some(e=>source.limitations.includes(e));
+    if (!exercise || seen.has(exercise.id) || !matchesGroup(exercise,group)
+      || source.excludedExerciseIds.includes(exercise.id) || context.unavailableExerciseIds.includes(exercise.id)
+      || !exercise.equipment.every(e=>source.equipment.includes(e)&&!context.unavailableEquipment.includes(e))
+      || exercise.contraindications.some(e=>source.limitations.includes(e))) return false;
+    seen.add(exercise.id); return true;
   });
-  if(source.routine?.workouts.find(workout=>workout.id===slot.id)?.reuseSelection)return candidates;
-  const order=new Map(candidates.map((p,index)=>[p.exerciseId,index]));
-  const completed=sessions.filter(s=>s.status==='committed'&&s.context.date<=context.date)
-    .sort((a,b)=>a.context.date.localeCompare(b.context.date)||(a.finishedAt??a.createdAt).localeCompare(b.finishedAt??b.createdAt));
-  const exposure:Partial<Record<Muscle,number>>={},lastUsed=new Map<string,number>();
-  completed.forEach((session,index)=>session.exercises.forEach(entry=>{
-    const count=entry.sets.filter(set=>set.status==='completed'&&(set.result?.completedReps??0)>0).length;
-    if(!count)return;
-    lastUsed.set(entry.exercise.id,index);
-    if(session.context.date<datePlusDays(context.date,-6))return;
-    entry.exercise.primaryMuscles.forEach(m=>exposure[m]=(exposure[m]??0)+count);
-    entry.exercise.secondaryMuscles.forEach(m=>exposure[m]=(exposure[m]??0)+count*0.5);
-  }));
   const limit=context.minutesAvailable<=30?3:context.minutesAvailable<=45?4:context.minutesAvailable<=75?5:6;
-  const selected:TrainingSlot['plannedExercises']=[],covered=new Set<Muscle>(),patterns=new Set<string>();
-  const add=(plan:TrainingSlot['plannedExercises'][number],reason:string)=>{
-    const e=definitions.get(plan.exerciseId)!;
-    selected.push({...plan,selection:{...plan.selection,reasons:[reason]}});
-    e.primaryMuscles.forEach(m=>covered.add(m));patterns.add(e.movementPattern);
-  };
-  const anchor=candidates.find(p=>definitions.get(p.exerciseId)?.compound)??candidates[0];
-  if(anchor)add(anchor,`${slot.label} pool · Main lift retained to compare progress`);
-  while(selected.length<Math.min(limit,candidates.length)){
-    const score=(plan:TrainingSlot['plannedExercises'][number])=>{
-      const e=definitions.get(plan.exerciseId)!;
-      const muscles=e.primaryMuscles.filter(m=>slot.targetMuscles.includes(m));
-      return muscles.reduce((sum,m)=>sum+(covered.has(m)?0:100)+20/(1+(exposure[m]??0)),0)
-        +(!patterns.has(e.movementPattern)&&e.movementPattern!=='isolation'?40:0)
-        +(lastUsed.has(e.id)?Math.min(12,completed.length-lastUsed.get(e.id)!):14);
-    };
-    const next=candidates.filter(p=>!selected.some(s=>s.exerciseId===p.exerciseId)).sort((a,b)=>score(b)-score(a)||order.get(a.exerciseId)!-order.get(b.exerciseId)!)[0];
-    if(!next)break;
-    add(next,`${slot.label} pool · Selected for muscle coverage and recent training`);
-  }
-  return selected;
+  return candidates.slice(0,limit).map(plan=>({...plan,selection:{...plan.selection,reasons:[`${slot.label} · Next exercise in your queue`]}}));
 };
