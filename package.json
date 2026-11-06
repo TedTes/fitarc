@@ -19,7 +19,7 @@
     "routine:check": "node scripts/check-routine.cjs",
     "routine-setup:check": "node scripts/check-routine-setup.cjs",
     "workout-summary:check": "node scripts/check-workout-summary.cjs",
-    "pools:check": "node scripts/check-exercise-pools.cjs && node scripts/check-exercise-queues.cjs",
+    "pools:check": "node scripts/check-exercise-pools.cjs && node scripts/check-exercise-queues.cjs && node scripts/check-workout-balance.cjs",
     "next-workout:check": "node scripts/check-next-workout.cjs",
     "reliability:check": "node scripts/check-sync-recovery.cjs && node scripts/check-weekly-streak.cjs && node scripts/check-autosave.cjs && node scripts/check-profile-outbox.cjs && node scripts/check-profile-service.cjs && node scripts/check-workout-interactions.cjs && node scripts/check-exercise-removal.cjs",
     "plan:check": "node scripts/check-plan-workflow.cjs && node scripts/check-plan-ui.cjs"

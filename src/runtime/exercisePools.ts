@@ -1,3 +1,4 @@
+import { balanceRequirements } from './workoutBalance';
 import type { ExerciseDefinition, Muscle, RoutineDefinition, SessionContext, SessionPrescription, TrainingSlot, TrainingSource } from './types';
 
 export type PoolPattern = 'upper_lower' | 'push_pull_legs' | 'full_body';
@@ -32,29 +33,43 @@ export const matchesGroup = (exercise:ExerciseDefinition, group:{name:string;mus
 export const exerciseQueueKey = (slot: TrainingSlot) => JSON.stringify([slot.id, slot.plannedExercises.map(plan => plan.exerciseId)]);
 
 /** A completion carries the continuation point; previews and active sessions never move it. */
-export const exerciseQueueCursor = (slot: TrainingSlot, context: SessionContext, sessions: SessionPrescription[]) => {
+export const exerciseQueueState = (slot: TrainingSlot, context: SessionContext, sessions: SessionPrescription[]) => {
   const key = exerciseQueueKey(slot);
   const latest = sessions.map((session,index) => ({session,index})).filter(({session}) =>
     session.status === 'committed' && session.slotId === slot.id && session.context.date <= context.date
     && session.exerciseQueue?.key === key && session.exerciseQueue.advances)
     .sort((a,b) => b.session.context.date.localeCompare(a.session.context.date)
       || (b.session.finishedAt ?? b.session.createdAt).localeCompare(a.session.finishedAt ?? a.session.createdAt) || b.index-a.index)[0]?.session;
-  return latest?.exerciseQueue?.nextExerciseId;
+  return latest?.exerciseQueue;
 };
 
-export const exerciseQueueProgress = (slot: TrainingSlot, lastExerciseId: string, advances = true) => {
-  const index = slot.plannedExercises.findIndex(plan => plan.exerciseId === lastExerciseId);
-  if (index < 0 || !slot.plannedExercises.length) return undefined;
-  return { key: exerciseQueueKey(slot), nextExerciseId: slot.plannedExercises[(index+1)%slot.plannedExercises.length].exerciseId, advances };
+export const exerciseQueueCursor = (slot:TrainingSlot, context:SessionContext, sessions:SessionPrescription[]) => exerciseQueueState(slot,context,sessions)?.nextExerciseId;
+export const exerciseQueueOrder = (slot:TrainingSlot, context:SessionContext, sessions:SessionPrescription[], cursor?:string|string[]) => {
+  const saved=exerciseQueueState(slot,context,sessions);
+  const ids=[...new Set(slot.plannedExercises.map(p=>p.exerciseId))];
+  const pending=Array.isArray(cursor)?cursor:cursor?undefined:saved?.pendingOrder;
+  if(pending)return [...pending.filter(id=>ids.includes(id)),...ids.filter(id=>!pending.includes(id))];
+  const start=Math.max(0,ids.indexOf(typeof cursor==='string'?cursor:saved?.nextExerciseId??''));
+  return [...ids.slice(start),...ids.slice(0,start)];
+};
+export const exerciseQueueProgress = (slot:TrainingSlot, selected:string|string[], advances=true, order=slot.plannedExercises.map(p=>p.exerciseId)) => {
+  if(typeof selected==='string') {
+    const index=slot.plannedExercises.findIndex(p=>p.exerciseId===selected);
+    if(index<0)return undefined;
+    return {key:exerciseQueueKey(slot),nextExerciseId:slot.plannedExercises[(index+1)%slot.plannedExercises.length].exerciseId,advances,pendingOrder:undefined as string[]|undefined};
+  }
+  if(!selected.length)return undefined;
+  const used=new Set(selected);
+  const pendingOrder=[...order.filter(id=>!used.has(id)),...order.filter(id=>used.has(id))];
+  return {key:exerciseQueueKey(slot),nextExerciseId:pendingOrder[0],pendingOrder,advances};
 };
 
-/** Read the next contiguous eligible batch. Never rank, pin a main lift, or mutate the saved order. */
-export const selectPoolPlans = (slot:TrainingSlot, source:TrainingSource, catalog:ExerciseDefinition[], context:SessionContext, sessions:SessionPrescription[] = [], cursor?:string) => {
+/** Fill movement coverage in queue order; defer unselected entries until completion. */
+export const selectPoolPlans = (slot:TrainingSlot, source:TrainingSource, catalog:ExerciseDefinition[], context:SessionContext, sessions:SessionPrescription[] = [], cursor?:string|string[]) => {
   const group=workoutGroup(slot.label) ?? {name:slot.label,muscles:slot.targetMuscles};
   const definitions=new Map(catalog.map(e=>[e.id,e]));
-  const next=cursor ?? exerciseQueueCursor(slot,context,sessions);
-  const start=Math.max(0,slot.plannedExercises.findIndex(plan=>plan.exerciseId===next));
-  const ordered=[...slot.plannedExercises.slice(start),...slot.plannedExercises.slice(0,start)];
+  const order=exerciseQueueOrder(slot,context,sessions,cursor);
+  const ordered=order.map(id=>slot.plannedExercises.find(p=>p.exerciseId===id)!);
   const seen=new Set<string>();
   const candidates=ordered.filter(plan=>{
     const exercise=definitions.get(plan.exerciseId);
@@ -65,5 +80,28 @@ export const selectPoolPlans = (slot:TrainingSlot, source:TrainingSource, catalo
     seen.add(exercise.id); return true;
   });
   const limit=context.minutesAvailable<=30?3:context.minutesAvailable<=45?4:context.minutesAvailable<=75?5:6;
-  return candidates.slice(0,limit).map(plan=>({...plan,selection:{...plan.selection,reasons:[`${slot.label} · Next exercise in your queue`]}}));
+  const selected:typeof candidates=[];
+  const requirements=balanceRequirements(slot);
+  const minimumMinutes=(id:string)=>{const e=definitions.get(id)!;return e.setupMinutes+(e.compound?3.5:2.5);};
+  for(const requirement of requirements){
+    if(selected.some(p=>requirement.matches(definitions.get(p.exerciseId)!)))continue;
+    const options=candidates.filter(p=>!selected.includes(p)&&requirement.matches(definitions.get(p.exerciseId)!));
+    // Prefer queue order, but do not choose an expensive setup when it crowds out required coverage.
+    const next=options.find(option=>{
+      const proposed=[...selected,option];
+      const missing=requirements.filter(r=>!proposed.some(p=>r.matches(definitions.get(p.exerciseId)!)));
+      const reserve=missing.reduce((sum,r)=>{const alternatives=candidates.filter(p=>!proposed.includes(p)&&r.matches(definitions.get(p.exerciseId)!));return sum+(alternatives.length?Math.min(...alternatives.map(p=>minimumMinutes(p.exerciseId))):0);},0);
+      return proposed.reduce((sum,p)=>sum+minimumMinutes(p.exerciseId),0)+reserve<=context.minutesAvailable;
+    })??[...options].sort((a,b)=>minimumMinutes(a.exerciseId)-minimumMinutes(b.exerciseId))[0];
+    if(next&&selected.length<limit)selected.push(next);
+  }
+  const hasCoverage=selected.length>0;
+  while(selected.length<limit){
+    const remaining=candidates.filter(p=>!selected.includes(p));
+    const distinct=remaining.filter(p=>!selected.some(s=>definitions.get(s.exerciseId)!.substitutionGroup===definitions.get(p.exerciseId)!.substitutionGroup));
+    const next=hasCoverage?(distinct.find(p=>!selected.some(s=>definitions.get(s.exerciseId)!.primaryMuscles[0]===definitions.get(p.exerciseId)!.primaryMuscles[0]))??distinct[0]??remaining[0]):remaining[0];
+    if(!next)break;
+    selected.push(next);
+  }
+  return selected.map(plan=>({...plan,selection:{...plan.selection,reasons:[`${slot.label} · Selected from your queue for movement coverage`]}}));
 };

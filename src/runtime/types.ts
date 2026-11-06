@@ -225,7 +225,7 @@ export type PrescribedExercise = {
 
 export type SessionPrescription = {
   /** Frozen batch continuation, applied only by a committed session with logged work. */
-  exerciseQueue?: { key: string; nextExerciseId: string; advances: boolean };
+  exerciseQueue?: { key: string; nextExerciseId: string; pendingOrder?: string[]; advances: boolean };
   /** First confirmed set, independent of when the prescription was prepared. */
   startedAt?: string;
   finishedAt?: string;

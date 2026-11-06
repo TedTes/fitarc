@@ -25,7 +25,7 @@ state={...compileTrainingBlock(state,{...state.source,version:state.source.versi
 assert.notEqual(state.block.id,original.id);
 const workout=state.source.routine.workouts.find(w=>w.id===state.sessions[0].slotId);
 assert.equal(workout.reuseSelection,undefined);
-assert.deepEqual(workout.exercises.map(e=>e.exerciseId),entries);
+assert.deepEqual(workout.exercises.map(e=>e.exerciseId),original.slots.find(s=>s.id===workout.id).plannedExercises.map(e=>e.exerciseId).filter(id=>entries.includes(id)),'Editing preserves saved queue order, independent of balanced session order');
 const stored=toStoredTraining(state);
 assert(!('preferences' in stored));assert(!('routine' in stored.profile));assert(!JSON.stringify(stored).includes('routineEditor'));
 state=fromStoredTraining(JSON.parse(JSON.stringify(stored)));

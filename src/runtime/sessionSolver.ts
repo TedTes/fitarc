@@ -1,4 +1,5 @@
-import { selectPoolPlans, exerciseQueueProgress, workoutGroup, matchesGroup } from './exercisePools';
+import { missingBalance } from './workoutBalance';
+import { selectPoolPlans, exerciseQueueOrder, exerciseQueueProgress, workoutGroup, matchesGroup } from './exercisePools';
 import { rangeLoad } from './weights';
 import { exerciseAlternatives } from './recommendations';
 import { suggestWorkoutLoad } from './progression';
@@ -14,6 +15,8 @@ const currentPhase = (block: TrainingBlock): BlockPhase =>
   ?? block.phases[0];
 
 export const solveSession = (input: {
+  queueOrder?: string|string[];
+  completedSets?: Partial<Record<import('./types').Muscle,number>>;
   source: TrainingSource;
   block: TrainingBlock;
   context: SessionContext;
@@ -28,7 +31,7 @@ export const solveSession = (input: {
   const slot = input.block.slots[(input.slotIndex ?? 0) % input.block.slots.length];
   const phase = input.phaseOverride ?? currentPhase(input.block);
   const pools = input.source.routine?.selectionMode === 'pools';
-  const plans = pools ? selectPoolPlans(slot,input.source,catalog,input.context,input.sessions) : slot.plannedExercises;
+  const plans = pools ? selectPoolPlans(slot,input.source,catalog,input.context,input.sessions,input.queueOrder) : slot.plannedExercises;
   const custom = input.source.routine?.split === 'custom';
   const group = workoutGroup(slot.label);
   const groupCatalog = group ? catalog.filter(exercise => matchesGroup(exercise, group)) : catalog;
@@ -57,13 +60,13 @@ export const solveSession = (input: {
   }));
   const selected = [...planned, ...(input.source.routine ? [] : fallback).filter((item) => !planned.some((plan) => plan.exercise.id === item.exercise.id))].slice(0, Math.min(exerciseLimit, slot.plannedExercises?.length || exerciseLimit));
   if (new Set(selected.map(x=>x.exercise.id)).size !== selected.length) throw Error('Choose different exercises for each position in today’s workout.');
-  const reserved = Object.fromEntries(MUSCLES.map((muscle) => [muscle, input.weeklyStatus?.muscles.find((item) => item.muscle === muscle)?.completedSets ?? 0])) as Record<(typeof MUSCLES)[number], number>;
+  const reserved = Object.fromEntries(MUSCLES.map((muscle) => [muscle, input.weeklyStatus?.muscles.find((item) => item.muscle === muscle)?.completedSets ?? input.completedSets?.[muscle] ?? 0])) as Record<(typeof MUSCLES)[number], number>;
   let exercises = selected.map(({ exercise, prescription, plannedSets, reason }, index) => {
     const primary = exercise.primaryMuscles[0];
     const muscleStatus = input.weeklyStatus?.muscles.find((status) => status.muscle === primary);
     const arbitration = arbitratePrescription({
       phase: phase.kind, recovery: input.context.recovery, plannedSets,
-      weeklySetsAfterSession: (muscleStatus?.completedSets ?? 0) + plannedSets,
+      weeklySetsAfterSession: (muscleStatus?.completedSets ?? input.completedSets?.[primary] ?? 0) + plannedSets,
       weeklyMaximum: muscleStatus?.max ?? input.block.weeklyTargets[primary].max,
       hasPain: exercise.contraindications.some((item) => input.source.limitations.includes(item)),
       exerciseAvailable: !input.context.unavailableExerciseIds.includes(exercise.id),
@@ -96,11 +99,20 @@ export const solveSession = (input: {
     (sum, entry) => sum + entry.exercise.setupMinutes + entry.sets.length * (entry.exercise.compound ? 3.5 : 2.5), 0
   );
   while (estimate() > input.context.minutesAvailable) {
+    const missingCount=missingBalance(slot,exercises.map(e=>e.exercise)).length;
+    const optionalIndex=pools?exercises.map((_,i)=>i).reverse().find(i=>missingBalance(slot,exercises.filter((_,j)=>j!==i).map(e=>e.exercise)).length===missingCount):undefined;
+    if(optionalIndex!==undefined){exercises=exercises.filter((_,i)=>i!==optionalIndex);continue;}
     const removableIndex = [...exercises].reverse().findIndex((entry, reverseIndex) => {
       const originalIndex = exercises.length - 1 - reverseIndex;
-      return entry.sets.length > (originalIndex === 0 ? 2 : 1);
+      return entry.sets.length > (pools ? 1 : originalIndex === 0 ? 2 : 1);
     });
-    if (removableIndex < 0) { exercises = exercises.slice(0, -1); if (!exercises.length) break; continue; }
+    if (removableIndex < 0) {
+      const baseline=missingBalance(slot,exercises.map(e=>e.exercise)).length;
+      const optional=pools?exercises.map((_,i)=>i).reverse().find(i=>missingBalance(slot,exercises.filter((_,j)=>i!==j).map(e=>e.exercise)).length===baseline):undefined;
+      exercises=exercises.filter((_,i)=>i!==(optional??exercises.length-1));
+      if(!exercises.length)break;
+      continue;
+    }
     const index = exercises.length - 1 - removableIndex;
     exercises = exercises.map((entry, entryIndex) => entryIndex === index
       ? { ...entry, sets: entry.sets.slice(0, -1) }
@@ -108,14 +120,15 @@ export const solveSession = (input: {
   }
   const estimatedMinutes = Math.ceil(estimate());
   // Capture the batch that actually fits, before later swaps/reorders/removals can change its identity.
-  const last = selected.filter(item=>exercises.some(entry=>entry.exercise.id===item.exercise.id)).at(-1);
-  const exerciseQueue = pools && last ? exerciseQueueProgress(slot,last.queueExerciseId,!input.context.extraWorkout && !input.context.workoutId) : undefined;
+  const offered = selected.filter(item=>exercises.some(entry=>entry.exercise.id===item.exercise.id)).map(item=>item.queueExerciseId);
+  const exerciseQueue = pools ? exerciseQueueProgress(slot,offered,!input.context.extraWorkout && !input.context.workoutId,exerciseQueueOrder(slot,input.context,input.sessions??[],input.queueOrder)) : undefined;
+  const missing=pools?missingBalance(slot,exercises.map(e=>e.exercise)):[];
   return {
     id: createRuntimeId(), blockId: input.block.id, planGroupId: input.block.groupId ?? input.block.id, blockVersion: input.block.version,
     slotId: slot.id, context: input.context, phase: phase.kind,
     estimatedMinutes, exercises, ...(exerciseQueue ? {exerciseQueue} : {}),
     status: 'proposed',
-    explanation: input.context.recovery === 'yes'
+    explanation: missing.length ? `Limited coverage: ${missing.join(', ')} could not fit the available exercises, volume limits and time.` : input.context.recovery === 'yes'
       ? `Workout fits a ${input.context.minutesAvailable}-minute budget.`
       : `Fewer sets planned for your recovery today.`,
     createdAt: new Date().toISOString(),
