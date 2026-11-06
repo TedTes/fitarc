@@ -256,6 +256,7 @@ export const SetLogger = ({ state, apply, notify, onDockChange, onNewWorkout }: 
         <Pressable accessibilityRole="button" accessibilityLabel={onNewWorkout?"New freestyle workout":"Add exercise"} onPress={onNewWorkout??(()=>setSheet('add'))} hitSlop={6}
           style={({pressed})=>[styles.headerAction,pressed&&styles.pressed]}><Ionicons name="add" size={20} color={colors.text}/></Pressable>
       </View>
+      {session.explanation.startsWith('Limited coverage:')?<Txt variant="caption" tone="muted">{session.explanation}</Txt>:null}
       <WorkoutElapsed pausedMs={session.pausedMs} startedAt={startedAt} completed={completed} total={allSets.length}/>
       <View style={styles.progressRow} accessibilityLabel={`${completed} of ${allSets.length} sets completed`}>
         {allSets.map(item=><View key={item.id} style={[styles.segment,item.status==='completed'&&styles.segmentDone]}/>)}

@@ -1,4 +1,5 @@
-import { selectPoolPlans, exerciseQueueProgress } from './exercisePools';
+import { solveSession } from './sessionSolver';
+import { selectPoolPlans } from './exercisePools';
 import { localDate } from './planDates';
 import { scheduledOccurrences } from './sequence';
 import { belongsToPlan } from './planDates';
@@ -93,15 +94,15 @@ export const computeWeeklyStatus = (
     if (result.completedReps < result.prescribedMinReps) misses += 1;
   });
   const scheduled = Object.fromEntries(MUSCLES.map((muscle) => [muscle, 0])) as Record<(typeof MUSCLES)[number], number>;
-  const poolPlans=(slot:TrainingBlock['slots'][number],cursor?:string)=>block.preferences?.routine?.selectionMode==='pools'
+  const poolPlans=(slot:TrainingBlock['slots'][number],cursor?:string|string[])=>block.preferences?.routine?.selectionMode==='pools'
     ?selectPoolPlans(slot,block.preferences,block.catalog??RUNTIME_EXERCISES,{date:weekNumber===block.currentWeek?localDate():weekStart.toISOString().slice(0,10),minutesAvailable:block.preferences.sessionMinutes,recovery:'yes',unavailableEquipment:[],unavailableExerciseIds:[]},sessions,cursor)
     :slot.plannedExercises;
   const scheduledEntries = block.scheduling ? occurrences : block.slots.filter((slot) => !committedSlotIds.has(slot.id) && (!remaining || remaining.windows.some((item) => item.slotId === slot.id))).map(slot=>({slot,workout:undefined as SessionPrescription | undefined}));
-  const forecastCursors=new Map<string,string>();
+  const forecastCursors=new Map<string,string|string[]>();
   scheduledEntries.forEach(({slot,workout}) => {
     const prescribed = workout ?? (!block.scheduling ? [...weekSessions].reverse().find((session) => session.slotId === slot.id && (session.status==='active'||session.status==='proposed')) ?? remaining?.windows.find((item) => item.slotId === slot.id)?.workout : undefined);
     if (prescribed) {
-      if(prescribed.exerciseQueue?.advances)forecastCursors.set(slot.id,prescribed.exerciseQueue.nextExerciseId);
+      if(prescribed.exerciseQueue?.advances)forecastCursors.set(slot.id,prescribed.exerciseQueue.pendingOrder??prescribed.exerciseQueue.nextExerciseId);
       prescribed.exercises.forEach((entry) => {
         const remainingSets = entry.sets.filter((set) => set.status === 'pending').length;
         entry.exercise.primaryMuscles.forEach((muscle) => { scheduled[muscle] += remainingSets; });
@@ -110,12 +111,15 @@ export const computeWeeklyStatus = (
       return;
     }
     if(block.preferences?.routine?.selectionMode==='pools'){
-      const batch=poolPlans(slot,forecastCursors.get(slot.id));
-      const continuation=batch.length?exerciseQueueProgress(slot,batch[batch.length-1].exerciseId):undefined;
-      if(continuation)forecastCursors.set(slot.id,continuation.nextExerciseId);
-      batch.forEach(plan=>{const e=(block.catalog??RUNTIME_EXERCISES).find(e=>e.id===plan.exerciseId)!;
-        e.primaryMuscles.forEach(m=>scheduled[m]+=plan.sets);
-        e.secondaryMuscles.forEach(m=>scheduled[m]+=plan.sets*secondaryMuscleCredit);
+      const forecast=solveSession({source:block.preferences,block,slotIndex:block.slots.indexOf(slot),workingSets:{},sessions,
+        queueOrder:forecastCursors.get(slot.id),
+        completedSets:Object.fromEntries(MUSCLES.map(m=>[m,completed[m]+scheduled[m]])),
+        context:{date:weekNumber===block.currentWeek?localDate():weekStart.toISOString().slice(0,10),minutesAvailable:block.preferences.sessionMinutes,recovery:'yes',unavailableEquipment:[],unavailableExerciseIds:[]}});
+      const continuation=forecast.exerciseQueue;
+      if(continuation)forecastCursors.set(slot.id,continuation.pendingOrder??continuation.nextExerciseId);
+      forecast.exercises.forEach(({exercise:e,sets})=>{
+        e.primaryMuscles.forEach(m=>scheduled[m]+=sets.length);
+        e.secondaryMuscles.forEach(m=>scheduled[m]+=sets.length*secondaryMuscleCredit);
       });
     }else MUSCLES.forEach((muscle) => { scheduled[muscle] += slot.muscleSetBudget[muscle] ?? 0; });
   });

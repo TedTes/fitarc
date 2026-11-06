@@ -4,7 +4,7 @@ import { Keyboard, Pressable, ScrollView, StyleSheet, TextInput, View } from 're
 import { Ionicons } from '@expo/vector-icons';
 import type { ExerciseDefinition, RuntimeState } from '../../runtime/types';
 import { styleSessionCount } from '../../runtime/trainingStyles';
-import { selectPoolPlans } from '../../runtime/exercisePools';
+import { previewTrainingSession } from '../../runtime/runtimeService';
 import { localDate } from '../../runtime/planDates';
 import { nextWorkoutPreview } from '../../runtime/nextWorkout';
 import { nextRoutineSlot } from '../../runtime/sequence';
@@ -37,10 +37,10 @@ export function SavedRoutines({ state, onRenameRoutine, onBack, header, actions,
   // Read-only preview of each group's next session: the same contiguous batch Today would draw from the queue.
   const nextBatch = (slot: NonNullable<typeof selected>['slots'][number]) => {
     if (!state.source || selected?.id !== state.block?.id) return [];
-    const catalog = selected?.catalog ?? state.catalog ?? [];
+    if(state.activeSession?.slotId===slot.id)return state.activeSession.exercises.map(e=>e.exercise.id);
     try {
-      return selectPoolPlans(slot, state.source, catalog, { date: localDate(), minutesAvailable: state.source.sessionMinutes, recovery: 'yes', unavailableEquipment: [], unavailableExerciseIds: [] }, state.sessions)
-        .map(plan => plan.exerciseId);
+      return previewTrainingSession(state, { date: localDate(), minutesAvailable: state.source.sessionMinutes, recovery: 'yes', unavailableEquipment: [], unavailableExerciseIds: [],workoutId:slot.id,extraWorkout:true })
+        .exercises.map(entry => entry.exercise.id);
     } catch { return []; }
   };
   // The group Today will open next: the workout in progress, else the routine's next slot and its scheduled day.
